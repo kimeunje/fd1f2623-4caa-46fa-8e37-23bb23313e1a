@@ -1,0 +1,15 @@
+# Node.js / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# 패키지 매니저 디버그 로그
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 에디터 / 테스트
+*.sw?
+coverage/
