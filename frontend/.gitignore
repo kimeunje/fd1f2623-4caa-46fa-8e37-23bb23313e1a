@@ -1,7 +1,7 @@
 # Node.js / Frontend
 node_modules/
-frontend/dist/
-frontend/.vite/
+dist/
+.vite/
 *.local
 
 # 패키지 매니저 디버그 로그

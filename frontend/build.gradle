@@ -1,0 +1,13 @@
+plugins {
+    id 'com.github.node-gradle.node'
+}
+
+node {
+    version = '22.18.0'        // 프로젝트에 맞게 조정
+    download = true
+}
+
+task npmBuild(type: NpmTask) {
+    dependsOn npmInstall
+    args = ['run', 'build']
+}

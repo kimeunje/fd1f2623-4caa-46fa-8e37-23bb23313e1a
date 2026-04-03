@@ -33,3 +33,6 @@ logs/
 
 # Env
 .env
+
+# Vue 빌드 결과물
+backend/src/main/resources/static/
