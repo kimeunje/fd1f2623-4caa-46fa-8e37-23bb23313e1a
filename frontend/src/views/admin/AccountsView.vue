@@ -18,8 +18,9 @@ async function loadUsers() {
   loading.value = true
   try {
     const res = await usersApi.list({ search: search.value || undefined })
-    users.value = res.data.items
-    total.value = res.data.total
+    // 백엔드 응답: { success, data: { items, total } }
+    users.value = res.data.data.items
+    total.value = res.data.data.total
   } catch (err) {
     console.error('사용자 목록 로드 실패:', err)
   } finally {
@@ -96,12 +97,12 @@ onMounted(loadUsers)
             </td>
             <td class="px-4 py-3">
               <div class="flex gap-1">
-                <span v-if="user.permission_evidence" class="px-1.5 py-0.5 bg-purple-50 text-purple-600 text-xs rounded">증빙</span>
-                <span v-if="user.permission_vuln" class="px-1.5 py-0.5 bg-orange-50 text-orange-600 text-xs rounded">취약점</span>
+                <span v-if="user.permissionEvidence" class="px-1.5 py-0.5 bg-purple-50 text-purple-600 text-xs rounded">증빙</span>
+                <span v-if="user.permissionVuln" class="px-1.5 py-0.5 bg-orange-50 text-orange-600 text-xs rounded">취약점</span>
               </div>
             </td>
             <td class="px-4 py-3 text-sm text-gray-500">
-              {{ user.last_login_at ? new Date(user.last_login_at).toLocaleString('ko') : '-' }}
+              {{ user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('ko') : '-' }}
             </td>
             <td class="px-4 py-3">
               <span

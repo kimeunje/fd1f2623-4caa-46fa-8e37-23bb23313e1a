@@ -45,10 +45,10 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '증빙 파일' },
   },
   {
-    path: '/assessments',
-    name: 'assessments',
+    path: '/vulns',
+    name: 'vulns',
     component: () => import('@/views/admin/PlaceholderView.vue'),
-    meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '점검 관리' },
+    meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '취약점 목록' },
   },
   {
     path: '/accounts',
@@ -111,8 +111,10 @@ const router = createRouter({
   routes,
 })
 
+// ========================================
 // 네비게이션 가드
-router.beforeEach((to, from, next) => {
+// ========================================
+router.beforeEach((to, _from, next) => {
   const authStore = useAuthStore()
 
   // 인증 불필요 페이지
@@ -126,7 +128,7 @@ router.beforeEach((to, from, next) => {
     return
   }
 
-  // 인증 필요 페이지
+  // 인증 필요 페이지 — 미인증 시 로그인으로
   if (!authStore.isAuthenticated) {
     next('/login')
     return

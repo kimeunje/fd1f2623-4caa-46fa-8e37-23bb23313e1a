@@ -28,13 +28,17 @@ async function handleLogin() {
       router.push('/dev/dashboard')
     }
   } catch (err: any) {
-    errorMsg.value = err.response?.data?.detail || '로그인에 실패했습니다.'
+    // 백엔드 ApiResponse 에러: { success: false, message: "..." }
+    errorMsg.value =
+      err.response?.data?.message ||
+      err.message ||
+      '로그인에 실패했습니다.'
   } finally {
     loading.value = false
   }
 }
 
-// 데모 로그인
+// 데모 계정 바로 로그인
 function demoLogin(demoEmail: string, demoPassword: string) {
   email.value = demoEmail
   password.value = demoPassword
@@ -89,56 +93,35 @@ function demoLogin(demoEmail: string, demoPassword: string) {
         </button>
       </form>
 
-      <!-- 구분선 -->
-      <div class="relative mb-6">
-        <div class="absolute inset-0 flex items-center">
-          <div class="w-full border-t border-gray-200"></div>
+      <!-- 데모 계정 -->
+      <div class="border-t border-gray-200 pt-4">
+        <p class="text-xs text-gray-400 mb-3 text-center">데모 계정으로 바로 로그인</p>
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            @click="demoLogin('admin@company.com', 'admin1234')"
+            class="py-2 px-3 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 transition-colors"
+          >
+            관리자 (보안팀)
+          </button>
+          <button
+            @click="demoLogin('park_tl@company.com', 'park1234')"
+            class="py-2 px-3 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-medium hover:bg-emerald-100 transition-colors"
+          >
+            결재자 (박팀장)
+          </button>
+          <button
+            @click="demoLogin('kim@company.com', 'dev1234')"
+            class="py-2 px-3 bg-gray-50 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-100 transition-colors"
+          >
+            개발자 (김개발)
+          </button>
+          <button
+            @click="demoLogin('lee@company.com', 'dev1234')"
+            class="py-2 px-3 bg-gray-50 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-100 transition-colors"
+          >
+            개발자 (이보안)
+          </button>
         </div>
-        <div class="relative flex justify-center">
-          <span class="bg-white px-4 text-sm text-gray-400">데모 계정</span>
-        </div>
-      </div>
-
-      <!-- 데모 로그인 버튼 -->
-      <div class="space-y-3">
-        <button
-          @click="demoLogin('admin@company.com', 'admin1234')"
-          class="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
-        >
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-sm">관</div>
-            <div>
-              <p class="font-medium text-gray-900">보안팀 관리자</p>
-              <p class="text-sm text-gray-500">전체 기능 접근 가능</p>
-            </div>
-          </div>
-        </button>
-
-        <button
-          @click="demoLogin('kim@company.com', 'dev1234')"
-          class="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-emerald-500 hover:bg-emerald-50 transition-colors text-left"
-        >
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 font-bold text-sm">김</div>
-            <div>
-              <p class="font-medium text-gray-900">김개발 (백엔드팀)</p>
-              <p class="text-sm text-gray-500">취약점 조치 및 담당자 지정</p>
-            </div>
-          </div>
-        </button>
-
-        <button
-          @click="demoLogin('park_tl@company.com', 'park1234')"
-          class="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-amber-500 hover:bg-amber-50 transition-colors text-left"
-        >
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 font-bold text-sm">박</div>
-            <div>
-              <p class="font-medium text-gray-900">박팀장 (백엔드팀)</p>
-              <p class="text-sm text-gray-500">일정 결재 승인/반려</p>
-            </div>
-          </div>
-        </button>
       </div>
     </div>
   </div>

@@ -1,6 +1,20 @@
 // ========================================
-// 공통
+// 공통 — 백엔드 ApiResponse 래핑
 // ========================================
+export interface ApiResponse<T> {
+  success: boolean
+  message?: string
+  data: T
+}
+
+export interface PageResponse<T> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+  totalPages: number
+}
+
 export interface MessageResponse {
   message: string
   detail?: string
@@ -18,12 +32,12 @@ export interface User {
   name: string
   team?: string
   role: UserRole
-  permission_evidence: boolean
-  permission_vuln: boolean
-  status: UserStatus
-  last_login_at?: string
-  created_at: string
-  updated_at: string
+  permissionEvidence: boolean
+  permissionVuln: boolean
+  status?: UserStatus
+  lastLoginAt?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface UserBrief {
@@ -40,16 +54,16 @@ export interface UserCreatePayload {
   password: string
   team?: string
   role: UserRole
-  permission_evidence: boolean
-  permission_vuln: boolean
+  permissionEvidence: boolean
+  permissionVuln: boolean
 }
 
 export interface UserUpdatePayload {
   name?: string
   team?: string
   role?: UserRole
-  permission_evidence?: boolean
-  permission_vuln?: boolean
+  permissionEvidence?: boolean
+  permissionVuln?: boolean
   status?: UserStatus
 }
 
@@ -66,9 +80,12 @@ export interface LoginPayload {
   password: string
 }
 
+/**
+ * 백엔드 LoginResponse 구조:
+ * { token: "eyJ...", user: { id, email, name, team, role, permissionEvidence, permissionVuln } }
+ */
 export interface TokenResponse {
-  access_token: string
-  token_type: string
+  token: string
   user: User
 }
 
@@ -79,58 +96,55 @@ export interface Framework {
   id: number
   name: string
   description?: string
-  created_at: string
+  createdAt: string
 }
 
 export interface Control {
   id: number
-  framework_id: number
+  frameworkId: number
   code: string
   domain?: string
   name: string
   description?: string
-  evidence_collected?: number
-  evidence_total?: number
-  created_at: string
+  evidenceCollected?: number
+  evidenceTotal?: number
+  createdAt: string
 }
 
 // ========================================
 // 취약점 관리 (Phase 3에서 확장)
 // ========================================
-export type AssessmentStatus = 'in_progress' | 'completed'
-export type VulnStatus = 'unassigned' | 'pending_schedule' | 'pending_approval' | 'in_progress' | 'done'
-
-export interface Assessment {
-  id: number
-  name: string
-  assessor?: string
-  assessed_at?: string
-  description?: string
-  status: AssessmentStatus
-  total_count?: number
-  done_count?: number
-  in_progress_count?: number
-  pending_count?: number
-  progress_percent?: number
-  created_at: string
-}
+export type VulnStatus = 'unassigned' | 'pending_approval' | 'in_progress' | 'done'
 
 export interface Vulnerability {
   id: number
-  assessment_id: number
   category?: string
-  asset?: string
-  item: string
+  deviceType?: string
+  hostname?: string
+  checkCode?: string
+  problem?: string
   content?: string
-  issue?: string
-  assignee_id?: number
-  approver_id?: number
-  due_date?: string
+  assigneeId?: number
+  approverId?: number
+  planDate?: string
   status: VulnStatus
-  action_plan?: string
-  action_result?: string
   note?: string
-  created_at: string
+  createdAt?: string
   assignee?: UserBrief
+  approver?: UserBrief
+}
+
+export interface ApprovalRequest {
+  id: number
+  vulnerabilityId: number
+  requesterId: number
+  approverId: number
+  category?: string
+  content?: string
+  status: 'pending' | 'approved' | 'rejected'
+  createdAt?: string
+  updatedAt?: string
+  vulnerability?: Vulnerability
+  requester?: UserBrief
   approver?: UserBrief
 }
