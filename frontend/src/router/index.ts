@@ -29,19 +29,19 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/controls',
     name: 'controls',
-    component: () => import('@/views/admin/PlaceholderView.vue'),
+    component: () => import('@/views/admin/ControlsView.vue'),          // ← Phase 2
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '통제 항목' },
   },
   {
     path: '/jobs',
     name: 'jobs',
-    component: () => import('@/views/admin/PlaceholderView.vue'),
+    component: () => import('@/views/admin/JobsView.vue'),              // ← Phase 2
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '수집 작업' },
   },
   {
     path: '/files',
     name: 'files',
-    component: () => import('@/views/admin/PlaceholderView.vue'),
+    component: () => import('@/views/admin/FilesView.vue'),             // ← Phase 2
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '증빙 파일' },
   },
   {
@@ -117,10 +117,8 @@ const router = createRouter({
 router.beforeEach((to, _from, next) => {
   const authStore = useAuthStore()
 
-  // 인증 불필요 페이지
   if (to.meta.requiresAuth === false) {
     if (authStore.isAuthenticated && to.name === 'login') {
-      // 이미 로그인 → 역할별 기본 페이지로
       next(authStore.isAdmin ? '/dashboard' : '/dev/dashboard')
       return
     }
@@ -128,16 +126,13 @@ router.beforeEach((to, _from, next) => {
     return
   }
 
-  // 인증 필요 페이지 — 미인증 시 로그인으로
   if (!authStore.isAuthenticated) {
     next('/login')
     return
   }
 
-  // 역할 체크
   const allowedRoles = to.meta.roles as string[] | undefined
   if (allowedRoles && !allowedRoles.includes(authStore.user?.role || '')) {
-    // 역할 불일치 → 본인 기본 페이지로
     next(authStore.isAdmin ? '/dashboard' : '/dev/dashboard')
     return
   }
