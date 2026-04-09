@@ -30,6 +30,9 @@ app:
     expiration-minutes: ${JWT_EXPIRATION:480}
   storage:
     path: ${STORAGE_PATH:./storage}
+  scripts:
+    base-dir: ${SCRIPTS_BASE_DIR:./scripts}
+    timeout-seconds: ${SCRIPTS_TIMEOUT:300}
   cors:
     allowed-origins:
       - http://localhost:5173

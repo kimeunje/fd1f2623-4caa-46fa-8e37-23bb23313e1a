@@ -2,6 +2,7 @@ package com.secuhub.domain.evidence.dto;
 
 import com.secuhub.domain.evidence.entity.EvidenceFile;
 import lombok.*;
+import org.springframework.core.io.Resource;
 
 public class EvidenceFileDto {
 
@@ -56,5 +57,21 @@ public class EvidenceFileDto {
         private long quarterFiles;
         private long totalSizeBytes;
         private int controlCoverage;
+    }
+
+    /**
+     * 파일 다운로드 응답 DTO
+     *
+     * Controller에서 Resource와 메타정보를 함께 전달받아
+     * Content-Disposition 헤더와 Content-Type을 정확하게 설정합니다.
+     */
+    @Getter
+    @Builder
+    @AllArgsConstructor
+    public static class DownloadResponse {
+        private Resource resource;
+        private String fileName;
+        private String contentType;
+        private Long fileSize;
     }
 }

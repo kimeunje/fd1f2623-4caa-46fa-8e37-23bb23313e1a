@@ -98,8 +98,42 @@ export const evidenceFilesApi = {
   delete(id: number) {
     return api.delete(`/evidence-files/${id}`)
   },
-  downloadUrl(id: number) {
-    return `/api/v1/evidence-files/${id}/download`
+  /**
+   * 증빙 파일 다운로드 — Blob으로 받아서 브라우저 다운로드 트리거
+   * JWT 토큰이 Authorization 헤더에 자동 포함됩니다.
+   */
+  async download(id: number, fileName?: string) {
+    const response = await api.get(`/evidence-files/${id}/download`, {
+      responseType: 'blob',
+    })
+
+    // Content-Disposition 헤더에서 파일명 추출 시도
+    let downloadName = fileName || 'download'
+    const disposition = response.headers['content-disposition']
+    if (disposition) {
+      // filename*=UTF-8''encoded_name 형식 우선
+      const utf8Match = disposition.match(/filename\*=UTF-8''(.+?)(?:;|$)/)
+      if (utf8Match) {
+        downloadName = decodeURIComponent(utf8Match[1])
+      } else {
+        // filename="name" 형식 fallback
+        const basicMatch = disposition.match(/filename="?(.+?)"?(?:;|$)/)
+        if (basicMatch) {
+          downloadName = basicMatch[1]
+        }
+      }
+    }
+
+    // Blob URL 생성 → <a> 클릭으로 다운로드 트리거
+    const blob = new Blob([response.data])
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = downloadName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
   },
 }
 

@@ -37,6 +37,15 @@ async function loadStats() {
   } catch (e) { console.error(e) }
 }
 
+async function handleDownload(fileId: number, fileName: string) {
+  try {
+    await evidenceFilesApi.download(fileId, fileName)
+  } catch (e) {
+    console.error('다운로드 실패:', e)
+    alert('파일 다운로드에 실패했습니다.')
+  }
+}
+
 async function deleteFile(id: number) {
   if (!confirm('이 파일을 삭제하시겠습니까?')) return
   try {
@@ -192,10 +201,10 @@ onMounted(() => {
             <td class="px-4 py-3 text-sm text-gray-500">{{ formatDate(file.collectedAt) }}</td>
             <td class="px-4 py-3 text-center">
               <div class="flex items-center justify-center gap-1">
-                <a :href="'/api/v1/evidence-files/' + file.id + '/download'"
+                <button @click="handleDownload(file.id, file.fileName)"
                   class="p-1 text-gray-400 hover:text-blue-500" title="다운로드">
                   <i class="pi pi-download text-sm"></i>
-                </a>
+                </button>
                 <button @click="deleteFile(file.id)" class="p-1 text-gray-400 hover:text-red-500" title="삭제">
                   <i class="pi pi-trash text-sm"></i>
                 </button>
@@ -253,10 +262,10 @@ onMounted(() => {
                 {{ file.collectionMethod === 'auto' ? '자동' : '수동' }}
               </span>
               <span class="text-xs text-gray-400">{{ formatDate(file.collectedAt) }}</span>
-              <a :href="'/api/v1/evidence-files/' + file.id + '/download'"
-                class="p-1 text-gray-400 hover:text-blue-500">
+              <button @click="handleDownload(file.id, file.fileName)"
+                class="p-1 text-gray-400 hover:text-blue-500" title="다운로드">
                 <i class="pi pi-download text-sm"></i>
-              </a>
+              </button>
             </div>
           </div>
         </div>

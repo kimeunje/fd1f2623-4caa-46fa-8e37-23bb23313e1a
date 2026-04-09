@@ -8,6 +8,8 @@ import com.secuhub.domain.evidence.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -15,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -86,6 +89,55 @@ public class EvidenceFileService {
     }
 
     /**
+     * 증빙 파일 다운로드
+     *
+     * 1. DB에서 파일 메타정보 조회
+     * 2. 물리 파일 경로 검증
+     * 3. Resource 객체 반환
+     *
+     * @return EvidenceFileDto.DownloadResponse (Resource + 원본 파일명 + Content-Type)
+     */
+    @Transactional(readOnly = true)
+    public EvidenceFileDto.DownloadResponse download(Long fileId) {
+        EvidenceFile file = evidenceFileRepository.findById(fileId)
+                .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
+
+        Path filePath = Paths.get(file.getFilePath()).toAbsolutePath().normalize();
+
+        // 물리 파일 존재 여부 확인
+        if (!Files.exists(filePath)) {
+            log.error("증빙 파일 물리 경로에 파일이 없습니다: {} (fileId={})", filePath, fileId);
+            throw new BusinessException("파일이 저장소에 존재하지 않습니다. 관리자에게 문의하세요.");
+        }
+
+        if (!Files.isReadable(filePath)) {
+            log.error("증빙 파일 읽기 권한 없음: {} (fileId={})", filePath, fileId);
+            throw new BusinessException("파일을 읽을 수 없습니다. 관리자에게 문의하세요.");
+        }
+
+        try {
+            Resource resource = new UrlResource(filePath.toUri());
+            if (!resource.exists() || !resource.isReadable()) {
+                throw new BusinessException("파일 리소스를 읽을 수 없습니다.");
+            }
+
+            // Content-Type 추정
+            String contentType = determineContentType(file.getFileName());
+
+            return EvidenceFileDto.DownloadResponse.builder()
+                    .resource(resource)
+                    .fileName(file.getFileName())
+                    .contentType(contentType)
+                    .fileSize(file.getFileSize())
+                    .build();
+
+        } catch (MalformedURLException e) {
+            log.error("증빙 파일 URL 변환 실패: {} (fileId={})", filePath, fileId, e);
+            throw new BusinessException("파일 경로가 올바르지 않습니다.");
+        }
+    }
+
+    /**
      * 증빙 파일 통계
      */
     @Transactional(readOnly = true)
@@ -120,7 +172,8 @@ public class EvidenceFileService {
                     .count();
         }
 
-        int coverage = totalControls > 0 ? (int) (coveredControls * 100 / totalControls) : 0;
+        int coverage = totalControls > 0 ?
+                (int) (coveredControls * 100 / totalControls) : 0;
 
         return EvidenceFileDto.StatsResponse.builder()
                 .totalFiles(totalFiles)
@@ -149,13 +202,17 @@ public class EvidenceFileService {
         evidenceFileRepository.delete(file);
     }
 
+    // ========================================
+    // 내부 유틸 메서드
+    // ========================================
+
     /**
-     * 물리 파일 저장
+     * 물리 파일 저장 — 절대경로로 변환하여 working directory와 무관하게 동작
      */
     private String saveFile(MultipartFile file, String controlCode, Long evidenceTypeId) {
         try {
-            String dirPath = storagePath + "/evidence/" + controlCode + "/" + evidenceTypeId;
-            Path dir = Paths.get(dirPath);
+            Path dir = Paths.get(storagePath, "evidence", controlCode, String.valueOf(evidenceTypeId))
+                    .toAbsolutePath().normalize();
             Files.createDirectories(dir);
 
             String uniqueName = UUID.randomUUID() + "_" + file.getOriginalFilename();
@@ -166,5 +223,32 @@ public class EvidenceFileService {
         } catch (IOException e) {
             throw new BusinessException("파일 저장에 실패했습니다: " + e.getMessage());
         }
+    }
+
+    /**
+     * 파일 확장자 기반 Content-Type 결정
+     */
+    private String determineContentType(String fileName) {
+        if (fileName == null) return "application/octet-stream";
+
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".pdf")) return "application/pdf";
+        if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+        if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if (lower.endsWith(".doc")) return "application/msword";
+        if (lower.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        if (lower.endsWith(".csv")) return "text/csv";
+        if (lower.endsWith(".txt")) return "text/plain";
+        if (lower.endsWith(".json")) return "application/json";
+        if (lower.endsWith(".xml")) return "application/xml";
+        if (lower.endsWith(".zip")) return "application/zip";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
+        if (lower.endsWith(".log")) return "text/plain";
+
+        return "application/octet-stream";
     }
 }

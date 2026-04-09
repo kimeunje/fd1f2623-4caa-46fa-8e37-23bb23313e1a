@@ -137,6 +137,15 @@ async function handleUpload() {
   finally { uploadLoading.value = false }
 }
 
+async function handleDownload(fileId: number, fileName: string) {
+  try {
+    await evidenceFilesApi.download(fileId, fileName)
+  } catch (e) {
+    console.error('다운로드 실패:', e)
+    alert('파일 다운로드에 실패했습니다.')
+  }
+}
+
 async function deleteControl(id: number) {
   if (!confirm('이 통제항목을 삭제하시겠습니까?')) return
   try {
@@ -299,10 +308,10 @@ onMounted(loadFrameworks)
                             </span>
                           </div>
                           <div class="flex items-center gap-1">
-                            <a :href="'/api/v1/evidence-files/' + file.id + '/download'"
+                            <button @click.stop="handleDownload(file.id, file.fileName)"
                               class="p-1 text-gray-400 hover:text-blue-500" title="다운로드">
                               <i class="pi pi-download text-xs"></i>
-                            </a>
+                            </button>
                           </div>
                         </div>
                       </div>

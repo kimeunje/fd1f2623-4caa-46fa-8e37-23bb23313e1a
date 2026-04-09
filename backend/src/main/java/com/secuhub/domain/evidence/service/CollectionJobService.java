@@ -21,6 +21,7 @@ public class CollectionJobService {
     private final CollectionJobRepository collectionJobRepository;
     private final JobExecutionRepository jobExecutionRepository;
     private final EvidenceTypeRepository evidenceTypeRepository;
+    private final ScriptExecutionService scriptExecutionService;
 
     @Transactional(readOnly = true)
     public List<CollectionJobDto.Response> findAll() {
@@ -117,13 +118,21 @@ public class CollectionJobService {
     }
 
     /**
-     * 수동 실행 — 실제 스크립트 호출은 Phase 2 후속에서 구현.
-     * 여기서는 실행 기록만 생성합니다.
+     * 수동 실행 — ProcessBuilder 기반 비동기 스크립트 실행
+     *
+     * 1. JobExecution을 running 상태로 생성
+     * 2. ScriptExecutionService.executeAsync()로 비동기 위임
+     * 3. 즉시 ExecutionSummary 반환 (실행 결과는 비동기로 업데이트)
      */
     @Transactional
     public CollectionJobDto.ExecutionSummary executeManually(Long jobId) {
         CollectionJob job = collectionJobRepository.findById(jobId)
                 .orElseThrow(() -> new ResourceNotFoundException("수집 작업", jobId));
+
+        // 스크립트 경로 검증
+        if (job.getScriptPath() == null || job.getScriptPath().isBlank()) {
+            throw new BusinessException("스크립트 경로가 설정되지 않은 작업입니다. 작업 설정을 확인해주세요.");
+        }
 
         JobExecution execution = JobExecution.builder()
                 .job(job)
@@ -132,11 +141,11 @@ public class CollectionJobService {
                 .build();
         execution = jobExecutionRepository.save(execution);
 
-        // 시뮬레이션: 성공으로 마킹 (실제로는 비동기 처리)
-        execution.markSuccess();
-        jobExecutionRepository.save(execution);
+        // 비동기 스크립트 실행 위임
+        scriptExecutionService.executeAsync(job, execution);
 
-        log.info("수집 작업 수동 실행 완료: {} (id={})", job.getName(), jobId);
+        log.info("수집 작업 수동 실행 요청: {} (jobId={}, executionId={})",
+                job.getName(), jobId, execution.getId());
         return CollectionJobDto.ExecutionSummary.from(execution);
     }
 }

@@ -10,7 +10,17 @@ spring:
       ddl-auto: create
     show-sql: true
 
+# dev 환경에서는 프로젝트 루트 기준 절대경로 사용 권장
+# 상대경로(./storage)는 Tomcat 임시 디렉토리 기준으로 해석될 수 있음
+app:
+  storage:
+    path: ${STORAGE_PATH:./storage}
+  scripts:
+    base-dir: ${SCRIPTS_BASE_DIR:./scripts}
+    timeout-seconds: 300
+ 
 logging:
   level:
     com.secuhub: DEBUG
     org.springframework.security: DEBUG
+ 
