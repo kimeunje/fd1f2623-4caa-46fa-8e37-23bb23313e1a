@@ -17,7 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.MalformedURLException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -25,6 +27,8 @@ import java.time.LocalDateTime;
 import java.time.temporal.IsoFields;
 import java.util.List;
 import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @Slf4j
 @Service
@@ -135,6 +139,70 @@ public class EvidenceFileService {
             log.error("증빙 파일 URL 변환 실패: {} (fileId={})", filePath, fileId, e);
             throw new BusinessException("파일 경로가 올바르지 않습니다.");
         }
+    }
+
+    /**
+     * 통제항목별 전체 증빙 파일 ZIP 다운로드 (신규 추가)
+     *
+     * 해당 통제항목에 속한 모든 증빙유형의 최신 버전 파일을 ZIP으로 묶어서
+     * OutputStream에 직접 씁니다 (StreamingResponseBody 호환).
+     *
+     * @param controlId 통제항목 ID
+     * @param outputStream ZIP 파일을 쓸 OutputStream
+     * @return ZIP 파일명 (통제항목 코드 기반)
+     */
+    @Transactional(readOnly = true)
+    public String downloadZip(Long controlId, OutputStream outputStream) {
+        Control control = controlRepository.findById(controlId)
+                .orElseThrow(() -> new ResourceNotFoundException("통제항목", controlId));
+
+        List<EvidenceType> evidenceTypes = evidenceTypeRepository.findByControlId(controlId);
+
+        try (ZipOutputStream zos = new ZipOutputStream(outputStream)) {
+            int fileCount = 0;
+
+            for (EvidenceType et : evidenceTypes) {
+                // 각 증빙유형의 최신 버전 파일만 가져옴
+                List<EvidenceFile> files = evidenceFileRepository
+                        .findByEvidenceTypeIdOrderByVersionDesc(et.getId());
+
+                if (files.isEmpty()) continue;
+
+                EvidenceFile latestFile = files.get(0);
+                Path filePath = Paths.get(latestFile.getFilePath()).toAbsolutePath().normalize();
+
+                if (!Files.exists(filePath) || !Files.isReadable(filePath)) {
+                    log.warn("ZIP 다운로드: 파일 누락 - {} (fileId={})", filePath, latestFile.getId());
+                    continue;
+                }
+
+                // ZIP 엔트리명: 증빙유형명/파일명
+                String entryName = et.getName() + "/" + latestFile.getFileName();
+                ZipEntry entry = new ZipEntry(entryName);
+                entry.setSize(latestFile.getFileSize());
+                zos.putNextEntry(entry);
+
+                Files.copy(filePath, zos);
+                zos.closeEntry();
+                fileCount++;
+            }
+
+            if (fileCount == 0) {
+                // 빈 ZIP이면 README 추가
+                ZipEntry readme = new ZipEntry("README.txt");
+                zos.putNextEntry(readme);
+                zos.write("수집된 증빙 파일이 없습니다.".getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+            }
+
+            log.info("ZIP 다운로드 완료: 통제항목 {} - {}개 파일", control.getCode(), fileCount);
+
+        } catch (IOException e) {
+            log.error("ZIP 다운로드 실패: 통제항목 {} - {}", control.getCode(), e.getMessage(), e);
+            throw new BusinessException("ZIP 파일 생성에 실패했습니다.");
+        }
+
+        return control.getCode() + "_증빙자료.zip";
     }
 
     /**

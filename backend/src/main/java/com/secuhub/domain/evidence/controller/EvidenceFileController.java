@@ -4,6 +4,7 @@ import com.secuhub.common.dto.ApiResponse;
 import com.secuhub.common.dto.PageResponse;
 import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import com.secuhub.domain.evidence.service.EvidenceFileService;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
@@ -16,6 +17,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -95,6 +97,29 @@ public class EvidenceFileController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
                 .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(downloadInfo.getFileSize()))
                 .body(downloadInfo.getResource());
+    }
+
+    /**
+     * 통제항목별 전체 증빙 파일 ZIP 다운로드 (신규 추가)
+     * GET /api/v1/evidence-files/zip/{controlId}
+     *
+     * 해당 통제항목의 모든 증빙유형 최신 파일을 ZIP으로 묶어서 스트리밍 다운로드합니다.
+     */
+    @GetMapping("/zip/{controlId}")
+    public void downloadZip(@PathVariable Long controlId, HttpServletResponse response) throws IOException {
+        // ZIP 파일명 생성
+        String zipFileName = controlId + "_증빙자료.zip";
+
+        // 한글 파일명 지원: RFC 5987
+        String encodedFileName = URLEncoder.encode(zipFileName, StandardCharsets.UTF_8)
+                .replaceAll("\\+", "%20");
+
+        response.setContentType("application/zip");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + zipFileName + "\"; filename*=UTF-8''" + encodedFileName);
+
+        // Service에서 OutputStream에 직접 ZIP 스트리밍
+        evidenceFileService.downloadZip(controlId, response.getOutputStream());
     }
 
     /**

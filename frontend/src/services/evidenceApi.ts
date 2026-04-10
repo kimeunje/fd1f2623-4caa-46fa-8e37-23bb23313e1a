@@ -135,6 +135,24 @@ export const evidenceFilesApi = {
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
   },
+  /**
+   * 통제항목별 전체 증빙 파일 ZIP 다운로드
+   */
+  async downloadZip(controlId: number, controlCode: string) {
+    const response = await api.get(`/evidence-files/zip/${controlId}`, {
+      responseType: 'blob',
+    })
+ 
+    const blob = new Blob([response.data], { type: 'application/zip' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${controlCode}_증빙자료.zip`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  },
 }
 
 // ========================================
