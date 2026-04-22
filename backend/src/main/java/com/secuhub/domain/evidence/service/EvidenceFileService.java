@@ -2,9 +2,12 @@ package com.secuhub.domain.evidence.service;
 
 import com.secuhub.common.exception.BusinessException;
 import com.secuhub.common.exception.ResourceNotFoundException;
+import com.secuhub.config.jwt.UserPrincipal;
 import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import com.secuhub.domain.evidence.entity.*;
 import com.secuhub.domain.evidence.repository.*;
+import com.secuhub.domain.user.entity.User;
+import com.secuhub.domain.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,15 +41,33 @@ public class EvidenceFileService {
     private final EvidenceFileRepository evidenceFileRepository;
     private final EvidenceTypeRepository evidenceTypeRepository;
     private final ControlRepository controlRepository;
+    private final UserRepository userRepository;    // v11 Phase 5-2: uploadedBy 기록용
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
 
     /**
-     * 수동 파일 업로드 — 버전 자동 증가
+     * 수동 파일 업로드 — 버전 자동 증가 (Phase 5-2 업데이트)
+     *
+     * <p>업로더 역할에 따라 초기 검토 상태가 달라진다:</p>
+     * <ul>
+     *   <li><b>admin</b> → {@code auto_approved} (관리자 직접 업로드는 검토 생략)</li>
+     *   <li><b>담당자</b> → {@code pending} (관리자 검토 대기)</li>
+     * </ul>
+     *
+     * <p>호출 전 Controller 가 {@link EvidenceAuthService#assertCanAccessEvidenceType}
+     * 로 권한을 검증해야 한다. 이 메서드는 권한 재검증을 하지 않는다.</p>
+     *
+     * @param evidenceTypeId 업로드 대상 증빙 유형 ID
+     * @param file           업로드 파일
+     * @param uploader       업로더 Principal (JWT 기반, null 불가)
+     * @param submitNote     담당자 제출 메모 (선택, admin 은 보통 null)
      */
     @Transactional
-    public EvidenceFileDto.Response upload(Long evidenceTypeId, MultipartFile file) {
+    public EvidenceFileDto.Response upload(Long evidenceTypeId,
+                                           MultipartFile file,
+                                           UserPrincipal uploader,
+                                           String submitNote) {
         EvidenceType evidenceType = evidenceTypeRepository.findById(evidenceTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 유형", evidenceTypeId));
 
@@ -57,6 +78,13 @@ public class EvidenceFileService {
         // 파일 저장
         String savedPath = saveFile(file, evidenceType.getControl().getCode(), evidenceTypeId);
 
+        // v11: 업로더 엔티티 조회 + 역할별 초기 검토 상태 결정
+        User uploaderEntity = userRepository.findById(uploader.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("사용자", uploader.getUserId()));
+
+        boolean isAdmin = "admin".equalsIgnoreCase(uploader.getRole());
+        ReviewStatus initialStatus = isAdmin ? ReviewStatus.auto_approved : ReviewStatus.pending;
+
         EvidenceFile evidenceFile = EvidenceFile.builder()
                 .evidenceType(evidenceType)
                 .fileName(file.getOriginalFilename())
@@ -65,16 +93,21 @@ public class EvidenceFileService {
                 .version(nextVersion)
                 .collectionMethod(CollectionMethod.manual)
                 .collectedAt(LocalDateTime.now())
+                .uploadedBy(uploaderEntity)
+                .submitNote(submitNote)
+                .reviewStatus(initialStatus)
                 .build();
 
         evidenceFile = evidenceFileRepository.save(evidenceFile);
-        log.info("증빙 파일 업로드 완료: {} (v{})", file.getOriginalFilename(), nextVersion);
+        log.info("증빙 파일 업로드: {} (v{}, by={}/{}, status={})",
+                file.getOriginalFilename(), nextVersion,
+                uploader.getEmail(), uploader.getRole(), initialStatus);
 
         return EvidenceFileDto.Response.from(evidenceFile);
     }
 
     /**
-     * 전체 증빙 파일 목록 (페이징)
+     * 전체 증빙 파일 목록 (페이징) — 관리자 전용 (Controller 메서드 레벨 제한)
      */
     @Transactional(readOnly = true)
     public Page<EvidenceFileDto.Response> findAll(Pageable pageable) {
@@ -83,7 +116,7 @@ public class EvidenceFileService {
     }
 
     /**
-     * 증빙 유형별 파일 이력
+     * 증빙 유형별 파일 이력 — 관리자 또는 소유 담당자 (Controller 에서 권한 체크)
      */
     @Transactional(readOnly = true)
     public List<EvidenceFileDto.Response> findByEvidenceType(Long evidenceTypeId) {
@@ -93,7 +126,7 @@ public class EvidenceFileService {
     }
 
     /**
-     * 증빙 파일 다운로드
+     * 증빙 파일 다운로드 — 관리자 또는 소유 담당자 (Controller 에서 권한 체크)
      *
      * 1. DB에서 파일 메타정보 조회
      * 2. 물리 파일 경로 검증
@@ -142,14 +175,10 @@ public class EvidenceFileService {
     }
 
     /**
-     * 통제항목별 전체 증빙 파일 ZIP 다운로드 (신규 추가)
+     * 통제항목별 전체 증빙 파일 ZIP 다운로드 — 관리자 전용 (Controller 제한)
      *
      * 해당 통제항목에 속한 모든 증빙유형의 최신 버전 파일을 ZIP으로 묶어서
      * OutputStream에 직접 씁니다 (StreamingResponseBody 호환).
-     *
-     * @param controlId 통제항목 ID
-     * @param outputStream ZIP 파일을 쓸 OutputStream
-     * @return ZIP 파일명 (통제항목 코드 기반)
      */
     @Transactional(readOnly = true)
     public String downloadZip(Long controlId, OutputStream outputStream) {
@@ -162,7 +191,6 @@ public class EvidenceFileService {
             int fileCount = 0;
 
             for (EvidenceType et : evidenceTypes) {
-                // 각 증빙유형의 최신 버전 파일만 가져옴
                 List<EvidenceFile> files = evidenceFileRepository
                         .findByEvidenceTypeIdOrderByVersionDesc(et.getId());
 
@@ -176,7 +204,6 @@ public class EvidenceFileService {
                     continue;
                 }
 
-                // ZIP 엔트리명: 증빙유형명/파일명
                 String entryName = et.getName() + "/" + latestFile.getFileName();
                 ZipEntry entry = new ZipEntry(entryName);
                 entry.setSize(latestFile.getFileSize());
@@ -188,7 +215,6 @@ public class EvidenceFileService {
             }
 
             if (fileCount == 0) {
-                // 빈 ZIP이면 README 추가
                 ZipEntry readme = new ZipEntry("README.txt");
                 zos.putNextEntry(readme);
                 zos.write("수집된 증빙 파일이 없습니다.".getBytes(StandardCharsets.UTF_8));
@@ -206,40 +232,33 @@ public class EvidenceFileService {
     }
 
     /**
-     * 증빙 파일 통계
+     * 증빙 파일 통계 — 관리자 전용 (Controller 제한)
      */
     @Transactional(readOnly = true)
     public EvidenceFileDto.StatsResponse getStats() {
-        List<EvidenceFile> allFiles = evidenceFileRepository.findAll();
-
-        long totalFiles = allFiles.size();
-        long totalSize = allFiles.stream().mapToLong(EvidenceFile::getFileSize).sum();
+        long totalFiles = evidenceFileRepository.count();
 
         // 이번 분기 파일 수
         LocalDateTime now = LocalDateTime.now();
-        int currentQuarter = now.get(IsoFields.QUARTER_OF_YEAR);
         int currentYear = now.getYear();
-        long quarterFiles = allFiles.stream()
-                .filter(f -> f.getCollectedAt() != null
-                        && f.getCollectedAt().getYear() == currentYear
-                        && f.getCollectedAt().get(IsoFields.QUARTER_OF_YEAR) == currentQuarter)
+        int currentQuarter = now.get(IsoFields.QUARTER_OF_YEAR);
+        long quarterFiles = evidenceFileRepository.findAll().stream()
+                .filter(f -> {
+                    LocalDateTime collected = f.getCollectedAt();
+                    return collected.getYear() == currentYear
+                            && collected.get(IsoFields.QUARTER_OF_YEAR) == currentQuarter;
+                })
                 .count();
 
-        // 통제항목 커버리지
-        long totalControls = controlRepository.count();
-        long coveredControls = 0;
-        if (totalControls > 0) {
-            List<Control> controls = controlRepository.findAll();
-            coveredControls = controls.stream()
-                    .filter(ctrl -> {
-                        List<EvidenceType> types = evidenceTypeRepository.findByControlId(ctrl.getId());
-                        if (types.isEmpty()) return false;
-                        return types.stream().allMatch(et ->
-                                !evidenceFileRepository.findByEvidenceTypeIdOrderByVersionDesc(et.getId()).isEmpty());
-                    })
-                    .count();
-        }
+        long totalSize = evidenceFileRepository.findAll().stream()
+                .mapToLong(EvidenceFile::getFileSize)
+                .sum();
 
+        long totalControls = controlRepository.count();
+        long coveredControls = evidenceFileRepository.findAll().stream()
+                .map(f -> f.getEvidenceType().getControl().getId())
+                .distinct()
+                .count();
         int coverage = totalControls > 0 ?
                 (int) (coveredControls * 100 / totalControls) : 0;
 
@@ -252,7 +271,9 @@ public class EvidenceFileService {
     }
 
     /**
-     * 파일 삭제
+     * 파일 삭제 — 관리자 전용 (Controller 제한)
+     *
+     * 담당자는 본인이 업로드한 파일도 삭제할 수 없다 (이력 보존 목적).
      */
     @Transactional
     public void delete(Long fileId) {
@@ -306,16 +327,15 @@ public class EvidenceFileService {
         if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         if (lower.endsWith(".doc")) return "application/msword";
         if (lower.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-        if (lower.endsWith(".csv")) return "text/csv";
-        if (lower.endsWith(".txt")) return "text/plain";
-        if (lower.endsWith(".json")) return "application/json";
-        if (lower.endsWith(".xml")) return "application/xml";
-        if (lower.endsWith(".zip")) return "application/zip";
+        if (lower.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
         if (lower.endsWith(".png")) return "image/png";
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
         if (lower.endsWith(".gif")) return "image/gif";
-        if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
-        if (lower.endsWith(".log")) return "text/plain";
+        if (lower.endsWith(".zip")) return "application/zip";
+        if (lower.endsWith(".txt")) return "text/plain";
+        if (lower.endsWith(".csv")) return "text/csv";
+        if (lower.endsWith(".json")) return "application/json";
+        if (lower.endsWith(".xml")) return "application/xml";
 
         return "application/octet-stream";
     }
