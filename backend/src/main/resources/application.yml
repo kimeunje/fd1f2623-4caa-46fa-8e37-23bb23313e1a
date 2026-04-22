@@ -12,6 +12,11 @@ spring:
         format_sql: true
         default_batch_fetch_size: 100
 
+  # Phase 5-1: Flyway 기본 비활성화 (dev/test는 Hibernate ddl-auto: create 유지)
+  # prod 프로필에서만 application-prod.yml에 의해 활성화됨
+  flyway:
+    enabled: false
+
   servlet:
     multipart:
       max-file-size: 50MB

@@ -2,12 +2,16 @@ package com.secuhub;
 
 import com.secuhub.domain.evidence.entity.*;
 import com.secuhub.domain.evidence.repository.*;
+import com.secuhub.domain.user.entity.NotificationPreference;
 import com.secuhub.domain.user.entity.User;
 import com.secuhub.domain.user.entity.UserRole;
 import com.secuhub.domain.user.entity.UserStatus;
+import com.secuhub.domain.user.repository.NotificationPreferenceRepository;
 import com.secuhub.domain.user.repository.UserRepository;
 import com.secuhub.domain.vulnerability.entity.*;
 import com.secuhub.domain.vulnerability.repository.*;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,17 +25,21 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * JPA 엔티티 스키마 검증 테스트 (v2)
+ * JPA 엔티티 스키마 검증 테스트 (v11)
  *
  * 실행: ./gradlew test
  *
  * 검증 항목:
- * - 9개 테이블 정상 생성 (assessments 제거됨)
+ * - 10개 테이블 정상 생성 (notification_preferences 추가)
  * - evidence_types.file_type 제거 확인
  * - job_executions.log_file_path 제거 확인
  * - vulnerabilities 13컬럼 재설계 확인
  * - 4단계 상태 흐름 (unassigned → pending_approval → in_progress → done)
  * - 반려 시 unassigned 초기화
+ * - [v11 신규] Framework 자기참조 상속 + status
+ * - [v11 신규] EvidenceType 담당자(owner_user_id) + 마감일(due_date)
+ * - [v11 신규] EvidenceFile 승인 플로우 (review_status, reviewed_by, review_note, reviewed_at, uploaded_by, submit_note)
+ * - [v11 신규] NotificationPreference 1:1 관계 + User 삭제 CASCADE
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -48,6 +56,10 @@ class SchemaValidationTest {
     @Autowired private VulnerabilityRepository vulnerabilityRepository;
     @Autowired private VulnActionLogRepository vulnActionLogRepository;
     @Autowired private ApprovalRequestRepository approvalRequestRepository;
+    @Autowired private NotificationPreferenceRepository notificationPreferenceRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     // ========================================
     // 1. User 도메인
@@ -150,6 +162,9 @@ class SchemaValidationTest {
                 .findByEvidenceTypeIdOrderByVersionDesc(et1.getId());
         assertThat(files).hasSize(2);
         assertThat(files.get(0).getVersion()).isEqualTo(2);
+
+        // v11: Builder 기본값이 auto_approved 인지 확인 (기존 Phase 2 동작 보존)
+        assertThat(files.get(0).getReviewStatus()).isEqualTo(ReviewStatus.auto_approved);
 
         // 수집현황: et1은 파일 있음, et2는 파일 없음 → "1/2 수집됨"
         long totalTypes = evidenceTypeRepository.findByControlId(control.getId()).size();
@@ -360,7 +375,7 @@ class SchemaValidationTest {
 
     @Test
     @Order(7)
-    @DisplayName("[통합] 전체 9개 테이블 생성 확인 — 10개 Repository 주입 성공")
+    @DisplayName("[통합] 전체 10개 테이블 생성 확인 — 11개 Repository 주입 성공")
     void testAllRepositoriesInjected() {
         assertThat(userRepository).isNotNull();
         assertThat(frameworkRepository).isNotNull();
@@ -372,7 +387,279 @@ class SchemaValidationTest {
         assertThat(vulnerabilityRepository).isNotNull();
         assertThat(vulnActionLogRepository).isNotNull();
         assertThat(approvalRequestRepository).isNotNull();
+        assertThat(notificationPreferenceRepository).isNotNull();
 
-        System.out.println("✅ [통합] 10개 Repository 모두 정상 주입 — 9개 테이블 생성 완료");
+        System.out.println("✅ [통합] 11개 Repository 모두 정상 주입 — 10개 테이블 생성 완료");
+    }
+
+    // ========================================
+    // 5. v11 신규 — Phase 5-1 스키마 검증
+    // ========================================
+
+    @Test
+    @Order(10)
+    @DisplayName("[v11] Framework 자기참조 상속 + status")
+    @Transactional
+    void testFrameworkInheritanceAndStatus() {
+        // 부모 Framework (전년도)
+        Framework parent = frameworkRepository.save(Framework.builder()
+                .name("ISMS-P 2025")
+                .description("전년도 감사")
+                .build());
+
+        // 기본 상태 검증
+        assertThat(parent.getStatus()).isEqualTo(FrameworkStatus.active);
+        assertThat(parent.getParentFramework()).isNull();
+
+        // 상속된 자식 Framework (올해)
+        Framework child = Framework.builder()
+                .name("ISMS-P 2026")
+                .description("올해 감사 — 2025 상속")
+                .build();
+        child.setParentFramework(parent);
+        child = frameworkRepository.save(child);
+
+        // 자식 FK 관계 확인
+        assertThat(child.getParentFramework()).isNotNull();
+        assertThat(child.getParentFramework().getId()).isEqualTo(parent.getId());
+        assertThat(child.getParentFramework().getName()).isEqualTo("ISMS-P 2025");
+
+        // 부모 archive 처리
+        parent.archive();
+        frameworkRepository.save(parent);
+        assertThat(parent.getStatus()).isEqualTo(FrameworkStatus.archived);
+
+        // Repository 쿼리 — 부모를 기준으로 자식 조회
+        List<Framework> children = frameworkRepository.findByParentFrameworkId(parent.getId());
+        assertThat(children).hasSize(1);
+        assertThat(children.get(0).getName()).isEqualTo("ISMS-P 2026");
+
+        // 상태별 필터
+        List<Framework> actives = frameworkRepository.findByStatus(FrameworkStatus.active);
+        List<Framework> archives = frameworkRepository.findByStatus(FrameworkStatus.archived);
+        assertThat(actives).anyMatch(f -> f.getName().equals("ISMS-P 2026"));
+        assertThat(archives).anyMatch(f -> f.getName().equals("ISMS-P 2025"));
+
+        System.out.println("✅ [v11] Framework 상속 + status 정상 (parent_framework_id self-FK, active/archived)");
+    }
+
+    @Test
+    @Order(11)
+    @DisplayName("[v11] EvidenceType 담당자(owner_user_id) + 마감일(due_date)")
+    @Transactional
+    void testEvidenceTypeOwnerAndDueDate() {
+        User hrOwner = userRepository.save(User.builder()
+                .email("hr@test.com").name("인사팀 홍길동").hashedPassword("pw")
+                .team("인사팀").role(UserRole.developer)
+                .permissionEvidence(true)
+                .build());
+
+        Framework fw = frameworkRepository.save(Framework.builder()
+                .name("ISMS-P 2026").build());
+        Control ctrl = controlRepository.save(Control.builder()
+                .framework(fw).code("2.2.1").name("임직원 교육").build());
+
+        // 담당자·마감일 포함 생성
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .control(ctrl)
+                .name("보안 교육 이수 증빙")
+                .ownerUser(hrOwner)
+                .dueDate(LocalDate.of(2026, 6, 30))
+                .build());
+
+        assertThat(et.getOwnerUser()).isNotNull();
+        assertThat(et.getOwnerUser().getId()).isEqualTo(hrOwner.getId());
+        assertThat(et.getOwnerUser().getTeam()).isEqualTo("인사팀");
+        assertThat(et.getDueDate()).isEqualTo(LocalDate.of(2026, 6, 30));
+
+        // Repository — 담당자 기반 조회 ("내 할 일" 페이지 기반)
+        List<EvidenceType> myTasks = evidenceTypeRepository.findByOwnerUserId(hrOwner.getId());
+        assertThat(myTasks).hasSize(1);
+        assertThat(myTasks.get(0).getName()).isEqualTo("보안 교육 이수 증빙");
+
+        // 담당자 재배정
+        User legalOwner = userRepository.save(User.builder()
+                .email("legal@test.com").name("법무팀 김철수").hashedPassword("pw")
+                .team("법무팀").role(UserRole.developer)
+                .permissionEvidence(true)
+                .build());
+        et.assignOwner(legalOwner);
+        et.updateDueDate(LocalDate.of(2026, 7, 15));
+        evidenceTypeRepository.save(et);
+
+        assertThat(et.getOwnerUser().getId()).isEqualTo(legalOwner.getId());
+        assertThat(et.getDueDate()).isEqualTo(LocalDate.of(2026, 7, 15));
+
+        System.out.println("✅ [v11] EvidenceType 담당자 + 마감일 정상 (owner_user_id FK, due_date)");
+    }
+
+    @Test
+    @Order(12)
+    @DisplayName("[v11] EvidenceFile 승인 플로우 (pending → approved/rejected)")
+    @Transactional
+    void testEvidenceFileReviewFlow() {
+        User admin = userRepository.save(User.builder()
+                .email("admin_v11@test.com").name("관리자v11").hashedPassword("pw")
+                .role(UserRole.admin)
+                .permissionEvidence(true)
+                .build());
+        User hrOwner = userRepository.save(User.builder()
+                .email("hr_v11@test.com").name("인사팀v11").hashedPassword("pw")
+                .team("인사팀").role(UserRole.developer)
+                .permissionEvidence(true)
+                .build());
+
+        Framework fw = frameworkRepository.save(Framework.builder()
+                .name("ISMS-P 2026 승인테스트").build());
+        Control ctrl = controlRepository.save(Control.builder()
+                .framework(fw).code("2.2.1").name("임직원 교육").build());
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .control(ctrl).name("교육 수료증").ownerUser(hrOwner)
+                .build());
+
+        // 1) 담당자 업로드 → 명시적으로 pending 설정
+        EvidenceFile pending = evidenceFileRepository.save(EvidenceFile.builder()
+                .evidenceType(et)
+                .fileName("교육수료증_2026Q1.pdf")
+                .filePath("/storage/evidence/training_2026q1.pdf")
+                .fileSize(1_200_000L)
+                .version(1)
+                .collectionMethod(CollectionMethod.manual)
+                .collectedAt(LocalDateTime.now())
+                .uploadedBy(hrOwner)
+                .submitNote("1분기 전사 보안교육 수료증입니다. 검토 부탁드립니다.")
+                .reviewStatus(ReviewStatus.pending)
+                .build());
+
+        assertThat(pending.getReviewStatus()).isEqualTo(ReviewStatus.pending);
+        assertThat(pending.getUploadedBy().getId()).isEqualTo(hrOwner.getId());
+        assertThat(pending.getSubmitNote()).contains("검토 부탁");
+        assertThat(pending.getReviewedBy()).isNull();
+        assertThat(pending.getReviewedAt()).isNull();
+
+        // 2) 관리자 직접 업로드 → Builder 기본값 auto_approved (기존 Phase 2 동작 보존)
+        EvidenceFile autoApproved = evidenceFileRepository.save(EvidenceFile.builder()
+                .evidenceType(et)
+                .fileName("관리자직접업로드.pdf")
+                .filePath("/storage/evidence/admin_direct.pdf")
+                .fileSize(500_000L)
+                .version(2)
+                .collectionMethod(CollectionMethod.manual)
+                .collectedAt(LocalDateTime.now())
+                .uploadedBy(admin)
+                .build());
+
+        assertThat(autoApproved.getReviewStatus()).isEqualTo(ReviewStatus.auto_approved);
+
+        // 3) pending → approved 전이
+        pending.approve(admin, "잘 작성해주셨습니다. 승인합니다.");
+        evidenceFileRepository.save(pending);
+
+        assertThat(pending.getReviewStatus()).isEqualTo(ReviewStatus.approved);
+        assertThat(pending.getReviewedBy().getId()).isEqualTo(admin.getId());
+        assertThat(pending.getReviewNote()).contains("승인");
+        assertThat(pending.getReviewedAt()).isNotNull();
+
+        // 4) 다른 파일을 생성해 반려 시나리오 검증
+        EvidenceFile toReject = evidenceFileRepository.save(EvidenceFile.builder()
+                .evidenceType(et)
+                .fileName("잘못된파일.txt")
+                .filePath("/storage/evidence/wrong.txt")
+                .fileSize(100L)
+                .version(3)
+                .collectionMethod(CollectionMethod.manual)
+                .collectedAt(LocalDateTime.now())
+                .uploadedBy(hrOwner)
+                .reviewStatus(ReviewStatus.pending)
+                .build());
+
+        toReject.reject(admin, "형식이 맞지 않습니다. PDF로 다시 업로드해주세요.");
+        evidenceFileRepository.save(toReject);
+
+        assertThat(toReject.getReviewStatus()).isEqualTo(ReviewStatus.rejected);
+        assertThat(toReject.getReviewNote()).contains("PDF");
+
+        // Repository — 상태별 조회
+        assertThat(evidenceFileRepository.countByReviewStatus(ReviewStatus.approved))
+                .isEqualTo(1);
+        assertThat(evidenceFileRepository.countByReviewStatus(ReviewStatus.rejected))
+                .isEqualTo(1);
+        assertThat(evidenceFileRepository.countByReviewStatus(ReviewStatus.auto_approved))
+                .isGreaterThanOrEqualTo(1);
+
+        // Framework 단위 승인 대기 집계 (현재는 pending 0, 모두 전이 완료)
+        long pendingInFw = evidenceFileRepository.countByFrameworkIdAndReviewStatus(
+                fw.getId(), ReviewStatus.pending);
+        assertThat(pendingInFw).isEqualTo(0);
+
+        System.out.println("✅ [v11] EvidenceFile 승인 플로우 정상 (pending → approved/rejected, 기본값 auto_approved 유지)");
+    }
+
+    @Test
+    @Order(13)
+    @DisplayName("[v11] NotificationPreference 1:1 + User 삭제 시 CASCADE")
+    @Transactional
+    void testNotificationPreferenceCascade() {
+        User user = userRepository.save(User.builder()
+                .email("notify@test.com").name("알림테스트").hashedPassword("pw")
+                .role(UserRole.developer).permissionEvidence(true)
+                .build());
+
+        // 기본값 생성 (모든 플래그 true, daily_digest 만 false)
+        NotificationPreference pref = notificationPreferenceRepository.save(
+                NotificationPreference.builder()
+                        .user(user)
+                        .build()
+        );
+
+        assertThat(pref.getUserId()).isEqualTo(user.getId());
+        assertThat(pref.getEmailOnRejection()).isTrue();
+        assertThat(pref.getEmailOnApproval()).isTrue();
+        assertThat(pref.getEmailOnNewAssignment()).isTrue();
+        assertThat(pref.getEmailOnDueReminder()).isTrue();
+        assertThat(pref.getEmailDailyDigest()).isFalse();
+
+        // 부분 업데이트
+        pref.update(false, null, null, null, true);
+        notificationPreferenceRepository.save(pref);
+        assertThat(pref.getEmailOnRejection()).isFalse();
+        assertThat(pref.getEmailOnApproval()).isTrue();    // 변경 없음
+        assertThat(pref.getEmailDailyDigest()).isTrue();
+
+        // PK = userId 로 조회
+        assertThat(notificationPreferenceRepository.findById(user.getId())).isPresent();
+
+        Long userId = user.getId();
+
+        // ======================================================================
+        // CASCADE 검증 — JPA 영속성 컨텍스트 개입을 완전히 배제하고 DB 레벨로 검증
+        // ======================================================================
+        // JPA 매니지드 엔티티가 남아있으면 flush 순서 재배치·1차 캐시 등
+        // 예측하기 힘든 요소가 끼어들 수 있어, native SQL 로 테스트함.
+        //
+        // 기대 동작:
+        //   - @OnDelete(CASCADE) 가 DDL에 반영되어 FK가 ON DELETE CASCADE 를 가짐
+        //   - Native DELETE FROM users 시 DB가 notification_preferences 행을 CASCADE 삭제
+        //
+        // 만약 @OnDelete 가 DDL 생성에 실패했다면 DELETE 단계에서
+        // FK 제약 위반 예외가 즉시 발생해 원인이 명확히 드러남.
+
+        // 1) 메모리 상태를 DB에 확정 + 1차 캐시 비우기
+        entityManager.flush();
+        entityManager.clear();
+
+        // 2) Native SQL 로 user 삭제 (Hibernate managed entity 로직 우회)
+        int deletedUsers = entityManager.createNativeQuery(
+                "DELETE FROM users WHERE id = :id"
+        ).setParameter("id", userId).executeUpdate();
+        assertThat(deletedUsers).isEqualTo(1);
+
+        // 3) DB에 직접 질의해 notification_preferences 행이 CASCADE 로 사라졌는지 확인
+        Number remaining = (Number) entityManager.createNativeQuery(
+                "SELECT COUNT(*) FROM notification_preferences WHERE user_id = :id"
+        ).setParameter("id", userId).getSingleResult();
+        assertThat(remaining.longValue()).isEqualTo(0L);
+
+        System.out.println("✅ [v11] NotificationPreference 1:1 + User 삭제 CASCADE 정상 (native SQL 검증)");
     }
 }

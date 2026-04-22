@@ -7,9 +7,21 @@ spring:
 
   jpa:
     hibernate:
+      # Phase 5-1: Flyway가 스키마를 관리하므로 Hibernate는 검증만 수행
       ddl-auto: validate
     show-sql: false
+
+  # Phase 5-1: Flyway 마이그레이션 활성화 (prod 전용)
+  # 실행 순서: Flyway 마이그레이션 → Hibernate validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true       # 기존 운영 DB(Phase 2 반영분)에 처음 적용 시 V1을 baseline으로 등록
+    baseline-version: 0             # V1 부터 순차 적용
+    validate-on-migrate: true
+    out-of-order: false
 
 logging:
   level:
     com.secuhub: INFO
+    org.flywaydb: INFO
