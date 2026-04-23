@@ -21,11 +21,22 @@ public class ControlService {
     private final EvidenceTypeRepository evidenceTypeRepository;
     private final EvidenceFileRepository evidenceFileRepository;
 
+    /**
+     * 프레임워크별 통제항목 목록.
+     *
+     * <p>v11 Phase 5-9: 각 통제항목에 {@code pendingReviewCount} 집계를 주입한다.
+     * FrameworkService.findAll() 과 동일한 규약 — 통제 수가 수십~수백 규모라
+     * N+1 은 실용 범위. 규모 확대 시 GROUP BY 집계로 전환.</p>
+     */
     @Transactional(readOnly = true)
     public List<ControlDto.Response> findByFramework(Long frameworkId) {
         List<Control> controls = controlRepository.findByFrameworkIdWithEvidenceTypes(frameworkId);
         return controls.stream()
-                .map(ctrl -> ControlDto.Response.from(ctrl, countCollectedTypes(ctrl)))
+                .map(ctrl -> ControlDto.Response.from(
+                        ctrl,
+                        countCollectedTypes(ctrl),
+                        evidenceFileRepository.countByControlIdAndReviewStatus(
+                                ctrl.getId(), ReviewStatus.pending)))
                 .toList();
     }
 
@@ -60,7 +71,8 @@ public class ControlService {
                 .evidenceCollected(collectedCount)
                 .status(status)
                 .evidenceTypes(typeResponses)
-                .createdAt(control.getCreatedAt() != null ? control.getCreatedAt().toString() : null)
+                .createdAt(control.getCreatedAt() != null ?
+                        control.getCreatedAt().toString() : null)
                 .build();
     }
 
@@ -88,6 +100,7 @@ public class ControlService {
             }
         }
 
+        // 생성 직후엔 pending 파일이 있을 수 없으므로 2-인자 팩토리로 충분
         return ControlDto.Response.from(control, 0);
     }
 
@@ -96,7 +109,11 @@ public class ControlService {
         Control control = controlRepository.findById(controlId)
                 .orElseThrow(() -> new ResourceNotFoundException("통제항목", controlId));
         control.update(request.getCode(), request.getDomain(), request.getName(), request.getDescription());
-        return ControlDto.Response.from(control, countCollectedTypes(control));
+
+        // 수정 경로도 현재 pending 집계 반영 (UI 가 즉시 갱신할 수 있도록)
+        long pending = evidenceFileRepository.countByControlIdAndReviewStatus(
+                control.getId(), ReviewStatus.pending);
+        return ControlDto.Response.from(control, countCollectedTypes(control), pending);
     }
 
     @Transactional

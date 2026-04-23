@@ -54,4 +54,18 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
         """)
     long countByFrameworkIdAndReviewStatus(@Param("frameworkId") Long frameworkId,
                                            @Param("status") ReviewStatus status);
+
+    /**
+     * 특정 Control 내 승인 대기 건수 — Framework 상세 페이지의 통제 항목 행 배지 (Phase 5-9).
+     * evidence_types → controls 조인으로 집계.
+     *
+     * <p>패턴은 {@link #countByFrameworkIdAndReviewStatus(Long, ReviewStatus)} 와 동일.</p>
+     */
+    @Query("""
+        SELECT COUNT(ef) FROM EvidenceFile ef
+        WHERE ef.reviewStatus = :status
+          AND ef.evidenceType.control.id = :controlId
+        """)
+    long countByControlIdAndReviewStatus(@Param("controlId") Long controlId,
+                                         @Param("status") ReviewStatus status);
 }

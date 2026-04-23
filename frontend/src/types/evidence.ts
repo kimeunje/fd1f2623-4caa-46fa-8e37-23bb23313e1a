@@ -44,6 +44,9 @@ export interface ControlItem {
   evidenceCollected: number
   status: string // 완료/진행중/미수집
   createdAt: string
+
+  // v11 Phase 5-9 — 행 단위 "검토 대기 N건" 배지·파란 배경 강조용
+  pendingReviewCount?: number
 }
 
 export interface ControlDetail extends ControlItem {

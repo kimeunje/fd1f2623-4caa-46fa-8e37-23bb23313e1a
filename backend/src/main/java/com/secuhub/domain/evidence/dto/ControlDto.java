@@ -40,6 +40,13 @@ public class ControlDto {
         private String description;
     }
 
+    /**
+     * 통제항목 목록/생성/수정 응답 DTO.
+     *
+     * <p>v11 Phase 5-9 에서 Framework 상세 페이지의 행 단위 "검토 대기 N건" 배지를 위해
+     * {@code pendingReviewCount} 필드를 추가했다. FrameworkDto.Response 와 동일한 규약:
+     * 집계가 필요 없는 경로(생성/수정 직후)에서는 0 으로 채워진다.</p>
+     */
     @Getter
     @Builder
     @AllArgsConstructor
@@ -55,7 +62,20 @@ public class ControlDto {
         private String status;
         private String createdAt;
 
+        // v11 Phase 5-9 — 통제항목 행 단위 검토 대기 배지
+        private long pendingReviewCount;
+
+        /**
+         * 기존 2-인자 팩토리 유지 (생성/수정 경로 호환). pendingReviewCount=0 으로 채움.
+         */
         public static Response from(Control entity, int collected) {
+            return from(entity, collected, 0L);
+        }
+
+        /**
+         * v11 Phase 5-9 — 집계 포함 팩토리. 목록 조회에서 사용.
+         */
+        public static Response from(Control entity, int collected, long pendingReviewCount) {
             int total = entity.getEvidenceTypes() != null ? entity.getEvidenceTypes().size() : 0;
             String status;
             if (total == 0) status = "미수집";
@@ -73,7 +93,9 @@ public class ControlDto {
                     .evidenceTotal(total)
                     .evidenceCollected(collected)
                     .status(status)
-                    .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null)
+                    .createdAt(entity.getCreatedAt() != null ?
+                            entity.getCreatedAt().toString() : null)
+                    .pendingReviewCount(pendingReviewCount)
                     .build();
         }
     }
