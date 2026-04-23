@@ -22,7 +22,17 @@ function navigate(routeName: string) {
   router.push({ name: routeName })
 }
 
+/**
+ * 메뉴 활성 여부 판정.
+ *
+ * v11 Phase 5-3:
+ * - "통제 항목" 메뉴는 /controls (framework-list) 와 /controls/:id (framework-detail)
+ *   둘 다 활성으로 표시하기 위해 route.path 기반으로 판정.
+ */
 function isActive(routeName: string) {
+  if (routeName === 'framework-list') {
+    return route.path === '/controls' || route.path.startsWith('/controls/')
+  }
   return route.name === routeName
 }
 
@@ -37,7 +47,8 @@ const menuGroups = [
     id: 'evidence',
     label: '증빙 수집',
     items: [
-      { routeName: 'controls', icon: 'pi-list', label: '통제 항목' },
+      // v11 Phase 5-3: 'controls' → 'framework-list' (진입 페이지)
+      { routeName: 'framework-list', icon: 'pi-list', label: '통제 항목' },
       { routeName: 'jobs', icon: 'pi-play', label: '수집 작업' },
       { routeName: 'files', icon: 'pi-folder', label: '증빙 파일' },
     ],
@@ -86,44 +97,40 @@ const menuGroups = [
           <i :class="expandedMenus.includes(group.id) ? 'pi pi-chevron-down' : 'pi pi-chevron-right'" class="text-xs"></i>
         </button>
 
-        <!-- 메뉴 아이템 -->
-        <div v-if="!group.label || expandedMenus.includes(group.id)" class="space-y-1">
+        <!-- 메뉴 항목 -->
+        <div v-show="!group.label || expandedMenus.includes(group.id)" class="space-y-0.5">
           <button
             v-for="item in group.items"
             :key="item.routeName"
             @click="navigate(item.routeName)"
             :class="[
-              'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+              'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
               isActive(item.routeName)
-                ? 'bg-blue-50 text-blue-600'
-                : 'text-gray-600 hover:bg-gray-100',
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-700 hover:bg-gray-50'
             ]"
           >
-            <i :class="['pi', item.icon, 'text-base']"></i>
-            {{ item.label }}
+            <i :class="['pi', item.icon, 'text-sm']"></i>
+            <span>{{ item.label }}</span>
           </button>
         </div>
       </div>
     </nav>
 
-    <!-- 사용자 정보 -->
-    <div class="p-4 border-t border-gray-200">
-      <div class="flex items-center gap-3 mb-3">
-        <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-medium text-sm">
-          {{ authStore.user?.name?.[0] || '관' }}
+    <!-- 사용자 영역 -->
+    <div class="p-3 border-t border-gray-200">
+      <div class="flex items-center gap-3 px-3 py-2">
+        <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs font-medium text-gray-600">
+          {{ authStore.user?.name?.charAt(0) || '?' }}
         </div>
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-900 truncate">{{ authStore.user?.name }}</p>
-          <p class="text-xs text-gray-500 truncate">{{ authStore.user?.email }}</p>
+          <div class="text-sm font-medium text-gray-900 truncate">{{ authStore.user?.name || '-' }}</div>
+          <div class="text-xs text-gray-500 truncate">{{ authStore.user?.team || authStore.user?.email || '-' }}</div>
         </div>
+        <button @click="authStore.logout(); router.push('/login')" class="p-1.5 text-gray-400 hover:text-gray-600" title="로그아웃">
+          <i class="pi pi-sign-out text-sm"></i>
+        </button>
       </div>
-      <button
-        @click="authStore.logout(); router.push('/login')"
-        class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-      >
-        <i class="pi pi-sign-out text-xs"></i>
-        로그아웃
-      </button>
     </div>
   </div>
 </template>

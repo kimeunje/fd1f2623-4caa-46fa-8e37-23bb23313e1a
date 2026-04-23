@@ -4,6 +4,13 @@ import { frameworksApi, controlsApi, evidenceFilesApi } from '@/services/evidenc
 import type { Framework, ControlItem, ControlDetail, ExcelImportResult } from '@/types/evidence'
 
 // ========================================
+// Props (v11 Phase 5-3: 라우트 /controls/:frameworkId 에서 전달)
+// ========================================
+const props = defineProps<{
+  frameworkId?: number
+}>()
+
+// ========================================
 // 상태 정의
 // ========================================
 
@@ -104,7 +111,14 @@ async function loadFrameworks() {
     const { data } = await frameworksApi.list()
     if (data.success && data.data.length > 0) {
       frameworks.value = data.data
-      selectedFrameworkId.value = data.data[0].id
+
+      // v11 Phase 5-3: URL 의 frameworkId 를 우선. 없으면 첫 번째 Framework.
+      const routeFwId = props.frameworkId
+      const matched = routeFwId != null
+        ? frameworks.value.find(f => f.id === routeFwId)
+        : null
+
+      selectedFrameworkId.value = matched ? matched.id : frameworks.value[0].id
       await loadControls()
     }
   } catch (e) { console.error(e) }

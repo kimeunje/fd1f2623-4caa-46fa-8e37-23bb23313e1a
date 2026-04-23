@@ -26,22 +26,33 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/admin/DashboardView.vue'),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin' },
   },
+
+  // v11 Phase 5-3: /controls 는 Framework 목록 페이지, 상세는 /controls/:frameworkId
   {
     path: '/controls',
-    name: 'controls',
-    component: () => import('@/views/admin/ControlsView.vue'),          // ← Phase 2
+    name: 'framework-list',
+    component: () => import('@/views/admin/FrameworkListView.vue'),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '통제 항목' },
   },
   {
+    path: '/controls/:frameworkId',
+    name: 'framework-detail',
+    component: () => import('@/views/admin/ControlsView.vue'),
+    // props 로 frameworkId 를 숫자로 전달 (param → number 변환)
+    props: (route) => ({ frameworkId: Number(route.params.frameworkId) }),
+    meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: 'Framework 상세' },
+  },
+
+  {
     path: '/jobs',
     name: 'jobs',
-    component: () => import('@/views/admin/JobsView.vue'),              // ← Phase 2
+    component: () => import('@/views/admin/JobsView.vue'),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '수집 작업' },
   },
   {
     path: '/files',
     name: 'files',
-    component: () => import('@/views/admin/FilesView.vue'),             // ← Phase 2
+    component: () => import('@/views/admin/FilesView.vue'),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '증빙 파일' },
   },
   {
