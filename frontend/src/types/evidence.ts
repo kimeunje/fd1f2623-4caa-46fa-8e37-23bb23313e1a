@@ -196,3 +196,103 @@ export interface ExcelImportResult {
   failCount: number
   errors: string[]
 }
+
+// ========================================
+// v11 Phase 5-5 — 담당자 "내 할 일"
+// ========================================
+
+/**
+ * "내 할 일" 5개 섹션 각각의 카드에 표시되는 정보.
+ * 섹션별로 의미있는 필드가 달라지므로 선택 필드가 많다.
+ */
+export interface MyTaskItem {
+  evidenceTypeId: number
+  evidenceTypeName: string
+
+  controlId?: number
+  controlCode?: string
+  controlName?: string
+  frameworkId?: number
+  frameworkName?: string
+
+  /** ISO yyyy-MM-dd */
+  dueDate?: string
+  /** null = 마감일 없음. 음수 = 지남. */
+  daysUntilDue?: number
+
+  latestFileId?: number
+  latestFileName?: string
+  latestVersion?: number
+  latestReviewStatus?: ReviewStatus
+  submittedAt?: string
+  reviewedAt?: string
+
+  // rejected 섹션에서 유의미
+  rejectReason?: string
+  rejectedByName?: string
+
+  // completed 섹션에서 유의미
+  approvedByName?: string
+}
+
+export interface MyTasksCounts {
+  rejected: number
+  dueSoon: number
+  notSubmitted: number
+  inReview: number
+  completed: number
+}
+
+export interface MyTasksResponse {
+  rejected: MyTaskItem[]
+  dueSoon: MyTaskItem[]
+  notSubmitted: MyTaskItem[]
+  inReview: MyTaskItem[]
+  completed: MyTaskItem[]
+  counts: MyTasksCounts
+}
+
+/** "내 할 일" 섹션 키. UI 상수로 사용. */
+export type MyTaskSectionKey = 'rejected' | 'dueSoon' | 'notSubmitted' | 'inReview' | 'completed'
+
+/**
+ * 재제출 페이지 상세 응답 (단일 증빙 유형 + 이력).
+ */
+export interface MyTaskDetail {
+  evidenceTypeId: number
+  evidenceTypeName: string
+  description?: string
+
+  controlId?: number
+  controlCode?: string
+  controlName?: string
+  frameworkId?: number
+  frameworkName?: string
+
+  dueDate?: string
+  daysUntilDue?: number
+
+  /** "rejected" | "pending" | "approved" | "auto_approved" | "not_submitted" | "unknown" */
+  currentStatus: string
+
+  rejectReason?: string
+  rejectedByName?: string
+  rejectedAt?: string
+
+  history: MyTaskFileHistoryEntry[]
+}
+
+export interface MyTaskFileHistoryEntry {
+  fileId: number
+  fileName: string
+  fileSize: number
+  version: number
+  collectionMethod: 'auto' | 'manual'
+  collectedAt: string
+  uploadedByName?: string
+  submitNote?: string
+  reviewStatus?: ReviewStatus
+  reviewedByName?: string
+  reviewNote?: string
+  reviewedAt?: string
+}

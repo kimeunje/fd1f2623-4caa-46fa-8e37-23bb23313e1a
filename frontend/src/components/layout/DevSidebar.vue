@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
@@ -14,13 +15,44 @@ function isActive(routeName: string) {
   return route.name === routeName
 }
 
+/**
+ * 메뉴 정의.
+ *
+ * - `roles`: 있으면 해당 역할만 볼 수 있음 (기존 패턴).
+ * - `requirePermissionEvidence`: v11 Phase 5-5 추가. true 면 permission_evidence=true
+ *   또는 admin 역할일 때만 노출. "내 할 일" 메뉴를 담당자에게만 보이게 하는 용도.
+ */
 const menuItems = [
   { routeName: 'dev-dashboard', icon: 'pi-home', label: '전체 현황' },
   { routeName: 'dev-my-vulns', icon: 'pi-user', label: '나의 현황' },
+
+  // v11 Phase 5-5: "내 할 일" — permission_evidence=true 인 담당자에게만 노출
+  {
+    routeName: 'my-tasks',
+    icon: 'pi-inbox',
+    label: '내 할 일',
+    requirePermissionEvidence: true,
+  },
+
   { routeName: 'dev-vulns', icon: 'pi-exclamation-circle', label: '취약점 목록' },
   { routeName: 'dev-approvals', icon: 'pi-check-square', label: '결재 관리', roles: ['approver'] },
   { routeName: 'dev-history', icon: 'pi-clock', label: '조치 이력' },
 ]
+
+/**
+ * 메뉴 필터 — roles 와 requirePermissionEvidence 를 모두 고려.
+ * admin 이어도 dev 레이아웃에 진입한 경우 보이게 함 (엣지 케이스).
+ */
+const visibleMenuItems = computed(() => {
+  const role = authStore.user?.role || ''
+  const hasEvidence = authStore.hasEvidenceAccess || authStore.isAdmin
+
+  return menuItems.filter(item => {
+    if (item.roles && !item.roles.includes(role)) return false
+    if (item.requirePermissionEvidence && !hasEvidence) return false
+    return true
+  })
+})
 </script>
 
 <template>
@@ -39,21 +71,20 @@ const menuItems = [
     <!-- 메뉴 -->
     <nav class="flex-1 p-3">
       <div class="space-y-1">
-        <template v-for="item in menuItems" :key="item.routeName">
-          <button
-            v-if="!item.roles || item.roles.includes(authStore.user?.role || '')"
-            @click="navigate(item.routeName)"
-            :class="[
-              'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-              isActive(item.routeName)
-                ? 'bg-emerald-50 text-emerald-600'
-                : 'text-gray-600 hover:bg-gray-100',
-            ]"
-          >
-            <i :class="['pi', item.icon, 'text-base']"></i>
-            {{ item.label }}
-          </button>
-        </template>
+        <button
+          v-for="item in visibleMenuItems"
+          :key="item.routeName"
+          @click="navigate(item.routeName)"
+          :class="[
+            'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+            isActive(item.routeName)
+              ? 'bg-emerald-50 text-emerald-600'
+              : 'text-gray-600 hover:bg-gray-100',
+          ]"
+        >
+          <i :class="['pi', item.icon, 'text-base']"></i>
+          {{ item.label }}
+        </button>
       </div>
     </nav>
 

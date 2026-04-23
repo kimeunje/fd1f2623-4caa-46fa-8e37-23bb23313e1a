@@ -19,6 +19,8 @@ import type {
   CollectionJobUpdatePayload,
   ExecutionSummary,
   ExcelImportResult,
+  MyTasksResponse,
+  MyTaskDetail,
 } from '@/types/evidence'
 
 // ========================================
@@ -226,5 +228,27 @@ export const jobsApi = {
   },
   execute(id: number) {
     return api.post<ApiResponse<ExecutionSummary>>(`/jobs/${id}/execute`)
+  },
+}
+
+// ========================================
+// v11 Phase 5-5: 담당자 "내 할 일" API
+// ========================================
+export const myTasksApi = {
+  /**
+   * 5섹션 묶음 응답 조회.
+   * - permission_evidence=false 사용자는 403
+   * - admin 은 항상 허용 (본인 owner 증빙만 반환)
+   */
+  list() {
+    return api.get<ApiResponse<MyTasksResponse>>('/my-tasks')
+  },
+
+  /**
+   * 증빙 유형 상세 (재제출 페이지용).
+   * 본인 소유가 아니면 403.
+   */
+  getDetail(evidenceTypeId: number) {
+    return api.get<ApiResponse<MyTaskDetail>>(`/my-tasks/${evidenceTypeId}`)
   },
 }

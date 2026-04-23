@@ -108,6 +108,38 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: ['developer', 'approver'], layout: 'dev', title: '조치 이력' },
   },
 
+  // ========================================
+  // v11 Phase 5-5 — 담당자 "내 할 일"
+  // ========================================
+  // layout: 'dev' — 담당자 전용 워크스페이스이므로 DevLayout 사용.
+  // roles 는 모두 허용하되, 추가로 permission_evidence=true 를 가드에서 체크.
+  // API 레벨에서도 MyTasksService 가 한 번 더 검증한다.
+  {
+    path: '/my-tasks',
+    name: 'my-tasks',
+    component: () => import('@/views/dev/MyTasksView.vue'),
+    meta: {
+      requiresAuth: true,
+      roles: ['admin', 'developer', 'approver'],
+      requirePermissionEvidence: true,
+      layout: 'dev',
+      title: '내 할 일',
+    },
+  },
+  {
+    path: '/my-tasks/:evidenceTypeId',
+    name: 'my-task-detail',
+    component: () => import('@/views/dev/MyEvidenceDetailView.vue'),
+    props: (route) => ({ evidenceTypeId: Number(route.params.evidenceTypeId) }),
+    meta: {
+      requiresAuth: true,
+      roles: ['admin', 'developer', 'approver'],
+      requirePermissionEvidence: true,
+      layout: 'dev',
+      title: '증빙 재제출',
+    },
+  },
+
   // 404
   {
     path: '/:pathMatch(.*)*',
@@ -144,6 +176,13 @@ router.beforeEach((to, _from, next) => {
 
   const allowedRoles = to.meta.roles as string[] | undefined
   if (allowedRoles && !allowedRoles.includes(authStore.user?.role || '')) {
+    next(authStore.isAdmin ? '/dashboard' : '/dev/dashboard')
+    return
+  }
+
+  // v11 Phase 5-5: permission_evidence 요구하는 라우트는 플래그도 추가로 체크
+  const needsEvidencePerm = to.meta.requirePermissionEvidence as boolean | undefined
+  if (needsEvidencePerm && !authStore.isAdmin && !authStore.hasEvidenceAccess) {
     next(authStore.isAdmin ? '/dashboard' : '/dev/dashboard')
     return
   }
