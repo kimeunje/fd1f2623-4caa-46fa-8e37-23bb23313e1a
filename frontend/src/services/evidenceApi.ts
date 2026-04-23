@@ -11,6 +11,8 @@ import type {
   EvidenceTypeResponse,
   EvidenceFileItem,
   EvidenceFileStats,
+  ApproveRequest,
+  RejectRequest,
   CollectionJobItem,
   CollectionJobDetail,
   CollectionJobCreatePayload,
@@ -87,17 +89,31 @@ export const evidenceFilesApi = {
   getStats() {
     return api.get<ApiResponse<EvidenceFileStats>>('/evidence-files/stats')
   },
-  upload(evidenceTypeId: number, file: File) {
+
+  /**
+   * 증빙 파일 업로드 (Phase 5-2 / 5-4 확장)
+   *
+   * admin 이 업로드하면 review_status=auto_approved,
+   * 담당자가 업로드하면 review_status=pending 으로 자동 설정됨.
+   *
+   * @param submitNote 담당자 제출 메모 (선택, admin 은 보통 생략)
+   */
+  upload(evidenceTypeId: number, file: File, submitNote?: string) {
     const formData = new FormData()
     formData.append('evidenceTypeId', String(evidenceTypeId))
     formData.append('file', file)
+    if (submitNote) {
+      formData.append('submitNote', submitNote)
+    }
     return api.post<ApiResponse<EvidenceFileItem>>('/evidence-files/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
+
   delete(id: number) {
     return api.delete(`/evidence-files/${id}`)
   },
+
   /**
    * 증빙 파일 다운로드 — Blob으로 받아서 브라우저 다운로드 트리거
    * JWT 토큰이 Authorization 헤더에 자동 포함됩니다.
@@ -111,12 +127,10 @@ export const evidenceFilesApi = {
     let downloadName = fileName || 'download'
     const disposition = response.headers['content-disposition']
     if (disposition) {
-      // filename*=UTF-8''encoded_name 형식 우선
       const utf8Match = disposition.match(/filename\*=UTF-8''(.+?)(?:;|$)/)
       if (utf8Match) {
         downloadName = decodeURIComponent(utf8Match[1])
       } else {
-        // filename="name" 형식 fallback
         const basicMatch = disposition.match(/filename="?(.+?)"?(?:;|$)/)
         if (basicMatch) {
           downloadName = basicMatch[1]
@@ -124,7 +138,6 @@ export const evidenceFilesApi = {
       }
     }
 
-    // Blob URL 생성 → <a> 클릭으로 다운로드 트리거
     const blob = new Blob([response.data])
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -135,6 +148,7 @@ export const evidenceFilesApi = {
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
   },
+
   /**
    * 통제항목별 전체 증빙 파일 ZIP 다운로드
    */
@@ -142,7 +156,7 @@ export const evidenceFilesApi = {
     const response = await api.get(`/evidence-files/zip/${controlId}`, {
       responseType: 'blob',
     })
- 
+
     const blob = new Blob([response.data], { type: 'application/zip' })
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -152,6 +166,39 @@ export const evidenceFilesApi = {
     link.click()
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
+  },
+
+  // ========================================
+  // Phase 5-4: 승인 플로우 (관리자 전용)
+  // ========================================
+
+  /**
+   * 승인 대기 목록 조회 (페이징, 관리자 전용)
+   */
+  listPending(params?: { page?: number; size?: number }) {
+    return api.get<ApiResponse<PageResponse<EvidenceFileItem>>>('/evidence-files/pending', { params })
+  },
+
+  /**
+   * 증빙 파일 승인 (관리자 전용)
+   * reviewNote 는 선택. 생략 가능.
+   */
+  approve(fileId: number, payload?: ApproveRequest) {
+    return api.post<ApiResponse<EvidenceFileItem>>(
+      `/evidence-files/${fileId}/approve`,
+      payload ?? {}
+    )
+  },
+
+  /**
+   * 증빙 파일 반려 (관리자 전용)
+   * reviewNote 필수. 빈 값이면 백엔드가 400 응답.
+   */
+  reject(fileId: number, payload: RejectRequest) {
+    return api.post<ApiResponse<EvidenceFileItem>>(
+      `/evidence-files/${fileId}/reject`,
+      payload
+    )
   },
 }
 

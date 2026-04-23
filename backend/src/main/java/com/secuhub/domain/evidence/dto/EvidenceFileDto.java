@@ -1,6 +1,7 @@
 package com.secuhub.domain.evidence.dto;
 
 import com.secuhub.domain.evidence.entity.EvidenceFile;
+import jakarta.validation.constraints.NotBlank;
 import lombok.*;
 import org.springframework.core.io.Resource;
 
@@ -14,10 +15,34 @@ public class EvidenceFileDto {
         private Long evidenceTypeId;
     }
 
+    /**
+     * 승인 요청 DTO (Phase 5-4 신규)
+     * reviewNote 는 선택. 제공되지 않으면 null 로 저장.
+     */
+    @Getter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ApproveRequest {
+        private String reviewNote;
+    }
+
+    /**
+     * 반려 요청 DTO (Phase 5-4 신규)
+     * reviewNote 필수 — 빈 값이면 400 (GlobalExceptionHandler 가 변환).
+     */
+    @Getter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class RejectRequest {
+        @NotBlank(message = "반려 사유는 필수입니다.")
+        private String reviewNote;
+    }
+
     @Getter
     @Builder
     @AllArgsConstructor
     public static class Response {
+        // 기본 메타데이터
         private Long id;
         private Long evidenceTypeId;
         private String evidenceTypeName;
@@ -30,6 +55,18 @@ public class EvidenceFileDto {
         private String collectionMethod;
         private String collectedAt;
         private String createdAt;
+
+        // v11 Phase 5-4: 업로더 정보
+        private Long uploadedById;
+        private String uploadedByName;
+        private String submitNote;
+
+        // v11 Phase 5-4: 검토 상태
+        private String reviewStatus;         // pending / approved / rejected / auto_approved
+        private Long reviewedById;
+        private String reviewedByName;
+        private String reviewNote;
+        private String reviewedAt;
 
         public static Response from(EvidenceFile entity) {
             return Response.builder()
@@ -45,6 +82,16 @@ public class EvidenceFileDto {
                     .collectionMethod(entity.getCollectionMethod().name())
                     .collectedAt(entity.getCollectedAt() != null ? entity.getCollectedAt().toString() : null)
                     .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null)
+                    // 업로더 (null-safe)
+                    .uploadedById(entity.getUploadedBy() != null ? entity.getUploadedBy().getId() : null)
+                    .uploadedByName(entity.getUploadedBy() != null ? entity.getUploadedBy().getName() : null)
+                    .submitNote(entity.getSubmitNote())
+                    // 검토 상태 (null-safe)
+                    .reviewStatus(entity.getReviewStatus() != null ? entity.getReviewStatus().name() : null)
+                    .reviewedById(entity.getReviewedBy() != null ? entity.getReviewedBy().getId() : null)
+                    .reviewedByName(entity.getReviewedBy() != null ? entity.getReviewedBy().getName() : null)
+                    .reviewNote(entity.getReviewNote())
+                    .reviewedAt(entity.getReviewedAt() != null ? entity.getReviewedAt().toString() : null)
                     .build();
         }
     }

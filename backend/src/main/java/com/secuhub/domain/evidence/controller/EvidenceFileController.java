@@ -7,6 +7,7 @@ import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import com.secuhub.domain.evidence.service.EvidenceAuthService;
 import com.secuhub.domain.evidence.service.EvidenceFileService;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
@@ -26,15 +27,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * 증빙 파일 API (Phase 5-2 권한 체계 적용)
+ * 증빙 파일 API
  *
  * <h3>권한 매트릭스</h3>
  * <ul>
- *   <li>관리자 전용: list, stats, downloadZip, delete</li>
+ *   <li>관리자 전용: list, stats, downloadZip, delete,
+ *       <b>approve, reject, pending</b> (Phase 5-4)</li>
  *   <li>관리자 + 소유 담당자: listByType, upload, download</li>
  * </ul>
- *
- * <p>상세 규칙은 {@link EvidenceAuthService} 참조.</p>
  */
 @RestController
 @RequestMapping("/api/v1/evidence-files")
@@ -44,6 +44,66 @@ public class EvidenceFileController {
 
     private final EvidenceFileService evidenceFileService;
     private final EvidenceAuthService evidenceAuthService;
+
+    // ========================================================================
+    // Phase 5-4: 승인 플로우 (신규)
+    // ========================================================================
+
+    /**
+     * 승인 대기 목록 (관리자 전용) — 페이징
+     * GET /api/v1/evidence-files/pending?page=0&size=20
+     */
+    @GetMapping("/pending")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<PageResponse<EvidenceFileDto.Response>>> pending(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Page<EvidenceFileDto.Response> result = evidenceFileService.findPending(
+                PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt")));
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.from(result)));
+    }
+
+    /**
+     * 증빙 파일 승인 (관리자 전용)
+     * POST /api/v1/evidence-files/{id}/approve
+     *
+     * <p>Body (optional): {@code { "reviewNote": "검토 완료되었습니다." }}</p>
+     * <p>상태 전이: pending → approved.
+     * 그 외 상태에서는 400 BusinessException.</p>
+     */
+    @PostMapping("/{id}/approve")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<EvidenceFileDto.Response>> approve(
+            @PathVariable Long id,
+            @RequestBody(required = false) EvidenceFileDto.ApproveRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        String note = request != null ? request.getReviewNote() : null;
+        EvidenceFileDto.Response response = evidenceFileService.approve(id, principal, note);
+        return ResponseEntity.ok(ApiResponse.ok("승인 처리되었습니다.", response));
+    }
+
+    /**
+     * 증빙 파일 반려 (관리자 전용) — 반려 사유 필수
+     * POST /api/v1/evidence-files/{id}/reject
+     *
+     * <p>Body (required): {@code { "reviewNote": "형식이 맞지 않습니다." }}</p>
+     * <p>reviewNote 빈 값이면 400 Validation Error.
+     * 상태 전이: pending → rejected. 그 외 상태에서는 400.</p>
+     */
+    @PostMapping("/{id}/reject")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<EvidenceFileDto.Response>> reject(
+            @PathVariable Long id,
+            @Valid @RequestBody EvidenceFileDto.RejectRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        EvidenceFileDto.Response response =
+                evidenceFileService.reject(id, principal, request.getReviewNote());
+        return ResponseEntity.ok(ApiResponse.ok("반려 처리되었습니다.", response));
+    }
+
+    // ========================================================================
+    // 기존 엔드포인트 (Phase 5-2 기준)
+    // ========================================================================
 
     /**
      * 전체 증빙 파일 목록 (페이징) — 관리자 전용
@@ -82,12 +142,11 @@ public class EvidenceFileController {
     }
 
     /**
-     * 증빙 파일 수동 업로드 — 관리자 또는 소유 담당자 (Phase 5-2 확장)
+     * 증빙 파일 수동 업로드 — 관리자 또는 소유 담당자
      * POST /api/v1/evidence-files/upload
      *
-     * <p>admin 업로드는 {@code review_status=auto_approved},
-     * 담당자 업로드는 {@code review_status=pending} 로 기록된다.
-     * {@code uploaded_by} 는 항상 현재 인증된 사용자로 설정.</p>
+     * <p>admin 업로드 → review_status=auto_approved,
+     * 담당자 업로드 → review_status=pending. uploaded_by 항상 기록.</p>
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<EvidenceFileDto.Response>> upload(
@@ -115,7 +174,6 @@ public class EvidenceFileController {
 
         EvidenceFileDto.DownloadResponse downloadInfo = evidenceFileService.download(id);
 
-        // 한글 파일명 지원: RFC 5987 (filename*=UTF-8'')
         String encodedFileName = URLEncoder.encode(downloadInfo.getFileName(), StandardCharsets.UTF_8)
                 .replaceAll("\\+", "%20");
 
@@ -130,7 +188,7 @@ public class EvidenceFileController {
     }
 
     /**
-     * 통제항목별 전체 증빙 파일 ZIP 다운로드 — 관리자 전용 (감사 대응 목적)
+     * 통제항목별 전체 증빙 파일 ZIP 다운로드 — 관리자 전용
      * GET /api/v1/evidence-files/zip/{controlId}
      */
     @GetMapping("/zip/{controlId}")

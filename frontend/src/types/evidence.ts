@@ -68,6 +68,16 @@ export interface EvidenceTypeResponse {
 // ========================================
 // 증빙 파일
 // ========================================
+
+/**
+ * 증빙 파일 검토 상태 (v11 Phase 5-4)
+ * - pending       담당자 업로드 후 관리자 검토 대기
+ * - approved      관리자 승인 완료
+ * - rejected      관리자 반려 (review_note 필수)
+ * - auto_approved 관리자 직접 업로드 또는 자동수집 결과 (검토 생략)
+ */
+export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'auto_approved'
+
 export interface EvidenceFileItem {
   id: number
   evidenceTypeId: number
@@ -81,6 +91,18 @@ export interface EvidenceFileItem {
   collectionMethod: 'auto' | 'manual'
   collectedAt: string
   createdAt: string
+
+  // v11 Phase 5-4: 업로더 정보
+  uploadedById?: number
+  uploadedByName?: string
+  submitNote?: string
+
+  // v11 Phase 5-4: 검토 상태
+  reviewStatus?: ReviewStatus
+  reviewedById?: number
+  reviewedByName?: string
+  reviewNote?: string
+  reviewedAt?: string
 }
 
 export interface EvidenceFileStats {
@@ -88,6 +110,22 @@ export interface EvidenceFileStats {
   quarterFiles: number
   totalSizeBytes: number
   controlCoverage: number
+}
+
+/**
+ * 승인 요청 페이로드 (v11 Phase 5-4)
+ * reviewNote 는 optional.
+ */
+export interface ApproveRequest {
+  reviewNote?: string
+}
+
+/**
+ * 반려 요청 페이로드 (v11 Phase 5-4)
+ * reviewNote 필수. 빈 값 보내면 백엔드가 400 응답.
+ */
+export interface RejectRequest {
+  reviewNote: string
 }
 
 // ========================================
@@ -133,7 +171,7 @@ export interface ExecutionSummary {
   startedAt?: string
   finishedAt?: string
   errorMessage?: string
-  createdAt: string
+  createdAt?: string
 }
 
 // ========================================

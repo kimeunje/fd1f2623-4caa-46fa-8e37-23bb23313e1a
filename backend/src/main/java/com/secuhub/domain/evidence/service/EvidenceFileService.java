@@ -41,27 +41,113 @@ public class EvidenceFileService {
     private final EvidenceFileRepository evidenceFileRepository;
     private final EvidenceTypeRepository evidenceTypeRepository;
     private final ControlRepository controlRepository;
-    private final UserRepository userRepository;    // v11 Phase 5-2: uploadedBy 기록용
+    private final UserRepository userRepository;
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
 
+    // ========================================
+    // Phase 5-4: 승인 플로우
+    // ========================================
+
     /**
-     * 수동 파일 업로드 — 버전 자동 증가 (Phase 5-2 업데이트)
+     * 증빙 파일 승인 (admin 전용 — Controller 에서 hasRole 검증)
      *
-     * <p>업로더 역할에 따라 초기 검토 상태가 달라진다:</p>
+     * <p>상태 전이: {@code pending → approved}.
+     * 그 외 상태에서는 {@link BusinessException} (400) 던짐.</p>
+     *
+     * @param fileId   대상 파일 ID
+     * @param reviewer 관리자 Principal
+     * @param note     승인 코멘트 (optional, null 허용)
+     * @return 갱신된 파일 DTO
+     */
+    @Transactional
+    public EvidenceFileDto.Response approve(Long fileId, UserPrincipal reviewer, String note) {
+        EvidenceFile file = evidenceFileRepository.findById(fileId)
+                .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
+
+        assertPendingStatus(file, "승인");
+
+        User reviewerEntity = userRepository.findById(reviewer.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("사용자", reviewer.getUserId()));
+
+        file.approve(reviewerEntity, note);
+        log.info("증빙 파일 승인: fileId={}, reviewer={}", fileId, reviewer.getEmail());
+
+        return EvidenceFileDto.Response.from(file);
+    }
+
+    /**
+     * 증빙 파일 반려 (admin 전용 — Controller 에서 hasRole 검증)
+     *
+     * <p>상태 전이: {@code pending → rejected}.
+     * reviewNote 빈 값은 DTO {@code @NotBlank} 로 검증되어 400 처리되므로
+     * 여기선 다시 검증하지 않는다.</p>
+     *
+     * @param fileId   대상 파일 ID
+     * @param reviewer 관리자 Principal
+     * @param note     반려 사유 (DTO 에서 검증됨)
+     * @return 갱신된 파일 DTO
+     */
+    @Transactional
+    public EvidenceFileDto.Response reject(Long fileId, UserPrincipal reviewer, String note) {
+        EvidenceFile file = evidenceFileRepository.findById(fileId)
+                .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
+
+        assertPendingStatus(file, "반려");
+
+        User reviewerEntity = userRepository.findById(reviewer.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("사용자", reviewer.getUserId()));
+
+        file.reject(reviewerEntity, note);
+        log.info("증빙 파일 반려: fileId={}, reviewer={}, reason={}",
+                fileId, reviewer.getEmail(), truncate(note, 60));
+
+        return EvidenceFileDto.Response.from(file);
+    }
+
+    /**
+     * 승인 대기 목록 (admin 전용 — Controller 에서 hasRole 검증).
+     *
+     * <p>대시보드 "내 승인 대기" 위젯 (Phase 5-8) 에서도 재사용한다.</p>
+     */
+    @Transactional(readOnly = true)
+    public Page<EvidenceFileDto.Response> findPending(Pageable pageable) {
+        return evidenceFileRepository.findByReviewStatus(ReviewStatus.pending, pageable)
+                .map(EvidenceFileDto.Response::from);
+    }
+
+    /**
+     * 검토 상태 전이 가능 여부 확인.
+     * pending 만 approve/reject 대상이 된다. 나머지는 400 예외로 막아
+     * reviewed_at 덮어쓰기·이중 처리를 방지한다.
+     */
+    private void assertPendingStatus(EvidenceFile file, String action) {
+        ReviewStatus current = file.getReviewStatus();
+        if (current != ReviewStatus.pending) {
+            throw new BusinessException(String.format(
+                    "%s 처리할 수 없습니다. 현재 상태: %s (검토 대기 상태에서만 처리 가능)",
+                    action, current != null ? current.name() : "null"));
+        }
+    }
+
+    private String truncate(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max) + "…";
+    }
+
+    // ========================================
+    // Phase 5-2: 업로드
+    // ========================================
+
+    /**
+     * 수동 파일 업로드 — 버전 자동 증가
+     *
+     * <p>역할별 초기 검토 상태:</p>
      * <ul>
-     *   <li><b>admin</b> → {@code auto_approved} (관리자 직접 업로드는 검토 생략)</li>
-     *   <li><b>담당자</b> → {@code pending} (관리자 검토 대기)</li>
+     *   <li>admin → auto_approved (관리자 직접 업로드는 검토 생략)</li>
+     *   <li>담당자 → pending (관리자 검토 대기)</li>
      * </ul>
-     *
-     * <p>호출 전 Controller 가 {@link EvidenceAuthService#assertCanAccessEvidenceType}
-     * 로 권한을 검증해야 한다. 이 메서드는 권한 재검증을 하지 않는다.</p>
-     *
-     * @param evidenceTypeId 업로드 대상 증빙 유형 ID
-     * @param file           업로드 파일
-     * @param uploader       업로더 Principal (JWT 기반, null 불가)
-     * @param submitNote     담당자 제출 메모 (선택, admin 은 보통 null)
      */
     @Transactional
     public EvidenceFileDto.Response upload(Long evidenceTypeId,
@@ -71,14 +157,11 @@ public class EvidenceFileService {
         EvidenceType evidenceType = evidenceTypeRepository.findById(evidenceTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 유형", evidenceTypeId));
 
-        // 다음 버전 계산
         int nextVersion = evidenceFileRepository.findMaxVersionByEvidenceTypeId(evidenceTypeId)
                 .orElse(0) + 1;
 
-        // 파일 저장
         String savedPath = saveFile(file, evidenceType.getControl().getCode(), evidenceTypeId);
 
-        // v11: 업로더 엔티티 조회 + 역할별 초기 검토 상태 결정
         User uploaderEntity = userRepository.findById(uploader.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("사용자", uploader.getUserId()));
 
@@ -106,18 +189,16 @@ public class EvidenceFileService {
         return EvidenceFileDto.Response.from(evidenceFile);
     }
 
-    /**
-     * 전체 증빙 파일 목록 (페이징) — 관리자 전용 (Controller 메서드 레벨 제한)
-     */
+    // ========================================
+    // 조회
+    // ========================================
+
     @Transactional(readOnly = true)
     public Page<EvidenceFileDto.Response> findAll(Pageable pageable) {
         return evidenceFileRepository.findAll(pageable)
                 .map(EvidenceFileDto.Response::from);
     }
 
-    /**
-     * 증빙 유형별 파일 이력 — 관리자 또는 소유 담당자 (Controller 에서 권한 체크)
-     */
     @Transactional(readOnly = true)
     public List<EvidenceFileDto.Response> findByEvidenceType(Long evidenceTypeId) {
         return evidenceFileRepository.findByEvidenceTypeIdOrderByVersionDesc(evidenceTypeId).stream()
@@ -125,15 +206,6 @@ public class EvidenceFileService {
                 .toList();
     }
 
-    /**
-     * 증빙 파일 다운로드 — 관리자 또는 소유 담당자 (Controller 에서 권한 체크)
-     *
-     * 1. DB에서 파일 메타정보 조회
-     * 2. 물리 파일 경로 검증
-     * 3. Resource 객체 반환
-     *
-     * @return EvidenceFileDto.DownloadResponse (Resource + 원본 파일명 + Content-Type)
-     */
     @Transactional(readOnly = true)
     public EvidenceFileDto.DownloadResponse download(Long fileId) {
         EvidenceFile file = evidenceFileRepository.findById(fileId)
@@ -141,7 +213,6 @@ public class EvidenceFileService {
 
         Path filePath = Paths.get(file.getFilePath()).toAbsolutePath().normalize();
 
-        // 물리 파일 존재 여부 확인
         if (!Files.exists(filePath)) {
             log.error("증빙 파일 물리 경로에 파일이 없습니다: {} (fileId={})", filePath, fileId);
             throw new BusinessException("파일이 저장소에 존재하지 않습니다. 관리자에게 문의하세요.");
@@ -158,7 +229,6 @@ public class EvidenceFileService {
                 throw new BusinessException("파일 리소스를 읽을 수 없습니다.");
             }
 
-            // Content-Type 추정
             String contentType = determineContentType(file.getFileName());
 
             return EvidenceFileDto.DownloadResponse.builder()
@@ -174,12 +244,6 @@ public class EvidenceFileService {
         }
     }
 
-    /**
-     * 통제항목별 전체 증빙 파일 ZIP 다운로드 — 관리자 전용 (Controller 제한)
-     *
-     * 해당 통제항목에 속한 모든 증빙유형의 최신 버전 파일을 ZIP으로 묶어서
-     * OutputStream에 직접 씁니다 (StreamingResponseBody 호환).
-     */
     @Transactional(readOnly = true)
     public String downloadZip(Long controlId, OutputStream outputStream) {
         Control control = controlRepository.findById(controlId)
@@ -231,14 +295,10 @@ public class EvidenceFileService {
         return control.getCode() + "_증빙자료.zip";
     }
 
-    /**
-     * 증빙 파일 통계 — 관리자 전용 (Controller 제한)
-     */
     @Transactional(readOnly = true)
     public EvidenceFileDto.StatsResponse getStats() {
         long totalFiles = evidenceFileRepository.count();
 
-        // 이번 분기 파일 수
         LocalDateTime now = LocalDateTime.now();
         int currentYear = now.getYear();
         int currentQuarter = now.get(IsoFields.QUARTER_OF_YEAR);
@@ -270,17 +330,11 @@ public class EvidenceFileService {
                 .build();
     }
 
-    /**
-     * 파일 삭제 — 관리자 전용 (Controller 제한)
-     *
-     * 담당자는 본인이 업로드한 파일도 삭제할 수 없다 (이력 보존 목적).
-     */
     @Transactional
     public void delete(Long fileId) {
         EvidenceFile file = evidenceFileRepository.findById(fileId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
 
-        // 물리 파일 삭제
         try {
             Path path = Paths.get(file.getFilePath());
             Files.deleteIfExists(path);
@@ -292,12 +346,9 @@ public class EvidenceFileService {
     }
 
     // ========================================
-    // 내부 유틸 메서드
+    // 내부 유틸
     // ========================================
 
-    /**
-     * 물리 파일 저장 — 절대경로로 변환하여 working directory와 무관하게 동작
-     */
     private String saveFile(MultipartFile file, String controlCode, Long evidenceTypeId) {
         try {
             Path dir = Paths.get(storagePath, "evidence", controlCode, String.valueOf(evidenceTypeId))
@@ -314,9 +365,6 @@ public class EvidenceFileService {
         }
     }
 
-    /**
-     * 파일 확장자 기반 Content-Type 결정
-     */
     private String determineContentType(String fileName) {
         if (fileName == null) return "application/octet-stream";
 
