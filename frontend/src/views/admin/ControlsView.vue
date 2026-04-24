@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, reactive } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { frameworksApi, controlsApi, evidenceFilesApi } from '@/services/evidenceApi'
 import type {
   Framework, ControlItem, ControlDetail, ExcelImportResult,
-  EvidenceFileItem, ReviewStatus,
+  ReviewStatus,
 } from '@/types/evidence'
 import FrameworkSwitcher from '@/components/evidence/FrameworkSwitcher.vue'
 
@@ -32,15 +32,11 @@ const expandedControlId = ref<number | null>(null)
 const controlDetail = ref<ControlDetail | null>(null)
 const detailLoading = ref(false)
 
-// 이력 토글: 어떤 증빙유형의 이력이 열려있는지
-const expandedHistoryEtIds = ref<Set<number>>(new Set())
-
 // 다이얼로그
 const showImportDialog = ref(false)
 const showAddControlDialog = ref(false)
 const showEditControlDialog = ref(false)
 const showAddEtDialog = ref(false)
-const showUploadDialog = ref(false)
 
 // Import
 const importFile = ref<File | null>(null)
@@ -56,11 +52,6 @@ const editControl = ref({ id: 0, code: '', domain: '', name: '', description: ''
 // 증빙 유형 추가
 const newEtName = ref('')
 
-// 파일 업로드
-const uploadTargetEtId = ref<number | null>(null)
-const uploadFile = ref<File | null>(null)
-const uploadLoading = ref(false)
-
 // ZIP 다운로드
 const zipDownloading = ref(false)
 
@@ -70,27 +61,6 @@ const statusFilter = ref('전체')
 
 // 알림 토스트
 const toast = ref({ show: false, message: '', type: 'success' as 'success' | 'error' })
-
-// ========================================
-// v11 Phase 5-9 — 검토 패널 상태
-// ========================================
-
-/**
- * 검토 패널이 현재 열려있는 파일 ID. 한 번에 하나만 연다.
- * null 이면 어느 카드의 검토 패널도 닫혀있음.
- */
-const openedReviewFileId = ref<number | null>(null)
-
-/**
- * 반려 폼 상태 (per-file). key = fileId.
- *  - mode: 'default' → [반려하기] [승인] 버튼만 표시
- *  - mode: 'reject' → 반려 사유 textarea + [반려 확정] 버튼
- * reactive 로 감싸 per-key 업데이트도 반영되게 한다.
- */
-const reviewForms = reactive<Record<number, { mode: 'default' | 'reject'; reason: string }>>({})
-
-/** 현재 승인/반려 API 요청 중인 파일 ID. 연속 클릭 방지용. */
-const submittingFileId = ref<number | null>(null)
 
 // ========================================
 // Computed
@@ -174,14 +144,10 @@ async function toggleExpand(controlId: number) {
   if (expandedControlId.value === controlId) {
     expandedControlId.value = null
     controlDetail.value = null
-    expandedHistoryEtIds.value.clear()
-    closeReviewPanel()
     return
   }
   expandedControlId.value = controlId
   detailLoading.value = true
-  expandedHistoryEtIds.value.clear()
-  closeReviewPanel()
   try {
     const { data } = await controlsApi.getDetail(controlId)
     if (data.success) controlDetail.value = data.data
@@ -196,22 +162,6 @@ async function refreshDetail() {
     const { data } = await controlsApi.getDetail(expandedControlId.value)
     if (data.success) controlDetail.value = data.data
   } catch (e) { console.error(e) }
-}
-
-// ========================================
-// 버전 이력 토글 (증빙유형별)
-// ========================================
-
-function toggleHistory(etId: number) {
-  if (expandedHistoryEtIds.value.has(etId)) {
-    expandedHistoryEtIds.value.delete(etId)
-  } else {
-    expandedHistoryEtIds.value.add(etId)
-  }
-}
-
-function isHistoryExpanded(etId: number) {
-  return expandedHistoryEtIds.value.has(etId)
 }
 
 // ========================================
@@ -343,135 +293,6 @@ async function deleteEvidenceType(etId: number, etName: string) {
 }
 
 // ========================================
-// 파일 업로드/다운로드/삭제
-// ========================================
-
-function openUpload(etId: number) {
-  uploadTargetEtId.value = etId
-  uploadFile.value = null
-  showUploadDialog.value = true
-}
-
-async function handleUpload() {
-  if (!uploadTargetEtId.value || !uploadFile.value) return
-  uploadLoading.value = true
-  try {
-    await evidenceFilesApi.upload(uploadTargetEtId.value, uploadFile.value)
-    showUploadDialog.value = false
-    uploadFile.value = null
-    await refreshDetail()
-    await loadControls()
-    showToast('파일이 업로드되었습니다.', 'success')
-  } catch (e) { console.error(e) }
-  finally { uploadLoading.value = false }
-}
-
-async function handleDownload(fileId: number, fileName: string) {
-  try {
-    await evidenceFilesApi.download(fileId, fileName)
-  } catch (e) {
-    console.error('다운로드 실패:', e)
-    showToast('파일 다운로드에 실패했습니다.', 'error')
-  }
-}
-
-async function handleDeleteFile(fileId: number, fileName: string) {
-  if (!confirm(`"${fileName}" 파일을 삭제하시겠습니까?`)) return
-  try {
-    await evidenceFilesApi.delete(fileId)
-    await refreshDetail()
-    await loadControls()
-    showToast('파일이 삭제되었습니다.', 'success')
-  } catch (e) {
-    console.error(e)
-    showToast('파일 삭제에 실패했습니다.', 'error')
-  }
-}
-
-// ========================================
-// v11 Phase 5-9 — 검토 패널 동작
-// ========================================
-
-/** 검토 패널 토글. reviewStatus=pending 파일에 대해서만 의미있음. */
-function toggleReviewPanel(fileId: number) {
-  if (openedReviewFileId.value === fileId) {
-    closeReviewPanel()
-    return
-  }
-  openedReviewFileId.value = fileId
-  // 반려 폼 초기값 세팅 (최초 오픈 시만)
-  if (!reviewForms[fileId]) {
-    reviewForms[fileId] = { mode: 'default', reason: '' }
-  }
-}
-
-function closeReviewPanel() {
-  openedReviewFileId.value = null
-}
-
-function openRejectForm(fileId: number) {
-  if (!reviewForms[fileId]) reviewForms[fileId] = { mode: 'default', reason: '' }
-  reviewForms[fileId].mode = 'reject'
-}
-
-function cancelRejectForm(fileId: number) {
-  if (!reviewForms[fileId]) return
-  reviewForms[fileId].mode = 'default'
-  reviewForms[fileId].reason = ''
-}
-
-/** 반려 사유가 유효한가 (trim 후 빈 값이면 false). */
-function isRejectReasonValid(fileId: number): boolean {
-  const form = reviewForms[fileId]
-  return !!form && form.reason.trim().length > 0
-}
-
-async function handleApprove(fileId: number) {
-  if (submittingFileId.value !== null) return
-  submittingFileId.value = fileId
-  try {
-    await evidenceFilesApi.approve(fileId)
-    showToast('증빙이 승인되었습니다.', 'success')
-    closeReviewPanel()
-    // per-file 폼 정리
-    delete reviewForms[fileId]
-    await refreshDetail()
-    await loadControls()
-  } catch (e: any) {
-    console.error('승인 실패:', e)
-    const msg = e?.response?.data?.message ?? '승인 처리에 실패했습니다.'
-    showToast(msg, 'error')
-  } finally {
-    submittingFileId.value = null
-  }
-}
-
-async function handleReject(fileId: number) {
-  if (submittingFileId.value !== null) return
-  if (!isRejectReasonValid(fileId)) {
-    showToast('반려 사유를 입력해주세요.', 'error')
-    return
-  }
-  submittingFileId.value = fileId
-  try {
-    const reason = reviewForms[fileId].reason.trim()
-    await evidenceFilesApi.reject(fileId, { reviewNote: reason })
-    showToast('증빙이 반려되었습니다. 담당자에게 이메일이 발송됩니다.', 'success')
-    closeReviewPanel()
-    delete reviewForms[fileId]
-    await refreshDetail()
-    await loadControls()
-  } catch (e: any) {
-    console.error('반려 실패:', e)
-    // 서버가 @NotBlank 위반으로 400 을 반환하는 케이스도 여기로 옴
-    const msg = e?.response?.data?.message ?? '반려 처리에 실패했습니다.'
-    showToast(msg, 'error')
-  } finally {
-    submittingFileId.value = null
-  }
-}
-
-// ========================================
 // v11 Phase 5-9 — 배지 헬퍼
 // ========================================
 
@@ -558,6 +379,21 @@ function onFrameworkSwitched(frameworkId: number) {
   router.push({ name: 'framework-detail', params: { frameworkId } })
 }
 
+// ========================================
+// v11 Phase 5-12 — 증빙 유형 상세 페이지 이동
+// ========================================
+function goToEvidenceTypeDetail(evidenceTypeId: number) {
+  if (!expandedControlId.value || !selectedFrameworkId.value) return
+  router.push({
+    name: 'evidence-type-detail',
+    params: {
+      frameworkId: selectedFrameworkId.value,
+      controlId: expandedControlId.value,
+      evidenceTypeId,
+    },
+  })
+}
+
 function onFrameworkSwitcherError(message: string) {
   showToast(message, 'error')
 }
@@ -574,7 +410,6 @@ watch(() => props.frameworkId, (newId) => {
       selectedFrameworkId.value = match.id
       expandedControlId.value = null
       controlDetail.value = null
-      closeReviewPanel()
       loadControls()
     }
   }
@@ -612,7 +447,7 @@ watch(() => props.frameworkId, (newId) => {
           <i class="pi pi-upload text-sm"></i> 엑셀 Import
         </button>
         <button @click="showAddControlDialog = true"
-          class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2">
+          class="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 flex items-center gap-2">
           <i class="pi pi-plus text-sm"></i> 통제항목 추가
         </button>
       </div>
@@ -777,228 +612,53 @@ watch(() => props.frameworkId, (newId) => {
                         ? 'border-blue-200'
                         : 'border-gray-200'">
 
-                      <!-- 증빙 유형 헤더 -->
-                      <div class="flex items-center justify-between p-3 flex-wrap gap-2"
+                      <!-- v11 Phase 5-12b — 단순 카드: 전체 클릭 → 상세 페이지, 우측에 삭제만 유지 -->
+                      <div class="flex items-center p-3 gap-2 group transition-colors"
                         :class="(et.files && et.files.length > 0 && et.files[0].reviewStatus === 'pending')
                           ? 'bg-blue-50/40'
                           : ''">
-                        <div class="flex items-center gap-2 flex-wrap">
-                          <i class="pi pi-file text-gray-400"></i>
-                          <span class="text-sm font-medium text-gray-900">{{ et.name }}</span>
+                        <button
+                          @click="goToEvidenceTypeDetail(et.id)"
+                          class="flex items-center gap-2 flex-1 min-w-0 text-left"
+                          :title="`${et.name} 상세 보기`">
+                          <i class="pi pi-file text-gray-400 shrink-0 group-hover:text-blue-500 transition-colors"></i>
+                          <span class="text-sm font-medium text-gray-900 group-hover:text-blue-600 transition-colors shrink-0">{{ et.name }}</span>
 
                           <!-- Phase 5-9: 상태 배지 (파일 존재 여부 + reviewStatus 기반) -->
                           <template v-if="et.files && et.files.length > 0">
                             <span v-if="reviewStatusBadge(et.files[0].reviewStatus)"
-                              class="px-1.5 py-0.5 text-xs rounded font-medium"
+                              class="px-1.5 py-0.5 text-xs rounded font-medium shrink-0"
                               :class="reviewStatusBadge(et.files[0].reviewStatus)!.cls">
                               {{ reviewStatusBadge(et.files[0].reviewStatus)!.label }}
                             </span>
                           </template>
                           <span v-else
-                            class="px-1.5 py-0.5 bg-red-100 text-red-600 text-xs rounded font-medium">
+                            class="px-1.5 py-0.5 bg-red-100 text-red-600 text-xs rounded font-medium shrink-0">
                             미수집
                           </span>
 
                           <!-- 최신 파일 메타 (업로더 + 시각) -->
                           <span v-if="et.files && et.files.length > 0"
-                            class="text-xs text-gray-500">
+                            class="text-xs text-gray-500 truncate">
                             v{{ et.files[0].version }} · {{ formatFileSize(et.files[0].fileSize) }}
                             <template v-if="et.files[0].uploadedByName">
                               · {{ et.files[0].uploadedByName }}
                             </template>
                             · {{ formatDateTime(et.files[0].createdAt) }}
                           </span>
-                        </div>
 
-                        <div class="flex items-center gap-1">
-                          <!-- Phase 5-9: [검토] 버튼 — reviewStatus=pending 일 때만 -->
-                          <button v-if="et.files && et.files.length > 0 && et.files[0].reviewStatus === 'pending'"
-                            @click="toggleReviewPanel(et.files[0].id)"
-                            class="h-7 px-2.5 text-[11px] bg-blue-600 text-white rounded-md hover:bg-blue-700 inline-flex items-center gap-1 font-medium">
-                            <i class="pi pi-check text-[10px]"></i>
-                            검토
-                          </button>
+                          <i class="pi pi-chevron-right text-xs text-gray-300 group-hover:text-gray-500 ml-auto shrink-0 transition-colors"></i>
+                        </button>
 
-                          <!-- 이력 토글 (파일이 2개 이상일 때만) -->
-                          <button v-if="et.files && et.files.length > 1"
-                            @click="toggleHistory(et.id)"
-                            class="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded flex items-center gap-1 transition-colors">
-                            <i :class="['pi text-xs', isHistoryExpanded(et.id) ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
-                            이력 ({{ et.files.length }})
-                          </button>
-                          <!-- 최신 파일 다운로드 -->
-                          <button v-if="et.files && et.files.length > 0"
-                            @click="handleDownload(et.files[0].id, et.files[0].fileName)"
-                            class="p-1.5 text-gray-400 hover:text-blue-500 transition-colors" title="최신 파일 다운로드">
-                            <i class="pi pi-download text-sm"></i>
-                          </button>
-                          <!-- 파일 업로드 -->
-                          <button @click="openUpload(et.id)"
-                            class="p-1.5 text-gray-400 hover:text-blue-500 transition-colors" title="파일 업로드 (관리자 업로드는 자동 승인)">
-                            <i class="pi pi-upload text-sm"></i>
-                          </button>
-                          <!-- 증빙 유형 삭제 -->
-                          <button @click="deleteEvidenceType(et.id, et.name)"
-                            class="p-1.5 text-gray-400 hover:text-red-500 transition-colors" title="증빙 유형 삭제">
-                            <i class="pi pi-trash text-sm"></i>
-                          </button>
-                        </div>
+                        <!-- 증빙 유형 자체 삭제 (이벤트 전파 차단) -->
+                        <button
+                          @click.stop="deleteEvidenceType(et.id, et.name)"
+                          class="p-1.5 text-gray-400 hover:text-red-500 transition-colors shrink-0"
+                          title="증빙 유형 삭제">
+                          <i class="pi pi-trash text-sm"></i>
+                        </button>
                       </div>
 
-                      <!-- ========================================
-                           Phase 5-9 — 검토 패널 (인라인 확장)
-                           ======================================== -->
-                      <Transition name="slide">
-                        <div v-if="et.files && et.files.length > 0
-                                && et.files[0].reviewStatus === 'pending'
-                                && openedReviewFileId === et.files[0].id"
-                          class="border-t border-blue-100 bg-blue-50/20 p-4">
-                          <!-- 파일 정보 + 다운로드 -->
-                          <div class="flex items-center gap-2 text-xs text-gray-600 mb-3">
-                            <i class="pi pi-file text-gray-400"></i>
-                            <span class="font-medium text-gray-700">파일:</span>
-                            <span class="font-mono text-gray-900">{{ et.files[0].fileName }}</span>
-                            <span class="text-gray-400">·</span>
-                            <span>{{ formatFileSize(et.files[0].fileSize) }}</span>
-                            <button @click="handleDownload(et.files[0].id, et.files[0].fileName)"
-                              class="ml-auto h-6 px-2 text-[11px] border border-gray-200 bg-white rounded hover:bg-gray-50 text-gray-700">
-                              다운로드
-                            </button>
-                          </div>
-
-                          <!-- 제출자 메모 -->
-                          <div class="bg-white rounded-md border border-gray-200 p-3 mb-3">
-                            <div class="text-[10px] font-medium text-gray-500 uppercase mb-1">
-                              제출자 메모
-                              <span v-if="et.files[0].uploadedByName" class="text-gray-400 normal-case font-normal ml-1">
-                                · {{ et.files[0].uploadedByName }}
-                              </span>
-                            </div>
-                            <div v-if="et.files[0].submitNote" class="text-[13px] text-gray-700 whitespace-pre-wrap">
-                              {{ et.files[0].submitNote }}
-                            </div>
-                            <div v-else class="text-[12px] text-gray-400 italic">메모 없음</div>
-                          </div>
-
-                          <!-- 기본 상태: [반려하기] [승인] -->
-                          <div v-if="(reviewForms[et.files[0].id]?.mode ?? 'default') === 'default'"
-                            class="flex justify-end gap-2">
-                            <button
-                              @click="openRejectForm(et.files[0].id)"
-                              :disabled="submittingFileId !== null"
-                              class="h-8 px-3 text-xs border border-red-200 text-red-700 bg-white rounded-md hover:bg-red-50 disabled:opacity-50">
-                              반려하기
-                            </button>
-                            <button
-                              @click="handleApprove(et.files[0].id)"
-                              :disabled="submittingFileId !== null"
-                              class="h-8 px-4 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1">
-                              <i v-if="submittingFileId === et.files[0].id" class="pi pi-spin pi-spinner text-[10px]"></i>
-                              승인
-                            </button>
-                          </div>
-
-                          <!-- 반려 모드: 사유 textarea + [취소] [반려 확정] -->
-                          <div v-else>
-                            <label class="block text-xs font-medium text-gray-700 mb-1.5">
-                              반려 사유 <span class="text-red-600">*</span>
-                            </label>
-                            <textarea
-                              v-model="reviewForms[et.files[0].id].reason"
-                              rows="3"
-                              class="w-full px-3 py-2 text-xs border rounded-md resize-none focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                              :class="!isRejectReasonValid(et.files[0].id)
-                                ? 'border-red-200 bg-red-50/20'
-                                : 'border-gray-200'"
-                              placeholder="담당자가 재제출할 수 있도록 구체적으로 작성하세요. 이메일과 '내 할 일' 페이지에 그대로 전달됩니다."></textarea>
-                            <p v-if="!isRejectReasonValid(et.files[0].id)"
-                              class="text-[11px] text-red-600 mt-1">
-                              반려 사유는 필수입니다. 공백만 입력할 수 없습니다.
-                            </p>
-                            <div class="flex justify-end gap-2 mt-2">
-                              <button
-                                @click="cancelRejectForm(et.files[0].id)"
-                                :disabled="submittingFileId !== null"
-                                class="h-7 px-3 text-xs border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50">
-                                취소
-                              </button>
-                              <button
-                                @click="handleReject(et.files[0].id)"
-                                :disabled="submittingFileId !== null || !isRejectReasonValid(et.files[0].id)"
-                                class="h-7 px-3 text-xs bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 inline-flex items-center gap-1">
-                                <i v-if="submittingFileId === et.files[0].id" class="pi pi-spin pi-spinner text-[10px]"></i>
-                                반려 확정 · 이메일 발송
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </Transition>
-
-                      <!-- 최신 파일 정보 (검토 패널 미오픈 시, 파일 있을 때만) -->
-                      <div v-if="et.files && et.files.length > 0 && openedReviewFileId !== et.files[0].id"
-                        class="px-3 pb-2">
-                        <div class="flex items-center gap-2 text-xs text-gray-500 ml-6 flex-wrap">
-                          <span>{{ formatDate(et.files[0].collectedAt) }}</span>
-                          <span class="text-gray-300">·</span>
-                          <span :class="et.files[0].collectionMethod === 'auto' ? 'text-green-600' : 'text-gray-400'">
-                            {{ et.files[0].collectionMethod === 'auto' ? '자동수집' : '수동업로드' }}
-                          </span>
-                          <!-- 반려 사유 (최신 버전이 rejected 인 경우에만) -->
-                          <template v-if="et.files[0].reviewStatus === 'rejected' && et.files[0].reviewNote">
-                            <span class="text-gray-300">·</span>
-                            <span class="text-red-600">반려 사유: {{ et.files[0].reviewNote }}</span>
-                          </template>
-                        </div>
-                      </div>
-
-                      <!-- 버전 이력 (토글로 펼치기) -->
-                      <Transition name="slide">
-                        <div v-if="et.files && et.files.length > 1 && isHistoryExpanded(et.id)"
-                          class="border-t border-gray-100 bg-gray-50/50">
-                          <div class="px-3 py-2">
-                            <p class="text-xs font-semibold text-gray-500 mb-2 ml-6">버전 이력</p>
-                            <div class="space-y-1">
-                              <div v-for="(file, idx) in et.files" :key="file.id"
-                                class="flex items-center gap-3 text-xs py-1.5 px-2 ml-4 rounded hover:bg-white transition-colors flex-wrap"
-                                :class="idx === 0 ? 'font-medium' : ''">
-                                <span class="font-mono text-blue-600 shrink-0">v{{ file.version }}</span>
-                                <!-- 버전별 상태 배지 -->
-                                <span v-if="reviewStatusBadge(file.reviewStatus)"
-                                  class="px-1.5 py-0.5 text-[10px] rounded font-medium shrink-0"
-                                  :class="reviewStatusBadge(file.reviewStatus)!.cls">
-                                  {{ reviewStatusBadge(file.reviewStatus)!.label }}
-                                </span>
-                                <span class="text-gray-500">
-                                  {{ formatFileSize(file.fileSize) }}
-                                  · {{ formatDate(file.collectedAt) }}
-                                  <template v-if="file.uploadedByName"> · {{ file.uploadedByName }} 제출</template>
-                                  <template v-if="file.reviewedByName && file.reviewStatus === 'approved'">
-                                    · {{ file.reviewedByName }} 승인
-                                  </template>
-                                  <template v-if="file.reviewStatus === 'rejected'">
-                                    · 반려됨
-                                  </template>
-                                </span>
-                                <!-- 반려 사유 -->
-                                <span v-if="file.reviewStatus === 'rejected' && file.reviewNote"
-                                  class="w-full text-red-600 text-[11px] pl-5 mt-0.5">
-                                  → 반려 사유: {{ file.reviewNote }}
-                                </span>
-                                <div class="ml-auto flex gap-1 shrink-0">
-                                  <button @click="handleDownload(file.id, file.fileName)"
-                                    class="p-1 text-gray-400 hover:text-blue-500" title="다운로드">
-                                    <i class="pi pi-download text-xs"></i>
-                                  </button>
-                                  <button v-if="idx !== 0" @click="handleDeleteFile(file.id, file.fileName)"
-                                    class="p-1 text-gray-400 hover:text-red-500" title="삭제">
-                                    <i class="pi pi-trash text-xs"></i>
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </Transition>
                     </div>
 
                     <!-- 증빙 유형이 하나도 없는 경우 -->
@@ -1055,7 +715,7 @@ watch(() => props.frameworkId, (newId) => {
           <button @click="showImportDialog = false; importResult = null"
             class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
           <button @click="handleImport" :disabled="importLoading || !importFile"
-            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+            class="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">
             {{ importLoading ? 'Import 중...' : 'Import' }}
           </button>
         </div>
@@ -1099,7 +759,7 @@ watch(() => props.frameworkId, (newId) => {
         <div class="flex justify-end gap-2 mt-4">
           <button @click="showAddControlDialog = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
           <button @click="handleAddControl" :disabled="!newControl.code || !newControl.name"
-            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">추가</button>
+            class="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">추가</button>
         </div>
       </div>
     </div>
@@ -1136,7 +796,7 @@ watch(() => props.frameworkId, (newId) => {
         <div class="flex justify-end gap-2 mt-4">
           <button @click="showEditControlDialog = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
           <button @click="handleEditControl" :disabled="!editControl.code || !editControl.name"
-            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">저장</button>
+            class="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">저장</button>
         </div>
       </div>
     </div>
@@ -1157,36 +817,7 @@ watch(() => props.frameworkId, (newId) => {
         <div class="flex justify-end gap-2">
           <button @click="showAddEtDialog = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
           <button @click="handleAddEvidenceType" :disabled="!newEtName.trim()"
-            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">추가</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========================================
-         다이얼로그: 파일 업로드
-         ======================================== -->
-    <div v-if="showUploadDialog" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="showUploadDialog = false">
-      <div class="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-bold text-gray-900">증빙 파일 업로드</h3>
-          <button @click="showUploadDialog = false" class="p-1 text-gray-400 hover:text-gray-600">
-            <i class="pi pi-times"></i>
-          </button>
-        </div>
-        <p class="text-xs text-gray-500 mb-3">관리자 업로드는 자동 승인되어 즉시 완료 상태가 됩니다.</p>
-        <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center mb-4 hover:border-blue-400 transition-colors">
-          <input type="file" @change="(e: any) => uploadFile = e.target.files?.[0]"
-            class="w-full text-sm cursor-pointer" />
-          <p v-if="uploadFile" class="text-xs text-gray-500 mt-2">
-            {{ uploadFile.name }} ({{ formatFileSize(uploadFile.size) }})
-          </p>
-        </div>
-        <div class="flex justify-end gap-2">
-          <button @click="showUploadDialog = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
-          <button @click="handleUpload" :disabled="uploadLoading || !uploadFile"
-            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-            {{ uploadLoading ? '업로드 중...' : '업로드' }}
-          </button>
+            class="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">추가</button>
         </div>
       </div>
     </div>
