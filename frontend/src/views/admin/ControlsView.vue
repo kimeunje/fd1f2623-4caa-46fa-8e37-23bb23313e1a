@@ -558,11 +558,6 @@ function onFrameworkSwitched(frameworkId: number) {
   router.push({ name: 'framework-detail', params: { frameworkId } })
 }
 
-function onFrameworkInherited(fw: Framework) {
-  showToast('Framework 상속 생성 완료', 'success')
-  router.push({ name: 'framework-detail', params: { frameworkId: fw.id } })
-}
-
 function onFrameworkSwitcherError(message: string) {
   showToast(message, 'error')
 }
@@ -599,16 +594,15 @@ watch(() => props.frameworkId, (newId) => {
     </Transition>
 
     <!-- ========================================
-         헤더 — v11 Phase 5-6 / 5-10 : Framework 이름 드롭다운 트리거
+         헤더 — v11 Phase 5-6 / 5-10 / 5-11 : Framework 이름 드롭다운 트리거
          prototype v4 §stage-fw-detail 구조 (h1 FrameworkSwitcher + 보조 설명)
          ======================================== -->
     <div class="flex items-start justify-between gap-4 flex-wrap">
       <div class="flex-1 min-w-0">
-        <!-- Framework 이름 자체가 드롭다운 트리거 (상속 다이얼로그 내장) -->
+        <!-- Framework 이름 자체가 드롭다운 트리거. 상속은 wizard (/controls/new) 로 이동 -->
         <FrameworkSwitcher
           :current-framework-id="selectedFrameworkId"
           @switched="onFrameworkSwitched"
-          @inherited="onFrameworkInherited"
           @error="onFrameworkSwitcherError" />
         <p class="text-xs text-gray-500 mt-1">프레임워크별 통제항목 및 증빙 수집 현황을 관리합니다.</p>
       </div>

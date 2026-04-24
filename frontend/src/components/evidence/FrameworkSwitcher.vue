@@ -3,10 +3,9 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { frameworksApi } from '@/services/evidenceApi'
 import type { Framework } from '@/types/evidence'
-import InheritFrameworkDialog from './InheritFrameworkDialog.vue'
 
 /**
- * Framework 전환 드롭다운 트리거 (v11 Phase 5-6).
+ * Framework 전환 드롭다운 트리거 (v11 Phase 5-6 / 5-11).
  *
  * ControlsView (Framework 상세) 상단 헤더에 위치해 Framework 이름 자체가
  * 드롭다운 트리거 역할을 한다. 기획서 §3.1.2 "Framework 이름 자체가 드롭다운" 원칙 구현.
@@ -16,13 +15,12 @@ import InheritFrameworkDialog from './InheritFrameworkDialog.vue'
  *  2. 종료된 Framework 포함 토글
  *  3. 구분선
  *  4. 전체 Framework 목록으로 복귀
- *  5. 기존 Framework 상속하여 새로 만들기 → InheritFrameworkDialog
+ *  5. 새 Framework 만들기 → /controls/new wizard 로 이동
  *
- * 사용 예시 (ControlsView.vue):
- *   <FrameworkSwitcher
- *     :current-framework-id="selectedFrameworkId"
- *     @switched="onFrameworkSwitched"
- *     @inherited="onFrameworkInherited" />
+ * v11 Phase 5-11 변경:
+ *  - 기존 "기존 Framework 상속하여 만들기" → "새 Framework 만들기" 로 문구 통합
+ *  - InheritFrameworkDialog 모달 제거 → wizard 페이지로 라우팅
+ *  - 'inherited' emit 제거 (wizard 가 직접 /controls/:id 로 이동하므로 부모 이벤트 불필요)
  */
 const props = defineProps<{
   currentFrameworkId: number | null
@@ -30,7 +28,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'switched': [frameworkId: number]
-  'inherited': [framework: Framework]
   'error': [message: string]
 }>()
 
@@ -40,7 +37,6 @@ const frameworks = ref<Framework[]>([])
 const loading = ref(false)
 const showDropdown = ref(false)
 const showArchived = ref(false)
-const showInheritDialog = ref(false)
 
 const rootRef = ref<HTMLElement | null>(null)
 
@@ -105,14 +101,12 @@ function goToList() {
   router.push({ name: 'framework-list' })
 }
 
-function openInheritDialog() {
+/**
+ * v11 Phase 5-11: 상속 다이얼로그 대신 wizard 로 이동.
+ */
+function goToCreateWizard() {
   showDropdown.value = false
-  showInheritDialog.value = true
-}
-
-function onInheritCreated(fw: Framework) {
-  frameworks.value.push(fw)
-  emit('inherited', fw)
+  router.push({ name: 'framework-create-wizard' })
 }
 
 function statusLabel(fw: Framework): string {
@@ -199,21 +193,14 @@ function statusLabel(fw: Framework): string {
           <i class="pi pi-list text-xs text-gray-400"></i>
           전체 Framework 목록
         </button>
+        <!-- v11 Phase 5-11: 상속 다이얼로그 대신 wizard 로 이동 -->
         <button
-          @click="openInheritDialog"
+          @click="goToCreateWizard"
           class="w-full px-4 py-2 text-left text-sm text-gray-600 hover:bg-gray-100 flex items-center gap-2">
-          <i class="pi pi-sitemap text-xs text-gray-400"></i>
-          기존 Framework 상속하여 만들기
+          <i class="pi pi-plus text-xs text-gray-400"></i>
+          새 Framework 만들기
         </button>
       </div>
     </div>
-
-    <!-- 상속 다이얼로그 -->
-    <InheritFrameworkDialog
-      :open="showInheritDialog"
-      :initial-source-id="props.currentFrameworkId"
-      @update:open="showInheritDialog = $event"
-      @created="onInheritCreated"
-      @error="(msg) => emit('error', msg)" />
   </div>
 </template>

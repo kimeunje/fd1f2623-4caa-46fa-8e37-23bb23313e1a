@@ -27,7 +27,9 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin' },
   },
 
-  // v11 Phase 5-3: /controls 는 Framework 목록 페이지, 상세는 /controls/:frameworkId
+  // v11 Phase 5-3 / 5-11: /controls 는 Framework 목록 페이지,
+  //   /controls/new 는 wizard (반드시 :frameworkId 보다 먼저 정의),
+  //   /controls/:frameworkId(숫자) 는 Framework 상세.
   {
     path: '/controls',
     name: 'framework-list',
@@ -35,7 +37,14 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '통제 항목' },
   },
   {
-    path: '/controls/:frameworkId',
+    path: '/controls/new',
+    name: 'framework-create-wizard',
+    component: () => import('@/views/admin/FrameworkCreateWizardView.vue'),
+    meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '새 Framework 생성' },
+  },
+  {
+    // v11 Phase 5-11: (\\d+) 로 숫자만 매칭. 'new' 같은 문자열이 여기로 빠지지 않도록.
+    path: '/controls/:frameworkId(\\d+)',
     name: 'framework-detail',
     component: () => import('@/views/admin/ControlsView.vue'),
     // props 로 frameworkId 를 숫자로 전달 (param → number 변환)
