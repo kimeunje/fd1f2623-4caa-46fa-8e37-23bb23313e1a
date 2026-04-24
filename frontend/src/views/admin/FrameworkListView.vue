@@ -106,12 +106,6 @@ function originSubText(fw: Framework): string {
       </div>
     </Transition>
 
-    <!-- 헤더 -->
-    <div>
-      <h1 class="text-xl font-bold text-gray-900">통제 항목</h1>
-      <p class="text-sm text-gray-500 mt-1">프레임워크를 선택하세요. 통제 항목과 증빙 수집 현황을 관리할 수 있습니다.</p>
-    </div>
-
     <!-- 최근 작업 중 카드 -->
     <button
       v-if="recentFramework"
@@ -217,13 +211,6 @@ function originSubText(fw: Framework): string {
         </div>
       </div>
 
-      <div class="mt-6 text-[11px] text-gray-400 leading-relaxed bg-white border border-gray-100 rounded-lg p-4">
-        <p class="font-medium text-gray-600 mb-1">흐름 안내</p>
-        <p>① 최근 작업 중 카드 또는 Framework 행 클릭 → Framework 상세 진입<br>
-        ② Framework 상세에서 상단 Framework 이름 클릭 → 다른 Framework 로 전환<br>
-        ③ 사이드바 "통제 항목" 재클릭 → 이 목록으로 복귀<br>
-        ④ [+ 새 Framework] 클릭 → 상속 / 빈 Framework 생성 wizard (3단계)</p>
-      </div>
     </div>
   </div>
 </template>
