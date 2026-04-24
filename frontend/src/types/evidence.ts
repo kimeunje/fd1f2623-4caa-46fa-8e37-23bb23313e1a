@@ -93,6 +93,12 @@ export interface EvidenceTypeResponse {
   description?: string
   collected: boolean
   files: EvidenceFileItem[]
+
+  // v11 Phase 5-12 — 담당자/마감일 정보 (백엔드 ControlDto.EvidenceTypeResponse 보강 시 자동 표시)
+  ownerUserId?: number
+  ownerUserName?: string
+  ownerUserTeam?: string
+  dueDate?: string
 }
 
 // ========================================

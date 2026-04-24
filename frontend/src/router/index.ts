@@ -27,9 +27,17 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin' },
   },
 
-  // v11 Phase 5-3 / 5-11: /controls 는 Framework 목록 페이지,
-  //   /controls/new 는 wizard (반드시 :frameworkId 보다 먼저 정의),
-  //   /controls/:frameworkId(숫자) 는 Framework 상세.
+  // ========================================
+  // v11 Phase 5-3 / 5-11 / 5-12 — 증빙 수집 허브 (계층 구조)
+  //
+  //   /controls                                                           → framework-list (Framework 목록)
+  //   /controls/new                                                       → framework-create-wizard
+  //   /controls/:frameworkId                                              → framework-detail (통제 항목 목록)
+  //   /controls/:frameworkId/:controlId/evidence-types/:evidenceTypeId    → evidence-type-detail (증빙 유형 상세)
+  //
+  // 라우트 정의 순서 주의: /controls/new 는 /controls/:frameworkId 보다 먼저.
+  // :frameworkId, :controlId, :evidenceTypeId 는 정규식 (\\d+) 으로 숫자만 매칭하도록 강제.
+  // ========================================
   {
     path: '/controls',
     name: 'framework-list',
@@ -43,13 +51,23 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '새 Framework 생성' },
   },
   {
-    // v11 Phase 5-11: (\\d+) 로 숫자만 매칭. 'new' 같은 문자열이 여기로 빠지지 않도록.
     path: '/controls/:frameworkId(\\d+)',
     name: 'framework-detail',
     component: () => import('@/views/admin/ControlsView.vue'),
-    // props 로 frameworkId 를 숫자로 전달 (param → number 변환)
     props: (route) => ({ frameworkId: Number(route.params.frameworkId) }),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: 'Framework 상세' },
+  },
+  {
+    // v11 Phase 5-12: 증빙 유형 상세 페이지
+    path: '/controls/:frameworkId(\\d+)/:controlId(\\d+)/evidence-types/:evidenceTypeId(\\d+)',
+    name: 'evidence-type-detail',
+    component: () => import('@/views/admin/EvidenceTypeDetailView.vue'),
+    props: (route) => ({
+      frameworkId: Number(route.params.frameworkId),
+      controlId: Number(route.params.controlId),
+      evidenceTypeId: Number(route.params.evidenceTypeId),
+    }),
+    meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '증빙 유형 상세' },
   },
 
   {
@@ -120,9 +138,6 @@ const routes: RouteRecordRaw[] = [
   // ========================================
   // v11 Phase 5-5 — 담당자 "내 할 일"
   // ========================================
-  // layout: 'dev' — 담당자 전용 워크스페이스이므로 DevLayout 사용.
-  // roles 는 모두 허용하되, 추가로 permission_evidence=true 를 가드에서 체크.
-  // API 레벨에서도 MyTasksService 가 한 번 더 검증한다.
   {
     path: '/my-tasks',
     name: 'my-tasks',
