@@ -117,6 +117,18 @@ public class ControlDto {
         private String createdAt;
     }
 
+    /**
+     * 증빙 유형 응답 DTO.
+     *
+     * <p>v11 Phase 5-12 (백엔드 owner DTO 보강, 2026-04) — 담당자/마감일 정보를 노출하여
+     * 프론트 상세 페이지(EvidenceTypeDetailView)의 "담당자 미지정"이 실제 이름으로 표시되도록
+     * 한다. 프론트 타입(EvidenceTypeResponse)은 Phase 5-12 에서 옵셔널로 미리 준비됨.</p>
+     *
+     * <p>ownerUser / dueDate 는 모두 nullable. 미배정 증빙 유형도 정상 동작하도록 null-safe
+     * 매핑한다. EvidenceType.ownerUser 는 LAZY 페치이므로 이 DTO 변환은 반드시
+     * {@code @Transactional} 내부에서 이뤄져야 한다 (현재 ControlService.findDetail 이
+     * 해당 조건을 충족).</p>
+     */
     @Getter
     @Builder
     @AllArgsConstructor
@@ -127,6 +139,12 @@ public class ControlDto {
         private boolean collected;
         private List<EvidenceFileDto.Response> files;
 
+        // v11 Phase 5-12 — 담당자·마감일
+        private Long ownerUserId;
+        private String ownerUserName;
+        private String ownerUserTeam;
+        private String dueDate;
+
         public static EvidenceTypeResponse from(EvidenceType et, List<EvidenceFileDto.Response> files) {
             return EvidenceTypeResponse.builder()
                     .id(et.getId())
@@ -134,6 +152,12 @@ public class ControlDto {
                     .description(et.getDescription())
                     .collected(files != null && !files.isEmpty())
                     .files(files)
+                    // 담당자 (null-safe)
+                    .ownerUserId(et.getOwnerUser() != null ? et.getOwnerUser().getId() : null)
+                    .ownerUserName(et.getOwnerUser() != null ? et.getOwnerUser().getName() : null)
+                    .ownerUserTeam(et.getOwnerUser() != null ? et.getOwnerUser().getTeam() : null)
+                    // 마감일 (LocalDate → String, null-safe)
+                    .dueDate(et.getDueDate() != null ? et.getDueDate().toString() : null)
                     .build();
         }
     }
