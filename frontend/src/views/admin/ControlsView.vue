@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, reactive } from 'vue'
+import { useRouter } from 'vue-router'
 import { frameworksApi, controlsApi, evidenceFilesApi } from '@/services/evidenceApi'
 import type {
   Framework, ControlItem, ControlDetail, ExcelImportResult,
   EvidenceFileItem, ReviewStatus,
 } from '@/types/evidence'
+import FrameworkSwitcher from '@/components/evidence/FrameworkSwitcher.vue'
 
 // ========================================
 // Props (v11 Phase 5-3: 라우트 /controls/:frameworkId 에서 전달)
@@ -548,6 +550,23 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
 // 초기화 & 라우트 prop 변경 대응
 // ========================================
 
+const router = useRouter()
+
+// v11 Phase 5-6: FrameworkSwitcher 이벤트 핸들러
+function onFrameworkSwitched(frameworkId: number) {
+  // 라우트 파라미터만 바꾸면 아래 watch(() => props.frameworkId) 가 재로드함.
+  router.push({ name: 'framework-detail', params: { frameworkId } })
+}
+
+function onFrameworkInherited(fw: Framework) {
+  showToast('Framework 상속 생성 완료', 'success')
+  router.push({ name: 'framework-detail', params: { frameworkId: fw.id } })
+}
+
+function onFrameworkSwitcherError(message: string) {
+  showToast(message, 'error')
+}
+
 onMounted(() => {
   loadFrameworks()
 })
@@ -580,14 +599,19 @@ watch(() => props.frameworkId, (newId) => {
     </Transition>
 
     <!-- ========================================
-         헤더
+         헤더 — v11 Phase 5-6 : Framework 이름 드롭다운 트리거
          ======================================== -->
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-xl font-bold text-gray-900">통제 항목</h1>
-        <p class="text-sm text-gray-500 mt-1">프레임워크별 통제항목 및 증빙 수집 현황을 관리합니다.</p>
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div class="flex-1 min-w-0">
+        <div class="text-xs text-gray-500 mb-1">통제 항목</div>
+        <!-- Framework 이름 자체가 드롭다운 트리거 (상속 다이얼로그 내장) -->
+        <FrameworkSwitcher
+          :current-framework-id="selectedFrameworkId"
+          @switched="onFrameworkSwitched"
+          @inherited="onFrameworkInherited"
+          @error="onFrameworkSwitcherError" />
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 shrink-0">
         <button @click="showImportDialog = true"
           class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2">
           <i class="pi pi-upload text-sm"></i> 엑셀 Import
@@ -600,15 +624,11 @@ watch(() => props.frameworkId, (newId) => {
     </div>
 
     <!-- ========================================
-         프레임워크 선택 + 검색/필터 + 통계
+         검색/필터 + 통계 — v11 Phase 5-6 에서 프레임워크 <select> 제거
          ======================================== -->
     <div class="flex items-center justify-between flex-wrap gap-3">
       <div class="flex items-center gap-3">
-        <!-- 프레임워크 선택 -->
-        <select v-model="selectedFrameworkId" @change="loadControls()"
-          class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
-          <option v-for="fw in frameworks" :key="fw.id" :value="fw.id">{{ fw.name }}</option>
-        </select>
+        <!-- (프레임워크 <select> 는 FrameworkSwitcher 로 이동) -->
 
         <!-- 검색 -->
         <div class="relative">

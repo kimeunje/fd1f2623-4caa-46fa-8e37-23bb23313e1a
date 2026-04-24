@@ -4,8 +4,6 @@
 
 /**
  * Framework 상태 (v11 Phase 5-1)
- * - active   현재 감사 주기에서 사용 중
- * - archived 종료된 감사 주기 (조회만 가능)
  */
 export type FrameworkStatus = 'active' | 'archived'
 
@@ -16,7 +14,7 @@ export interface Framework {
   createdAt: string
   controlCount: number
 
-  // v11 Phase 5-3 — FrameworkListView 배지·메타용
+  // v11 Phase 5-3
   status?: FrameworkStatus
   parentFrameworkId?: number
   parentFrameworkName?: string
@@ -26,6 +24,19 @@ export interface Framework {
 }
 
 export interface FrameworkCreatePayload {
+  name: string
+  description?: string
+}
+
+/**
+ * v11 Phase 5-6 — Framework 상속 요청 페이로드.
+ *
+ * 원본 Framework 의 통제 항목 / 증빙 유형(담당자·마감일 포함) / 수집 작업을
+ * 스냅샷 복제하고 parent_framework_id 에 원본을 기록한다.
+ * 파일과 실행 이력은 복제되지 않는다.
+ */
+export interface FrameworkInheritPayload {
+  sourceFrameworkId: number
   name: string
   description?: string
 }
@@ -42,10 +53,10 @@ export interface ControlItem {
   description?: string
   evidenceTotal: number
   evidenceCollected: number
-  status: string // 완료/진행중/미수집
+  status: string
   createdAt: string
 
-  // v11 Phase 5-9 — 행 단위 "검토 대기 N건" 배지·파란 배경 강조용
+  // v11 Phase 5-9
   pendingReviewCount?: number
 }
 
@@ -88,9 +99,6 @@ export interface EvidenceTypeResponse {
 // 증빙 파일
 // ========================================
 
-/**
- * 증빙 파일 검토 상태 (v11 Phase 5-4)
- */
 export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'auto_approved'
 
 export interface EvidenceFileItem {
@@ -107,12 +115,10 @@ export interface EvidenceFileItem {
   collectedAt: string
   createdAt: string
 
-  // v11 Phase 5-4 — 업로더 정보
   uploadedById?: number
   uploadedByName?: string
   submitNote?: string
 
-  // v11 Phase 5-4 — 검토 상태
   reviewStatus?: ReviewStatus
   reviewedById?: number
   reviewedByName?: string
@@ -127,16 +133,10 @@ export interface EvidenceFileStats {
   controlCoverage: number
 }
 
-/**
- * 승인 요청 페이로드 (v11 Phase 5-4). reviewNote 는 optional.
- */
 export interface ApproveRequest {
   reviewNote?: string
 }
 
-/**
- * 반려 요청 페이로드 (v11 Phase 5-4). reviewNote 필수.
- */
 export interface RejectRequest {
   reviewNote: string
 }
@@ -201,10 +201,6 @@ export interface ExcelImportResult {
 // v11 Phase 5-5 — 담당자 "내 할 일"
 // ========================================
 
-/**
- * "내 할 일" 5개 섹션 각각의 카드에 표시되는 정보.
- * 섹션별로 의미있는 필드가 달라지므로 선택 필드가 많다.
- */
 export interface MyTaskItem {
   evidenceTypeId: number
   evidenceTypeName: string
@@ -215,9 +211,7 @@ export interface MyTaskItem {
   frameworkId?: number
   frameworkName?: string
 
-  /** ISO yyyy-MM-dd */
   dueDate?: string
-  /** null = 마감일 없음. 음수 = 지남. */
   daysUntilDue?: number
 
   latestFileId?: number
@@ -227,11 +221,9 @@ export interface MyTaskItem {
   submittedAt?: string
   reviewedAt?: string
 
-  // rejected 섹션에서 유의미
   rejectReason?: string
   rejectedByName?: string
 
-  // completed 섹션에서 유의미
   approvedByName?: string
 }
 
@@ -252,12 +244,8 @@ export interface MyTasksResponse {
   counts: MyTasksCounts
 }
 
-/** "내 할 일" 섹션 키. UI 상수로 사용. */
 export type MyTaskSectionKey = 'rejected' | 'dueSoon' | 'notSubmitted' | 'inReview' | 'completed'
 
-/**
- * 재제출 페이지 상세 응답 (단일 증빙 유형 + 이력).
- */
 export interface MyTaskDetail {
   evidenceTypeId: number
   evidenceTypeName: string
@@ -272,7 +260,6 @@ export interface MyTaskDetail {
   dueDate?: string
   daysUntilDue?: number
 
-  /** "rejected" | "pending" | "approved" | "auto_approved" | "not_submitted" | "unknown" */
   currentStatus: string
 
   rejectReason?: string
