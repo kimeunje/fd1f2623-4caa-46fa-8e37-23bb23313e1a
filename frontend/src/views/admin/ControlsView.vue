@@ -6,7 +6,6 @@ import type {
   Framework, ControlItem, ControlDetail, ExcelImportResult,
   ReviewStatus,
 } from '@/types/evidence'
-import FrameworkSwitcher from '@/components/evidence/FrameworkSwitcher.vue'
 
 // ========================================
 // Props (v11 Phase 5-3: 라우트 /controls/:frameworkId 에서 전달)
@@ -91,7 +90,7 @@ const filteredControls = computed(() => {
 })
 
 const statusCounts = computed(() => {
-  const counts: Record<string, number> = { '완료': 0, '진행중': 0, '미수집': 0, '검토 대기': 0 }
+  const counts: Record<string, number> = { '전체': controls.value.length, '완료': 0, '진행중': 0, '미수집': 0, '검토 대기': 0 }
   controls.value.forEach(c => {
     if (counts[c.status] !== undefined) counts[c.status]++
     else counts[c.status] = 1
@@ -373,12 +372,6 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
 
 const router = useRouter()
 
-// v11 Phase 5-6: FrameworkSwitcher 이벤트 핸들러
-function onFrameworkSwitched(frameworkId: number) {
-  // 라우트 파라미터만 바꾸면 아래 watch(() => props.frameworkId) 가 재로드함.
-  router.push({ name: 'framework-detail', params: { frameworkId } })
-}
-
 // ========================================
 // v11 Phase 5-12 — 증빙 유형 상세 페이지 이동
 // ========================================
@@ -392,10 +385,6 @@ function goToEvidenceTypeDetail(evidenceTypeId: number) {
       evidenceTypeId,
     },
   })
-}
-
-function onFrameworkSwitcherError(message: string) {
-  showToast(message, 'error')
 }
 
 onMounted(() => {
@@ -429,42 +418,18 @@ watch(() => props.frameworkId, (newId) => {
     </Transition>
 
     <!-- ========================================
-         헤더 — v11 Phase 5-6 / 5-10 / 5-11 : Framework 이름 드롭다운 트리거
-         prototype v4 §stage-fw-detail 구조 (h1 FrameworkSwitcher + 보조 설명)
-         ======================================== -->
-    <div class="flex items-start justify-between gap-4 flex-wrap">
-      <div class="flex-1 min-w-0">
-        <!-- Framework 이름 자체가 드롭다운 트리거. 상속은 wizard (/controls/new) 로 이동 -->
-        <FrameworkSwitcher
-          :current-framework-id="selectedFrameworkId"
-          @switched="onFrameworkSwitched"
-          @error="onFrameworkSwitcherError" />
-        <p class="text-xs text-gray-500 mt-1">프레임워크별 통제항목 및 증빙 수집 현황을 관리합니다.</p>
-      </div>
-      <div class="flex gap-2 shrink-0">
-        <button @click="showImportDialog = true"
-          class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2">
-          <i class="pi pi-upload text-sm"></i> 엑셀 Import
-        </button>
-        <button @click="showAddControlDialog = true"
-          class="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 flex items-center gap-2">
-          <i class="pi pi-plus text-sm"></i> 통제항목 추가
-        </button>
-      </div>
-    </div>
-
-    <!-- ========================================
-         검색/필터 + 통계 — v11 Phase 5-6 에서 프레임워크 <select> 제거
+         검색/필터 + 액션 (Phase 5-13d: 헤더 통합)
+         좌측 = 보기 컨트롤 (검색 / 상태 필터, 탭에 카운트 포함)
+         우측 = 페이지 액션 (Import / 통제항목 추가)
+         AppHeader 브레드크럼이 Framework 이름·드롭다운을 흡수.
          ======================================== -->
     <div class="flex items-center justify-between flex-wrap gap-3">
-      <div class="flex items-center gap-3">
-        <!-- (프레임워크 <select> 는 FrameworkSwitcher 로 이동) -->
-
+      <div class="flex items-center gap-3 flex-wrap">
         <!-- 검색 -->
         <div class="relative">
           <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
           <input v-model="searchText" type="text" placeholder="코드, 항목명 검색..."
-            class="pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm w-56 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+            class="pl-8 pr-3 h-9 border border-gray-300 rounded-lg text-sm w-56 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
         </div>
 
         <!-- 상태 필터 (Phase 5-9: "검토 대기" 탭 추가) -->
@@ -476,7 +441,7 @@ watch(() => props.frameworkId, (newId) => {
                 ? (status === '검토 대기' ? 'bg-white text-blue-700 shadow-sm' : 'bg-white text-gray-900 shadow-sm')
                 : (status === '검토 대기' ? 'text-blue-600 hover:text-blue-700' : 'text-gray-500 hover:text-gray-700')]">
             {{ status }}
-            <span v-if="status !== '전체'" class="ml-1"
+            <span class="ml-1"
               :class="status === '검토 대기' ? 'text-blue-400' : 'text-gray-400'">
               {{ statusCounts[status] || 0 }}
             </span>
@@ -484,15 +449,16 @@ watch(() => props.frameworkId, (newId) => {
         </div>
       </div>
 
-      <!-- 통계 -->
-      <div class="flex gap-4 text-sm">
-        <span class="text-gray-500">전체 <strong class="text-gray-900">{{ controls.length }}</strong></span>
-        <span class="text-green-600">완료 <strong>{{ statusCounts['완료'] || 0 }}</strong></span>
-        <span class="text-amber-600">진행중 <strong>{{ statusCounts['진행중'] || 0 }}</strong></span>
-        <span class="text-gray-400">미수집 <strong>{{ statusCounts['미수집'] || 0 }}</strong></span>
-        <span v-if="statusCounts['검토 대기'] > 0" class="text-blue-600">
-          검토 대기 <strong>{{ statusCounts['검토 대기'] }}</strong>
-        </span>
+      <!-- 액션 버튼 (Phase 5-13d: 헤더에서 이동) -->
+      <div class="flex items-center gap-2">
+        <button @click="showImportDialog = true"
+          class="h-9 px-3 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-1.5">
+          <i class="pi pi-upload text-xs"></i> 엑셀 Import
+        </button>
+        <button @click="showAddControlDialog = true"
+          class="h-9 px-3 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 flex items-center gap-1.5">
+          <i class="pi pi-plus text-xs"></i> 통제항목 추가
+        </button>
       </div>
     </div>
 
