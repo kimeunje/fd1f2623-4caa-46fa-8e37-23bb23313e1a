@@ -103,6 +103,12 @@ const statusCounts = computed(() => {
 // Phase 5-9: "검토 대기" 탭 추가
 const statusOptions = ['전체', '완료', '진행중', '미수집', '검토 대기']
 
+// Phase 5-13f: 본문 헤더용 — 현재 Framework 메타 (이름 + 통제/증빙/작업 카운트)
+const currentFramework = computed<Framework | null>(() => {
+  if (selectedFrameworkId.value == null) return null
+  return frameworks.value.find(f => f.id === selectedFrameworkId.value) ?? null
+})
+
 // ========================================
 // 데이터 로드
 // ========================================
@@ -418,46 +424,58 @@ watch(() => props.frameworkId, (newId) => {
     </Transition>
 
     <!-- ========================================
-         검색/필터 + 액션 (Phase 5-13d: 헤더 통합)
-         좌측 = 보기 컨트롤 (검색 / 상태 필터, 탭에 카운트 포함)
-         우측 = 페이지 액션 (Import / 통제항목 추가)
-         AppHeader 브레드크럼이 Framework 이름·드롭다운을 흡수.
+         본문 헤더 (Phase 5-13f) — unified_prototype §stage-fw-detail
+         좌측 = Framework 이름 h1 + 카운트 서브텍스트 (정보 표시 전용)
+         우측 = 페이지 액션 버튼 (엑셀 Import / 통제 항목 추가)
+         Framework 전환은 AppHeader 브레드크럼 드롭다운에서 수행.
          ======================================== -->
-    <div class="flex items-center justify-between flex-wrap gap-3">
-      <div class="flex items-center gap-3 flex-wrap">
-        <!-- 검색 -->
-        <div class="relative">
-          <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
-          <input v-model="searchText" type="text" placeholder="코드, 항목명 검색..."
-            class="pl-8 pr-3 h-9 border border-gray-300 rounded-lg text-sm w-56 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
-        </div>
-
-        <!-- 상태 필터 (Phase 5-9: "검토 대기" 탭 추가) -->
-        <div class="flex bg-gray-100 rounded-lg p-0.5">
-          <button v-for="status in statusOptions" :key="status"
-            @click="statusFilter = status"
-            :class="['px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
-              statusFilter === status
-                ? (status === '검토 대기' ? 'bg-white text-blue-700 shadow-sm' : 'bg-white text-gray-900 shadow-sm')
-                : (status === '검토 대기' ? 'text-blue-600 hover:text-blue-700' : 'text-gray-500 hover:text-gray-700')]">
-            {{ status }}
-            <span class="ml-1"
-              :class="status === '검토 대기' ? 'text-blue-400' : 'text-gray-400'">
-              {{ statusCounts[status] || 0 }}
-            </span>
-          </button>
-        </div>
+    <div class="flex items-center justify-between gap-4 flex-wrap">
+      <div class="min-w-0">
+        <h1 class="text-lg font-medium text-gray-900 truncate">
+          {{ currentFramework?.name ?? '…' }}
+        </h1>
+        <p v-if="currentFramework" class="text-xs text-gray-500 mt-0.5">
+          통제 항목 {{ currentFramework.controlCount }}개
+          · 증빙 유형 {{ currentFramework.evidenceTypeCount ?? 0 }}개
+          · 수집 작업 {{ currentFramework.jobCount ?? 0 }}개
+        </p>
       </div>
-
-      <!-- 액션 버튼 (Phase 5-13d: 헤더에서 이동) -->
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 shrink-0">
         <button @click="showImportDialog = true"
-          class="h-9 px-3 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-1.5">
-          <i class="pi pi-upload text-xs"></i> 엑셀 Import
+          class="h-8 px-3 text-xs bg-white border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 flex items-center gap-1.5">
+          <i class="pi pi-upload text-[10px]"></i> 엑셀 Import
         </button>
         <button @click="showAddControlDialog = true"
-          class="h-9 px-3 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 flex items-center gap-1.5">
-          <i class="pi pi-plus text-xs"></i> 통제항목 추가
+          class="h-8 px-3 text-xs bg-gray-900 text-white rounded-md hover:bg-gray-800 flex items-center gap-1.5">
+          <i class="pi pi-plus text-[10px]"></i> 통제 항목
+        </button>
+      </div>
+    </div>
+
+    <!-- ========================================
+         검색/필터 (Phase 5-13d/f: 액션 버튼은 본문 헤더로 이동)
+         ======================================== -->
+    <div class="flex items-center gap-3 flex-wrap">
+      <!-- 검색 -->
+      <div class="relative">
+        <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+        <input v-model="searchText" type="text" placeholder="코드, 항목명 검색..."
+          class="pl-8 pr-3 h-9 border border-gray-300 rounded-lg text-sm w-56 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+      </div>
+
+      <!-- 상태 필터 (Phase 5-9: "검토 대기" 탭 추가, Phase 5-13d: '전체' 카운트 통합) -->
+      <div class="flex bg-gray-100 rounded-lg p-0.5">
+        <button v-for="status in statusOptions" :key="status"
+          @click="statusFilter = status"
+          :class="['px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+            statusFilter === status
+              ? (status === '검토 대기' ? 'bg-white text-blue-700 shadow-sm' : 'bg-white text-gray-900 shadow-sm')
+              : (status === '검토 대기' ? 'text-blue-600 hover:text-blue-700' : 'text-gray-500 hover:text-gray-700')]">
+          {{ status }}
+          <span class="ml-1"
+            :class="status === '검토 대기' ? 'text-blue-400' : 'text-gray-400'">
+            {{ statusCounts[status] || 0 }}
+          </span>
         </button>
       </div>
     </div>
