@@ -372,11 +372,12 @@ function formatDateTime(iso?: string): string {
 
 function reviewStatusBadge(status?: ReviewStatus): { label: string; cls: string } | null {
   if (!status) return null
+  // ControlsView.reviewStatusBadge 와 라벨·클래스 정합 (Phase 5-13c)
   const map: Record<ReviewStatus, { label: string; cls: string }> = {
-    pending: { label: '검토', cls: 'bg-blue-100 text-blue-700' },
-    approved: { label: '승인', cls: 'bg-green-50 text-green-700' },
-    rejected: { label: '반려', cls: 'bg-red-50 text-red-700' },
-    auto_approved: { label: '자동승인', cls: 'bg-gray-100 text-gray-600' },
+    pending: { label: '● 검토 대기', cls: 'bg-blue-100 text-blue-700' },
+    approved: { label: '승인', cls: 'bg-green-100 text-green-700' },
+    rejected: { label: '반려', cls: 'bg-red-100 text-red-700' },
+    auto_approved: { label: '자동 승인', cls: 'bg-gray-100 text-gray-600' },
   }
   return map[status] ?? null
 }
@@ -446,14 +447,17 @@ function executionDotCls(status?: string): string {
         </div>
         <div class="bg-gray-50 rounded-md p-3">
           <div class="text-[11px] text-gray-400 mb-1">최신 파일</div>
-          <div v-if="latestFile" class="text-sm font-medium">
-            v{{ latestFile.version }}
+          <div v-if="latestFile" class="text-sm font-medium flex items-center gap-1.5 flex-wrap">
+            <span>v{{ latestFile.version }}</span>
             <span class="text-[11px] text-gray-400 font-normal">
               · {{ formatDate(latestFile.collectedAt) }}
               · {{ methodLabel(latestFile.collectionMethod) }}
-              <template v-if="reviewStatusBadge(latestFile.reviewStatus)">
-                · {{ reviewStatusBadge(latestFile.reviewStatus)!.label }}
-              </template>
+            </span>
+            <span
+              v-if="reviewStatusBadge(latestFile.reviewStatus)"
+              class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded"
+              :class="reviewStatusBadge(latestFile.reviewStatus)!.cls">
+              {{ reviewStatusBadge(latestFile.reviewStatus)!.label }}
             </span>
           </div>
           <div v-else class="text-sm text-gray-400">아직 파일이 없습니다</div>
@@ -587,27 +591,31 @@ function executionDotCls(status?: string): string {
               :key="file.id"
               class="border-b border-gray-100 last:border-b-0"
               :class="file.reviewStatus === 'pending' ? 'bg-blue-50/40' : ''">
-              <td class="py-2.5 px-2">
-                <span
-                  class="font-mono"
-                  :class="file.reviewStatus === 'pending'
-                    ? 'font-medium text-blue-700'
-                    : 'text-gray-500'">
-                  v{{ file.version }}
-                </span>
+            <td class="py-2.5 px-2">
+              <span
+                class="font-mono"
+                :class="file.reviewStatus === 'pending'
+                  ? 'font-medium text-blue-700'
+                  : 'text-gray-500'">
+                v{{ file.version }}
+              </span>
+            </td>
+            <td class="py-2.5 px-2 text-gray-600">{{ formatDate(file.collectedAt) }}</td>
+            <td class="py-2.5 px-2 text-gray-600">{{ formatFileSize(file.fileSize) }}</td>
+            <td class="py-2.5 px-2 text-gray-600">{{ methodLabel(file.collectionMethod) }}</td>
+            <td class="py-2.5 px-2">
+              <div class="flex items-center gap-1.5 min-w-0">
                 <span
                   v-if="reviewStatusBadge(file.reviewStatus)"
-                  class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded ml-1"
+                  class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded shrink-0"
                   :class="reviewStatusBadge(file.reviewStatus)!.cls">
                   {{ reviewStatusBadge(file.reviewStatus)!.label }}
                 </span>
-              </td>
-              <td class="py-2.5 px-2 text-gray-600">{{ formatDate(file.collectedAt) }}</td>
-              <td class="py-2.5 px-2 text-gray-600">{{ formatFileSize(file.fileSize) }}</td>
-              <td class="py-2.5 px-2 text-gray-600">{{ methodLabel(file.collectionMethod) }}</td>
-              <td class="py-2.5 px-2 font-mono text-[11px] truncate max-w-xs" :title="file.fileName">
-                {{ file.fileName }}
-              </td>
+                <span class="font-mono text-[11px] truncate" :title="file.fileName">
+                  {{ file.fileName }}
+                </span>
+              </div>
+            </td>
               <td class="py-2.5 px-2 text-right">
                 <div class="inline-flex gap-1">
                   <button
