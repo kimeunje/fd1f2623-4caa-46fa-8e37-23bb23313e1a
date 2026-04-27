@@ -52,6 +52,25 @@ public class Framework extends BaseEntity {
     @Builder.Default
     private List<Control> controls = new ArrayList<>();
 
+    /**
+     * v14 Phase 5-14a — Optimistic lock.
+     *
+     * <p>통제 관리 통합 다이얼로그 ({@code UnifiedControlsDialog})의 동시 편집 충돌 감지에 사용.
+     * JPA {@code @Version} 으로 자동 관리:</p>
+     * <ul>
+     *   <li>INSERT 시 0 으로 초기화 ({@code @Builder.Default} 로도 안전망)</li>
+     *   <li>UPDATE 시 +1 자동 증가</li>
+     *   <li>UPDATE 의 WHERE 절에 {@code version = ?} 추가되어 충돌 시 {@code OptimisticLockException}</li>
+     * </ul>
+     *
+     * <p>Phase 5-14d 의 {@code PATCH /tree} 에서 클라이언트가 보낸 {@code expectedVersion}
+     * 과 비교하여 409 응답 처리에 사용 예정.</p>
+     */
+    @Version
+    @Builder.Default
+    @Column(nullable = false)
+    private Long version = 0L;
+
     public void update(String name, String description) {
         if (name != null) this.name = name;
         if (description != null) this.description = description;

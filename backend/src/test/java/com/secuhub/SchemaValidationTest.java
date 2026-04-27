@@ -61,6 +61,26 @@ class SchemaValidationTest {
     @PersistenceContext
     private EntityManager entityManager;
 
+    // ============= v14 fix-3: 테스트 클래스 간 leftover 격리 =============
+    // 다른 테스트 클래스(@Transactional 없는 mockMvc 테스트들)가
+    // commit 한 사용자/프레임워크/통제 데이터가 SchemaValidationTest 시작 시
+    // 잔존할 수 있음. testUserCrud 의 count() 검증을 위해 명시적 cleanup.
+    @BeforeEach
+    void cleanLeftoverFromOtherTestClasses() {
+        notificationPreferenceRepository.deleteAllInBatch();
+        evidenceFileRepository.deleteAllInBatch();
+        collectionJobRepository.deleteAllInBatch();
+        jobExecutionRepository.deleteAllInBatch();
+        evidenceTypeRepository.deleteAllInBatch();
+        controlRepository.deleteAllInBatch();
+        frameworkRepository.deleteAllInBatch();
+        vulnActionLogRepository.deleteAllInBatch();
+        approvalRequestRepository.deleteAllInBatch();
+        vulnerabilityRepository.deleteAllInBatch();
+        userRepository.deleteAllInBatch();
+    }
+    // ====================================================================
+
     // ========================================
     // 1. User 도메인
     // ========================================

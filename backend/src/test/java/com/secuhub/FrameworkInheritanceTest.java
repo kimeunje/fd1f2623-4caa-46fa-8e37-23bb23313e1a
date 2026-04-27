@@ -16,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -92,6 +93,7 @@ class FrameworkInheritanceTest {
     @Test
     @Order(1)
     @DisplayName("[Basic] 통제 2/증빙 3/작업 2 가 정확히 복제되고 parent 기록됨")
+    @Transactional   // ← v14 fix-2 추가: lazy chain 접근 보장
     void testBasicInheritance() throws Exception {
         Framework source = frameworkRepository.save(Framework.builder()
                 .name("ISMS-P 2025").description("기존 감사 주기").build());

@@ -58,14 +58,14 @@ dependencies {
 }
 
 // ⭐ Vue 빌드 결과물을 static/으로 복사
-task copyFrontend(type: Copy) {
-    dependsOn ':frontend:npmBuild'
-    from "${project(':frontend').projectDir}/dist"
-    into "${projectDir}/src/main/resources/static"
-}
+// task copyFrontend(type: Copy) {
+//     dependsOn ':frontend:npmBuild'
+//     from "${project(':frontend').projectDir}/dist"
+//     into "${projectDir}/src/main/resources/static"
+// }
 
 // processResources 전에 프론트엔드 복사 실행
-processResources.dependsOn copyFrontend
+// processResources.dependsOn copyFrontend
 
 tasks.named('test') {
     useJUnitPlatform()
