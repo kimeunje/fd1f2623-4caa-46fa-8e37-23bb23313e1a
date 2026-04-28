@@ -4,9 +4,11 @@ import com.secuhub.common.dto.ApiResponse;
 import com.secuhub.domain.evidence.dto.ExcelImportDto;
 import com.secuhub.domain.evidence.dto.FrameworkDto;
 import com.secuhub.domain.evidence.service.ExcelImportService;
+import com.secuhub.domain.evidence.service.FrameworkExportService;
 import com.secuhub.domain.evidence.service.FrameworkService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +16,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @RestController
@@ -24,6 +28,7 @@ public class FrameworkController {
 
     private final FrameworkService frameworkService;
     private final ExcelImportService excelImportService;
+    private final FrameworkExportService frameworkExportService;  // v14 Phase 5-14e 신규
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<FrameworkDto.Response>>> list() {
@@ -88,5 +93,32 @@ public class FrameworkController {
             @RequestParam("file") MultipartFile file) {
         ExcelImportDto.ImportResult result = excelImportService.importControls(id, file);
         return ResponseEntity.ok(ApiResponse.ok("엑셀 Import가 완료되었습니다.", result));
+    }
+
+    /**
+     * v14 Phase 5-14e — 통제항목 엑셀 Export.
+     *
+     * <p>{@code GET /api/v1/frameworks/{id}/export}</p>
+     *
+     * <p>현재 Framework 의 control_nodes 트리를 엑셀로 다운로드. Import 포맷
+     * (코드/영역/항목명/설명/필요 증빙) + 계층 경로 컬럼 추가. depth=N 의 leaf 들이
+     * 한 행씩, 계층 경로 컬럼에 {@code "1 > 1.1 > 1.1.1"} 형식. spec §3.3.1.4 정합.</p>
+     *
+     * <p>파일명 인코딩은 RFC 5987 스타일 ({@code filename*=UTF-8''...}) — Phase 2 의
+     * Blob 다운로드 패턴 그대로 한글 파일명 안전.</p>
+     */
+    @GetMapping("/{id}/export")
+    public ResponseEntity<byte[]> export(@PathVariable Long id) {
+        FrameworkExportService.ExportResult result = frameworkExportService.export(id);
+
+        String encodedFileName = URLEncoder.encode(result.fileName(), StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        String contentDisposition = "attachment; filename*=UTF-8''" + encodedFileName;
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
+                .body(result.data());
     }
 }

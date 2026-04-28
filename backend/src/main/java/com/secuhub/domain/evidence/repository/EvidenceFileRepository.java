@@ -68,4 +68,44 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
         """)
     long countByControlIdAndReviewStatus(@Param("controlId") Long controlId,
                                          @Param("status") ReviewStatus status);
+
+    // ========================================================================
+    // v14 Phase 5-14e — leaf 통제 코드 변경 사전 경고 (impact-summary)
+    // ========================================================================
+
+    /**
+     * 특정 통제 (leaf) 에 매달린 모든 EvidenceFile 수.
+     *
+     * <p>Phase 5-14e impact-summary 의 {@code evidenceFileCount} 필드용.
+     * version / review_status 무관, 모든 행 카운트.</p>
+     *
+     * <p>{@code controlId} 의미는 spec §3.3.1.5 (5-14e Q1=A): leaf control_node.id.
+     * V6 prod 후 {@code evidence_types.control_id} 가 leaf control_node.id 로 이주됨
+     * (+1,000,000 offset). dev/test 에서는 매핑 이주 (5-14f) 전까지 매칭 0 자연.</p>
+     *
+     * <p>패턴은 기존 {@link #countByControlIdAndReviewStatus(Long, ReviewStatus)} 와 동일
+     * — review_status 필터만 제거.</p>
+     */
+    @Query("""
+        SELECT COUNT(ef) FROM EvidenceFile ef
+        WHERE ef.evidenceType.control.id = :controlId
+        """)
+    long countByControlId(@Param("controlId") Long controlId);
+
+    /**
+     * 특정 통제 (leaf) 에 매달린 EvidenceFile 중 관리자가 명시 검토한 (reviewed_at IS NOT NULL) 수.
+     *
+     * <p>Phase 5-14e impact-summary 의 {@code reviewCount} 필드용. spec §3.3.1.5 의
+     * "검토 이력 N건" 의미. {@code review_status IN ('approved', 'rejected')} 인 파일이
+     * 모두 reviewed_at 가짐 (Phase 5-4 EvidenceApprovalService 가 set). pending /
+     * auto_approved 는 reviewed_at 가 NULL 이라 제외.</p>
+     *
+     * <p>{@code controlId} 의미는 {@link #countByControlId(Long)} 와 동일.</p>
+     */
+    @Query("""
+        SELECT COUNT(ef) FROM EvidenceFile ef
+        WHERE ef.evidenceType.control.id = :controlId
+          AND ef.reviewedAt IS NOT NULL
+        """)
+    long countReviewedByControlId(@Param("controlId") Long controlId);
 }
