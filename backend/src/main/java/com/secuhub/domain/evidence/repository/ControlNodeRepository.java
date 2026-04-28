@@ -37,8 +37,24 @@ public interface ControlNodeRepository extends JpaRepository<ControlNode, Long> 
      *
      * <p>정렬: {@code depth ASC, displayOrder ASC} — 부모가 자식보다 먼저 등장 보장.
      * {@code GET /tree} 응답에서 클라이언트가 한 번의 순회로 트리를 reconstruct 할 수 있도록.</p>
+     *
+     * <p><b>v14.3 (Phase 5-14c) 변경</b>: 본문을 derived query 에서 JPQL 로 전환 +
+     * {@code LEFT JOIN FETCH cn.parent} 추가. NodeSummary 매핑 시
+     * {@code cn.getParent().getId()} 호출의 lazy load N+1 차단을 위해.
+     * 메서드 이름 / 시그니처 / 정렬은 동일 — 호출 측 호환 그대로.</p>
+     *
+     * <p>spec §3.3.1.4 의 (depth, parent.id NULL FIRST, displayOrder) 정렬 중
+     * "parent.id" 단계 정렬은 {@link com.secuhub.domain.evidence.service.TreeService}
+     * 가 JVM-side Comparator 로 추가 적용 — JPQL ORDER BY 의 NULL 처리 환경
+     * 의존성을 회피하기 위함.</p>
      */
-    List<ControlNode> findByFrameworkIdOrderByDepthAscDisplayOrderAsc(Long frameworkId);
+    @Query("""
+        SELECT cn FROM ControlNode cn
+        LEFT JOIN FETCH cn.parent
+        WHERE cn.framework.id = :frameworkId
+        ORDER BY cn.depth ASC, cn.displayOrder ASC
+    """)
+    List<ControlNode> findByFrameworkIdOrderByDepthAscDisplayOrderAsc(@Param("frameworkId") Long frameworkId);
 
     /**
      * Framework 안에서 특정 nodeType 만 반환.
