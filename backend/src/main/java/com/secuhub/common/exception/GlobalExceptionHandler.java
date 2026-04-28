@@ -1,6 +1,7 @@
 package com.secuhub.common.exception;
 
 import com.secuhub.common.dto.ApiResponse;
+import com.secuhub.domain.evidence.dto.TreeUpdateErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -39,6 +40,35 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException e) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("접근 권한이 없습니다."));
+    }
+
+    // ========================================================================
+    // Phase 5-14d — PATCH /tree 전용 두 핸들러 (spec §3.3.1.4 응답 shape 정합)
+    // ========================================================================
+
+    /**
+     * 5-14d 검증 규칙 (spec §3.3.1.4 의 12개) 위반 시 422 +
+     * {@link TreeUpdateErrorResponse#validationFailed(java.util.List)}
+     */
+    @ExceptionHandler(TreeValidationException.class)
+    public ResponseEntity<TreeUpdateErrorResponse> handleTreeValidation(TreeValidationException e) {
+        log.warn("Tree validation failed: {} errors", e.getDetails().size());
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(TreeUpdateErrorResponse.validationFailed(e.getDetails()));
+    }
+
+    /**
+     * 5-14d expectedVersion 불일치 (다이얼로그 동시 편집 충돌) 시 409 +
+     * {@link TreeUpdateErrorResponse#versionMismatch(long)}
+     *
+     * <p>5-14d 범위에서는 currentVersion 만 노출. lastEditedBy / lastEditedAt 은
+     * 후속 phase (Framework 엔티티 audit 필드 추가 후).</p>
+     */
+    @ExceptionHandler(OptimisticLockMismatchException.class)
+    public ResponseEntity<TreeUpdateErrorResponse> handleOptimisticLock(OptimisticLockMismatchException e) {
+        log.warn("Optimistic lock conflict: current version = {}", e.getCurrentVersion());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(TreeUpdateErrorResponse.versionMismatch(e.getCurrentVersion()));
     }
 
     @ExceptionHandler(Exception.class)

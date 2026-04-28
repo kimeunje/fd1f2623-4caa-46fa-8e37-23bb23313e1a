@@ -132,7 +132,11 @@ public class ControlNode extends BaseEntity {
 
     /**
      * 노드 메타 수정. null 인 필드는 변경하지 않음 (PATCH 의미).
-     * 5-14d 트리 PATCH 의 {@code updated} 액션에서 사용 예정.
+     * 5-14d 트리 PATCH 의 {@code updated} 액션에서 사용.
+     *
+     * <p>{@code TreeUpdateService} 의 updated 적용은 code/name/description 만
+     * 받으므로 displayOrder/depth 에 null 을 전달한다 — 위치 변경은 별도
+     * {@link #move(ControlNode, int, int)} 책임.</p>
      */
     public void update(String code, String name, String description, Integer displayOrder, Integer depth) {
         if (code != null) this.code = code;
@@ -140,6 +144,30 @@ public class ControlNode extends BaseEntity {
         if (description != null) this.description = description;
         if (displayOrder != null) this.displayOrder = displayOrder;
         if (depth != null) this.depth = depth;
+    }
+
+    /**
+     * 5-14d — moved 액션의 위치 갱신.
+     *
+     * <p>{@code framework} 필드는 package-private setter 만 노출되므로 본 메서드는
+     * 같은 framework 안에서의 이동만 처리한다 (트리 PATCH 의 의미와 정합).</p>
+     *
+     * <p>호출 측 ({@code TreeUpdateService}) 책임:</p>
+     * <ul>
+     *   <li>newParent 가 leaf (control) 가 아님을 사전 검증</li>
+     *   <li>newParent 가 자기 자신의 자손이 아님을 사전 검증 (사이클 방지)</li>
+     *   <li>newDepth 가 newParent.depth + 1 과 일치 (또는 newParent=null 이면 1)</li>
+     *   <li>newDepth 가 1~10 범위</li>
+     * </ul>
+     *
+     * @param newParent 새 부모 (null = framework 직속, depth=1)
+     * @param newDisplayOrder 같은 부모 안 새 정렬 인덱스
+     * @param newDepth 새 depth (parent.depth + 1, 또는 parent=null 이면 1)
+     */
+    public void move(ControlNode newParent, int newDisplayOrder, int newDepth) {
+        this.parent = newParent;
+        this.displayOrder = newDisplayOrder;
+        this.depth = newDepth;
     }
 
     /**
