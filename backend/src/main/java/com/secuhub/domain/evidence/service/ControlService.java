@@ -1,11 +1,13 @@
 package com.secuhub.domain.evidence.service;
 
+import com.secuhub.common.exception.BusinessException;
 import com.secuhub.common.exception.ResourceNotFoundException;
 import com.secuhub.domain.evidence.dto.ControlDto;
 import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import com.secuhub.domain.evidence.entity.*;
 import com.secuhub.domain.evidence.repository.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,6 +17,14 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class ControlService {
+
+    /**
+     * v14 Phase 5-14b: legacy controls 테이블 신규 INSERT 차단 안내 메시지.
+     * UPDATE / DELETE 는 5-14f 에서 control_nodes 위임으로 교체될 예정.
+     */
+    private static final String GONE_MESSAGE =
+            "통제 항목 생성은 신규 트리 API (PATCH /api/v1/frameworks/{id}/tree) 로 이전되었습니다. "
+                    + "기존 controls 테이블은 v14 동안 rollback 안전망으로만 유지됩니다.";
 
     private final FrameworkRepository frameworkRepository;
     private final ControlRepository controlRepository;
@@ -76,32 +86,22 @@ public class ControlService {
                 .build();
     }
 
+    /**
+     * 통제항목 생성 — v14 Phase 5-14b 부터 차단.
+     *
+     * <p>HTTP 410 Gone 으로 응답한다. controls 테이블은 v14 동안 rollback
+     * 안전망으로 유지되지만 신규 데이터 진입은 control_nodes 트리 API
+     * (PATCH /api/v1/frameworks/{id}/tree, Phase 5-14d) 로만 가능하다.</p>
+     *
+     * <p>@param frameworkId, request 시그니처는 {@link com.secuhub.domain.evidence.controller.ControlController}
+     * 와 외부 API 호환을 위해 그대로 유지한다 — v15 에서 컨트롤러 엔드포인트
+     * 자체가 제거될 때 함께 정리된다.</p>
+     *
+     * @throws BusinessException 항상 (HttpStatus.GONE)
+     */
     @Transactional
     public ControlDto.Response create(Long frameworkId, ControlDto.CreateRequest request) {
-        Framework framework = frameworkRepository.findById(frameworkId)
-                .orElseThrow(() -> new ResourceNotFoundException("프레임워크", frameworkId));
-
-        Control control = Control.builder()
-                .framework(framework)
-                .code(request.getCode())
-                .domain(request.getDomain())
-                .name(request.getName())
-                .description(request.getDescription())
-                .build();
-        control = controlRepository.save(control);
-
-        if (request.getEvidenceTypes() != null) {
-            for (ControlDto.EvidenceTypeRequest etReq : request.getEvidenceTypes()) {
-                evidenceTypeRepository.save(EvidenceType.builder()
-                        .control(control)
-                        .name(etReq.getName())
-                        .description(etReq.getDescription())
-                        .build());
-            }
-        }
-
-        // 생성 직후엔 pending 파일이 있을 수 없으므로 2-인자 팩토리로 충분
-        return ControlDto.Response.from(control, 0);
+        throw new BusinessException(GONE_MESSAGE, HttpStatus.GONE);
     }
 
     @Transactional
