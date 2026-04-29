@@ -15,6 +15,11 @@ import java.util.List;
  * 의 타입이 {@link com.secuhub.domain.evidence.entity.Control} → {@link
  * com.secuhub.domain.evidence.entity.ControlNode} 로 변경되어 의미가 자연 변경됨.
  * 호출 측은 ControlNode.id 를 넘기면 자연 매칭. 5-14e 의 impact-summary 가 자연 정상화.</p>
+ *
+ * <h3>v14 Phase 5-14g (β) — 카운트 메서드 추가</h3>
+ * <p>{@link #countCollectedGroupByControlIdInFramework(Long)} 추가. ControlsView 트리
+ * 본문의 진행바 ({@code N/M}) 와 "완료/진행중/미수집" 상태 derive 용. 5-14f 의 evidence
+ * type 카운트 패턴과 동일 (explicit JOIN, N+1 회피).</p>
  */
 public interface EvidenceTypeRepository extends JpaRepository<EvidenceType, Long> {
 
@@ -59,4 +64,41 @@ public interface EvidenceTypeRepository extends JpaRepository<EvidenceType, Long
              GROUP BY cn.id
             """)
     List<Object[]> countGroupByControlIdInFramework(@Param("frameworkId") Long frameworkId);
+
+    // ====================================================================
+    // v14 Phase 5-14g (β) — leaf 별 collected count (evidence_types 중 1개 이상의
+    //                       evidence_files 를 가진 type 의 distinct 수)
+    // ====================================================================
+
+    /**
+     * 한 Framework 안의 leaf 별 "수집된 evidence_types" 카운트를 한 번에 집계.
+     *
+     * <p>정의: leaf 에 매달린 evidence_types 중 evidence_files 가 1개 이상 있는 type 의
+     * distinct 수. ControlsView §3.3 의 6컬럼 진행바 (`{collected}/{total}`) 와
+     * 상태 배지 derive ("완료/진행중/미수집") 용.</p>
+     *
+     * <p>응답: {@code Object[]} 의 배열. 각 항목 {@code [Long controlNodeId, Long count]}.
+     * collected 가 0 인 leaf (모든 evidence_types 미수집 또는 evidence_types 자체가 0개) 는
+     * 결과에 포함 안 됨 (호출 측 defaultIfMissing 처리).</p>
+     *
+     * <p>구현: explicit JOIN 으로 Hibernate 6 의 nested association path resolution 안전.
+     * {@code DISTINCT} 으로 같은 et 가 여러 ef 를 가질 때 중복 카운트 방지. 같은 SQL 결과:
+     * {@code INNER JOIN evidence_files → evidence_types → control_nodes → frameworks}
+     * + {@code GROUP BY cn.id} + {@code COUNT(DISTINCT et.id)}.</p>
+     *
+     * <p>TreeService 가 leaf 마다 호출하지 말고 (N+1 회피) Framework 단위로 1회 호출
+     * 후 Map<controlNodeId, count> 빌드. 5-14f 의 두 카운트 메서드 옆에 자연 동거.</p>
+     *
+     * @param frameworkId Framework id
+     * @return [controlNodeId, distinct evidence_type count] 배열의 리스트
+     */
+    @Query("""
+            SELECT cn.id, COUNT(DISTINCT et.id)
+              FROM EvidenceFile ef
+              JOIN ef.evidenceType et
+              JOIN et.control cn
+             WHERE cn.framework.id = :frameworkId
+             GROUP BY cn.id
+            """)
+    List<Object[]> countCollectedGroupByControlIdInFramework(@Param("frameworkId") Long frameworkId);
 }

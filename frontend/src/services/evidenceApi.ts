@@ -22,6 +22,11 @@ import type {
   ExcelImportResult,
   MyTasksResponse,
   MyTaskDetail,
+  // v14 Phase 5-14g — 통제 트리
+  TreeResponse,
+  TreePatchPayload,
+  TreePatchSuccessResponse,
+  ImpactSummary,
 } from '@/types/evidence'
 
 // ========================================
@@ -74,20 +79,118 @@ export const controlsApi = {
   getDetail(id: number) {
     return api.get<ApiResponse<ControlDetail>>(`/controls/${id}`)
   },
+  /**
+   * v14 Phase 5-14b — 백엔드 410 Gone 반환. 5-14h 에서 호출처 제거 예정.
+   * 신규 분류/통제 추가는 PATCH /tree (treeApi.patchTree) 로 이전.
+   */
   create(frameworkId: number, data: ControlCreatePayload) {
     return api.post<ApiResponse<ControlItem>>(`/frameworks/${frameworkId}/controls`, data)
   },
+  /** v14 Phase 5-14f — 백엔드 410 Gone (5-14h 에서 호출처 제거 예정). */
   update(id: number, data: ControlUpdatePayload) {
     return api.put<ApiResponse<ControlItem>>(`/controls/${id}`, data)
   },
+  /** v14 Phase 5-14f — 백엔드 410 Gone (5-14h 에서 호출처 제거 예정). */
   delete(id: number) {
     return api.delete(`/controls/${id}`)
   },
+  /** v14 Phase 5-14f — 백엔드 410 Gone (5-14h 에서 호출처 제거 예정). */
   addEvidenceType(controlId: number, data: EvidenceTypePayload) {
     return api.post<ApiResponse<EvidenceTypeResponse>>(`/controls/${controlId}/evidence-types`, data)
   },
+  /** v14 Phase 5-14f 보존 — leaf 의 evidence_type 단건 삭제는 그대로 유효. */
   deleteEvidenceType(evidenceTypeId: number) {
     return api.delete(`/evidence-types/${evidenceTypeId}`)
+  },
+}
+
+// ========================================
+// v14 Phase 5-14g — 통제 트리 API (control_nodes 자기참조)
+//
+// spec §3.3.1.4 의 4개 신규 엔드포인트를 모은 단일 객체.
+// 5-14g 는 read 만 적극 활용 (getTree / getImpactSummary / exportFramework).
+// patchTree 는 5-14h 에서 본격 사용 — 정의만 노출.
+// ========================================
+export const treeApi = {
+  /**
+   * GET /api/v1/frameworks/{id}/tree (5-14c).
+   *
+   * <p>Framework + 평탄 nodes[] + version 반환. nodes 는 (depth, parent.id NULL FIRST,
+   * displayOrder) 정렬되어 부모가 자식보다 먼저 등장 — 클라이언트는 단일 패스로 트리
+   * reconstruct 가능. leaf 는 evidenceTypeCount / collectedCount / pendingReviewCount
+   * 세 카운트 모두 노출 (5-14g β).</p>
+   */
+  getTree(frameworkId: number) {
+    return api.get<ApiResponse<TreeResponse>>(`/frameworks/${frameworkId}/tree`)
+  },
+
+  /**
+   * PATCH /api/v1/frameworks/{id}/tree (5-14d).
+   *
+   * <p>nodes.{created,updated,moved,deleted} 단일 트랜잭션, Optimistic lock, tempId
+   * 매핑. 12 검증 규칙. 5-14g 는 정의만 노출, 5-14h 에서 본격 호출.</p>
+   *
+   * <p>409 (version_mismatch) / 422 (validation_failed) 는 axios 가 reject 하므로
+   * 호출 측은 try/catch + e.response.data 로 TreePatchErrorResponse shape 처리.</p>
+   */
+  patchTree(frameworkId: number, payload: TreePatchPayload) {
+    return api.patch<ApiResponse<TreePatchSuccessResponse>>(
+      `/frameworks/${frameworkId}/tree`,
+      payload
+    )
+  },
+
+  /**
+   * GET /api/v1/controls/{id}/impact-summary (5-14e).
+   *
+   * <p>leaf 코드 변경 사전 경고용 3 카운트 (evidenceFileCount / jobCount / reviewCount).
+   * 합산 > 0 이면 5-14h 의 코드 변경 경고 다이얼로그 발동. 5-14g 는 정의만 노출.</p>
+   *
+   * <p>존재하지 않는 controlId 도 404 가 아닌 {0,0,0} 반환 (5-14e Q2-A).</p>
+   */
+  getImpactSummary(controlId: number) {
+    return api.get<ApiResponse<ImpactSummary>>(`/controls/${controlId}/impact-summary`)
+  },
+
+  /**
+   * GET /api/v1/frameworks/{id}/export (5-14e).
+   *
+   * <p>현재 트리를 Excel(XLSX) 로 다운로드. POI 생성 + RFC 5987 한글 파일명. leaf 평탄화 +
+   * ancestors path " > " 연결 (예: `1 > 1.1 > 1.1.1`).</p>
+   *
+   * <p>responseType: 'blob' — Phase 2 의 Blob 다운로드 패턴 그대로 (evidenceFilesApi.download
+   * 와 동일 패턴). Content-Disposition 의 filename* 디코딩, 없으면 fallback 이름 사용.</p>
+   */
+  async exportFramework(frameworkId: number, fallbackName: string) {
+    const response = await api.get<Blob>(`/frameworks/${frameworkId}/export`, {
+      responseType: 'blob',
+    })
+
+    let downloadName = fallbackName
+    const disposition = response.headers['content-disposition']
+    if (disposition) {
+      const utf8Match = disposition.match(/filename\*=UTF-8''(.+?)(?:;|$)/)
+      if (utf8Match) {
+        downloadName = decodeURIComponent(utf8Match[1])
+      } else {
+        const basicMatch = disposition.match(/filename="?(.+?)"?(?:;|$)/)
+        if (basicMatch) {
+          downloadName = basicMatch[1]
+        }
+      }
+    }
+
+    const blob = new Blob([response.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = downloadName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
   },
 }
 

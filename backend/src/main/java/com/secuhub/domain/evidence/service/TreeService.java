@@ -39,6 +39,10 @@ import java.util.Map;
  *   <li><b>v14.6 (5-14f) leaf 두 카운트 본격 집계</b> — leaf 의 evidenceTypeCount /
  *       pendingReviewCount 를 Framework 단위 1회 쿼리로 집계 후 Map 빌드.
  *       N+1 회피. 5-14c 의 "0 고정 TODO" 해결.</li>
+ *   <li><b>v14.7 (5-14g β) leaf collectedCount 추가 집계</b> — ControlsView 트리 본문의
+ *       6컬럼 진행바 ({@code N/M}) 를 위해 {@code collectedCount} 추가. 정의: leaf 에
+ *       매달린 evidence_types 중 evidence_files 가 1개 이상 있는 type 의 distinct 수.
+ *       5-14f 와 동일 패턴 (Framework 단위 single query + Map building, N+1 회피).</li>
  * </ul>
  */
 @Service
@@ -88,11 +92,19 @@ public class TreeService {
             pendingReviewCounts.put((Long) row[0], (Long) row[1]);
         }
 
-        // toNodeSummary 호출 시 두 Map 함께 전달
-        List<TreeDto.NodeSummary> nodeSummaries = sorted.stream()
-                .map(n -> toNodeSummary(n, evidenceTypeCounts, pendingReviewCounts))
-                .toList();
+        // ─── v14 Phase 5-14g (β) — leaf collectedCount 본격 집계 (진행바 N/M 의 N) ───
+        // 정의: leaf 에 매달린 evidence_types 중 evidence_files 가 1개 이상 있는 type 의
+        //      distinct 수. ControlsView §3.3 의 6컬럼 진행바 + "완료/진행중" 상태 derive 용.
+        Map<Long, Long> collectedCounts = new HashMap<>();
+        for (Object[] row : evidenceTypeRepository.countCollectedGroupByControlIdInFramework(frameworkId)) {
+            collectedCounts.put((Long) row[0], (Long) row[1]);
+        }
         // ────────────────────────────────────────────────────────────────────
+
+        // toNodeSummary 호출 시 세 Map 함께 전달
+        List<TreeDto.NodeSummary> nodeSummaries = sorted.stream()
+                .map(n -> toNodeSummary(n, evidenceTypeCounts, collectedCounts, pendingReviewCounts))
+                .toList();
 
         return TreeDto.Response.builder()
                 .framework(TreeDto.FrameworkSummary.builder()
@@ -105,10 +117,12 @@ public class TreeService {
     }
 
     /**
-     * v14 Phase 5-14f — Map 으로 카운트 lookup. 시그니처 변경 (5-14c 의 단일 인자 → 3 인자).
+     * v14 Phase 5-14f — Map 으로 카운트 lookup.
+     * v14 Phase 5-14g (β) — collectedCounts 매개변수 추가 (시그니처 변경).
      */
     private TreeDto.NodeSummary toNodeSummary(ControlNode node,
                                               Map<Long, Long> evidenceTypeCounts,
+                                              Map<Long, Long> collectedCounts,
                                               Map<Long, Long> pendingReviewCounts) {
         TreeDto.NodeSummary.NodeSummaryBuilder b = TreeDto.NodeSummary.builder()
                 .id(node.getId())
@@ -123,8 +137,10 @@ public class TreeService {
         if (node.getNodeType() == NodeType.control) {
             // v14 Phase 5-14f — Map 에서 카운트 lookup, 없으면 0 (defaultIfMissing)
             long etCount = evidenceTypeCounts.getOrDefault(node.getId(), 0L);
+            long ccCount = collectedCounts.getOrDefault(node.getId(), 0L);   // ← 5-14g (β)
             long prCount = pendingReviewCounts.getOrDefault(node.getId(), 0L);
             b.evidenceTypeCount((int) etCount)
+             .collectedCount((int) ccCount)                                  // ← 5-14g (β)
              .pendingReviewCount(prCount);
         }
         return b.build();

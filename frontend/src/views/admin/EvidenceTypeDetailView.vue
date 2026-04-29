@@ -425,11 +425,19 @@ function executionDotCls(status?: string): string {
         통제 항목 목록으로
       </button>
 
-      <!-- 헤더 -->
+      <!-- 헤더 (Phase 5-14g — ancestors 경로 추가, spec §3.4.0) -->
       <div class="pb-3 border-b border-gray-200">
-        <div class="text-[11px] text-gray-400 mb-1">
-          통제 항목 {{ control?.code }}<template v-if="control?.name"> · {{ control.name }}</template>
+        <!-- 계층 경로: depth=1 카테고리 부터 leaf 직계 부모까지 ▸ 로 연결, 마지막에 leaf 코드+이름 -->
+        <div
+          v-if="control"
+          class="text-[11px] text-gray-400 mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <template v-for="(a, i) in (control.ancestors ?? [])" :key="a.id">
+            <span class="text-gray-500">{{ a.code }} {{ a.name }}</span>
+            <span class="text-gray-300 text-[9px]">▸</span>
+          </template>
+          <span class="text-gray-700 font-medium">{{ control.code }} {{ control.name }}</span>
         </div>
+
         <h1 class="text-lg font-medium m-0">{{ evidenceType.name }}</h1>
         <p v-if="evidenceType.description" class="text-xs text-gray-500 mt-1">
           {{ evidenceType.description }}
