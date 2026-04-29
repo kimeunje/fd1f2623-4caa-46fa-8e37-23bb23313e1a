@@ -323,6 +323,22 @@ export interface TreePatchSuccessResponse {
   }
 }
 
+/**
+ * 422 검증 실패 details 항목 (5-14d, 5-14h 명명 export).
+ *
+ * 5-14h 의 useControlTree.validationErrors[] 와 ControlNodeRow.props.node._validationErrors
+ * 가 본 타입을 참조한다. 5-14g 까지는 TreePatchErrorResponse 안 인라인 타입이었으나
+ * 5-14h 에서 행 단위 표시 위해 명명 export 로 분리.
+ */
+export interface TreeValidationDetail {
+  target: string
+  targetId?: number
+  targetTempId?: string
+  field: string
+  code: string
+  message: string
+}
+
 /** 422 검증 실패 응답 (5-14d TreeUpdateErrorResponse). */
 export interface TreePatchErrorResponse {
   success: false
@@ -330,14 +346,7 @@ export interface TreePatchErrorResponse {
   /** 409 (version_mismatch) 시에만 — 5-14d Q1=B 로 lastEditedBy/At 은 현재 omit. */
   currentVersion?: number
   /** 422 (validation_failed) 시에만. */
-  details?: Array<{
-    target: string
-    targetId?: number
-    targetTempId?: string
-    field: string
-    code: string
-    message: string
-  }>
+  details?: TreeValidationDetail[]
   message?: string
 }
 

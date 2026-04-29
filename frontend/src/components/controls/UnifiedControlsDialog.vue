@@ -1,282 +1,646 @@
 <script setup lang="ts">
 /**
- * UnifiedControlsDialog — 통제 관리 통합 다이얼로그 (Phase 5-14g shell + 5-14h 편집).
+ * Phase 5-14g + 5-14h — UnifiedControlsDialog.vue
  *
- * <p>spec §3.3.1 / D_single_tree.html 정합. ControlsView 본문 헤더의 단일
- * `[통제 관리]` 버튼이 본 다이얼로그를 띄움. 모든 분류/통제 추가·편집·삭제 동선의
- * 단일 진입점.</p>
+ * 5-14g 인터페이스 보존:
+ *   - props: open (v-model), treeState, frameworkName
+ *   - emits: update:open, request-import
  *
- * <h3>5-14g 범위 (현재)</h3>
- * <ul>
- *   <li>read-only 트리 표시 — 카테고리/leaf 구조 + 카운트 (Q6=B 구조 편집 집중)</li>
- *   <li>검색 input — 코드 / 이름</li>
- *   <li>우상단 아이콘 3개 — [↑ Import] (기존 ImportControlsDialog 재사용),
- *       [↓ Export] (treeApi.exportFramework), [× 닫기]</li>
- *   <li>푸터 — [닫기] 단일 버튼</li>
- * </ul>
+ * 5-14h 추가:
+ *   - 인라인 편집 (코드/이름 input — ControlNodeRow 가 처리)
+ *   - 카테고리/leaf hover 액션
+ *   - 헤더 메타 (Framework · 분류 N · 통제 M · 미저장 변경 K) — Q4=B+헤더
+ *   - 푸터 [취소] [변경 저장 (N)] + 키보드 힌트
+ *   - 저장 흐름: 200/409/422 분기
+ *   - 코드 변경 사전 경고 (impact-summary)
+ *   - 이동 다이얼로그 (⋯ 액션)
+ *   - 자손 cascading 삭제 confirm
+ *   - 글로벌 ⌘S / ⌘F / Esc
+ *   - dirty 있는 상태로 닫기 시 confirm + beforeunload 가드
+ *   - emits 추가: 'saved' (저장 성공)
  *
- * <h3>5-14h 추가 예정 (다음 phase)</h3>
- * <ul>
- *   <li>인라인 편집 — 코드/이름 직접 입력, [+ 통제 추가] / [+ 분류 추가] 액션</li>
- *   <li>dirty 상태 추적 + [변경 저장] 버튼 활성화</li>
- *   <li>treeApi.patchTree (5-14d) 호출 + 409/422 에러 처리</li>
- *   <li>leaf 코드 변경 시 impact-summary 사전 호출 + 경고 다이얼로그</li>
- * </ul>
+ * provide(CONTROL_TREE_INJECTION_KEY, treeState) — ControlNodeRow 가 inject
  */
-import { ref, computed, watch } from 'vue'
-import ControlNodeRow from './ControlNodeRow.vue'
-import { treeApi } from '@/services/evidenceApi'
-import type { ControlTreeState } from '@/composables/useControlTree'
 
-const props = defineProps<{
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+import { treeApi } from '@/services/evidenceApi'
+import {
+  CONTROL_TREE_INJECTION_KEY,
+  type ControlTreeApi,
+  type UnifiedNode,
+} from '@/composables/useControlTree'
+import type { ImpactSummary, TreeValidationDetail } from '@/types/evidence'
+import ControlNodeRow from '@/components/controls/ControlNodeRow.vue'
+import ControlCodeChangeWarningDialog from '@/components/controls/ControlCodeChangeWarningDialog.vue'
+import MoveNodeDialog from '@/components/controls/MoveNodeDialog.vue'
+import TreeConflictDialog from '@/components/controls/TreeConflictDialog.vue'
+
+interface Props {
   open: boolean
-  /** ControlsView 가 보유한 useControlTree 인스턴스를 그대로 공유. */
-  treeState: ControlTreeState
-  /** Import/Export 라벨 컨텍스트용 — Framework 이름. */
+  treeState: ControlTreeApi
   frameworkName: string
-}>()
+}
+
+const props = defineProps<Props>()
 
 const emit = defineEmits<{
-  (e: 'update:open', open: boolean): void
-  /** Import 완료 후 호출 — ControlsView 가 트리 재로드 + (필요 시) 토스트. */
-  (e: 'imported', successCount: number, failCount: number): void
-  /** Import 다이얼로그 열기 요청 — 부모(ControlsView)가 ImportControlsDialog 보유. */
-  (e: 'request-import'): void
+  'update:open': [v: boolean]
+  'request-import': []
+  /** 5-14h 신규 — 저장 성공 (createdCount = tempId 매핑 수, 부모가 toast 등) */
+  saved: [payload: { newVersion: number; createdCount: number }]
 }>()
 
-// ====================================================================
-// 다이얼로그 자체 검색 (트리 composable 의 searchText 와 분리, 다이얼로그 닫기 시 reset)
-// ====================================================================
-// 디자인 결정: 다이얼로그는 ControlsView 와 같은 트리 데이터를 공유하지만, 검색/필터/펼침
-//   은 본문 페이지 와 다이얼로그가 각각 독립적이어야 자연스럽다 (Q6=B 의 "구조 편집 vs
-//   운영 현황 분리" 원칙). 그러나 5-14g 시점에는 단순화를 위해 다이얼로그도 같은
-//   composable.searchText 사용. 5-14h 에서 dirty 추적과 함께 본격 분리.
-// ====================================================================
-const internalSearch = ref('')
+provide(CONTROL_TREE_INJECTION_KEY, props.treeState)
 
-// 다이얼로그 열릴 때마다 search reset
-watch(
-  () => props.open,
-  (next) => {
-    if (next) internalSearch.value = ''
-  },
-)
+// ============================================================================
+// 검색 input ref (⌘F 포커스용)
+// ============================================================================
+const searchInputRef = ref<HTMLInputElement | null>(null)
 
-// composable 의 searchText 와 양방향 sync — 본 다이얼로그 안에서만 활성, 닫으면 reset
-watch(internalSearch, (q) => {
-  props.treeState.searchText.value = q
+function handleDialogSearchInput(e: Event): void {
+  props.treeState.dialogSearch.value = (e.target as HTMLInputElement).value
+}
+
+// ============================================================================
+// Import / Export / Close
+// ============================================================================
+function handleRequestImport(): void {
+  emit('request-import')
+}
+
+const isExporting = ref(false)
+async function handleExport(): Promise<void> {
+  if (!props.treeState.framework.value) return
+  if (isExporting.value) return
+  isExporting.value = true
+  try {
+    await treeApi.exportFramework(
+      props.treeState.framework.value.id,
+      `${props.frameworkName}.xlsx`,
+    )
+  } catch (err) {
+    console.error('[UnifiedControlsDialog] export failed', err)
+  } finally {
+    isExporting.value = false
+  }
+}
+
+function handleCloseRequest(): void {
+  if (props.treeState.hasDirty.value) {
+    const ok = window.confirm(
+      `미저장 변경 ${props.treeState.dirtyCount.value}건이 있습니다. 변경사항을 버리고 닫을까요?`,
+    )
+    if (!ok) return
+    props.treeState.discardAllDirty()
+  }
+  props.treeState.dialogSearch.value = ''
+  emit('update:open', false)
+}
+
+function handleCancelClick(): void {
+  handleCloseRequest()
+}
+
+// ============================================================================
+// 저장 흐름
+// ============================================================================
+const conflictData = ref<{ currentVersion: number } | null>(null)
+
+async function handleSaveClick(): Promise<void> {
+  if (!props.treeState.hasDirty.value) return
+  if (props.treeState.isSaving.value) return
+  const result = await props.treeState.saveTree()
+  if (result.ok) {
+    emit('saved', {
+      newVersion: result.newVersion,
+      createdCount: result.mappings.size,
+    })
+    return
+  }
+  if (result.kind === 'conflict') {
+    conflictData.value = { currentVersion: result.currentVersion }
+    return
+  }
+  if (result.kind === 'validation') {
+    showValidationToast(result.details)
+    return
+  }
+  window.alert(result.message || '저장에 실패했습니다')
+}
+
+async function handleConflictReload(): Promise<void> {
+  conflictData.value = null
+  await props.treeState.load()
+}
+
+function handleConflictDismiss(): void {
+  conflictData.value = null
+}
+
+// ============================================================================
+// validation toast
+// ============================================================================
+const validationToast = ref<string | null>(null)
+let validationToastSeq = 0
+function showValidationToast(details: TreeValidationDetail[]): void {
+  validationToastSeq++
+  const seq = validationToastSeq
+  validationToast.value = `${details.length}건의 검증 오류가 있습니다. 빨간 표시된 행을 확인해 주세요.`
+  setTimeout(() => {
+    if (seq === validationToastSeq) validationToast.value = null
+  }, 6000)
+}
+
+// ============================================================================
+// 코드 변경 경고
+// ============================================================================
+const codeWarning = ref<{
+  node: UnifiedNode
+  oldCode: string
+  newCode: string
+  impact: ImpactSummary
+} | null>(null)
+
+async function handleLeafCodeBlur(payload: {
+  node: UnifiedNode
+  oldCode: string
+  newCode: string
+}): Promise<void> {
+  if (payload.node._kind !== 'existing') return
+  if (payload.node.nodeType !== 'control') return
+  if (payload.oldCode === payload.newCode) return
+  try {
+    const impact = await props.treeState.fetchImpactSummary(payload.node.id)
+    const sum = impact.evidenceFileCount + impact.jobCount + impact.reviewCount
+    if (sum > 0) {
+      codeWarning.value = { ...payload, impact }
+    }
+  } catch (err) {
+    console.warn('[UnifiedControlsDialog] impact-summary 호출 실패, 경고 skip', err)
+  }
+}
+
+function handleCodeWarningConfirm(): void {
+  codeWarning.value = null
+}
+
+function handleCodeWarningCancel(): void {
+  if (codeWarning.value) {
+    props.treeState.setCode(codeWarning.value.node, codeWarning.value.oldCode)
+  }
+  codeWarning.value = null
+}
+
+// ============================================================================
+// 이동
+// ============================================================================
+const moveTarget = ref<UnifiedNode | null>(null)
+
+function handleRequestMove(node: UnifiedNode): void {
+  moveTarget.value = node
+}
+
+function handleMoveConfirm(payload: { node: UnifiedNode; newParent: UnifiedNode }): void {
+  try {
+    props.treeState.moveNode(payload.node, payload.newParent)
+  } catch (err) {
+    window.alert((err as Error).message)
+  } finally {
+    moveTarget.value = null
+  }
+}
+
+function handleMoveCancel(): void {
+  moveTarget.value = null
+}
+
+// ============================================================================
+// 삭제 (자손 cascading confirm)
+// ============================================================================
+function handleRequestDelete(node: UnifiedNode): void {
+  if (node._kind === 'draft') {
+    props.treeState.deleteNode(node)
+    return
+  }
+  const counts = props.treeState.countDescendants(node)
+  let msg = ''
+  if (counts.total === 0) {
+    msg = node.nodeType === 'category'
+      ? `분류 "${node.name}" 을(를) 삭제하시겠습니까?`
+      : `통제 "${node.code} ${node.name}" 을(를) 삭제하시겠습니까?\n\n(이 통제에 매달린 증빙도 함께 삭제됩니다)`
+  } else {
+    msg =
+      `"${node.name}" 을(를) 삭제하면 다음도 함께 삭제됩니다:\n` +
+      `· 자식 분류 ${counts.categories}개\n` +
+      `· 자식 통제 ${counts.controls}개\n` +
+      `· 그에 매달린 모든 증빙\n\n계속하시겠습니까?`
+  }
+  if (window.confirm(msg)) {
+    props.treeState.deleteNode(node)
+  }
+}
+
+// ============================================================================
+// Tab on existing
+// ============================================================================
+const tabToast = ref<string | null>(null)
+let tabToastSeq = 0
+function handleTabOnExisting(_node: UnifiedNode): void {
+  tabToastSeq++
+  const seq = tabToastSeq
+  tabToast.value = '분류 변환은 먼저 통제를 삭제 후 분류로 다시 추가해 주세요. (자동 변환은 v2 예정)'
+  setTimeout(() => {
+    if (seq === tabToastSeq) tabToast.value = null
+  }, 4000)
+}
+
+// ============================================================================
+// 새 대분류 추가
+// ============================================================================
+async function handleAddRootCategory(): Promise<void> {
+  const draft = props.treeState.createRootCategory()
+  await nextTick()
+  const el = document.querySelector<HTMLInputElement>(
+    `[data-temp-id="${draft.tempId}"] input.row-name-input`,
+  )
+  el?.focus()
+}
+
+// ============================================================================
+// 글로벌 키
+// ============================================================================
+function handleGlobalKey(e: KeyboardEvent): void {
+  if (!props.open) return
+  const isMeta = e.metaKey || e.ctrlKey
+  if (isMeta && e.key.toLowerCase() === 's') {
+    e.preventDefault()
+    handleSaveClick()
+    return
+  }
+  if (isMeta && e.key.toLowerCase() === 'f') {
+    e.preventDefault()
+    nextTick(() => searchInputRef.value?.focus())
+    return
+  }
+  if (e.key === 'Escape') {
+    const t = e.target as HTMLElement
+    if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return
+    e.preventDefault()
+    handleCloseRequest()
+  }
+}
+
+function handleBeforeUnload(e: BeforeUnloadEvent): void {
+  if (props.open && props.treeState.hasDirty.value) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleGlobalKey)
+  window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
-// 다이얼로그 닫힐 때 composable 의 검색 reset (페이지 본문이 다른 검색을 했어도 영향 없음)
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleGlobalKey)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+})
+
+// ============================================================================
+// open watcher — 열릴 때 dialog 검색 / 검증 에러 reset
+// ============================================================================
 watch(
   () => props.open,
-  (next, prev) => {
-    if (prev && !next) {
-      props.treeState.searchText.value = ''
+  (v) => {
+    if (v) {
+      props.treeState.dialogSearch.value = ''
+      props.treeState.validationErrors.value = []
     }
   },
 )
 
-// ====================================================================
-// 액션
-// ====================================================================
-function close() {
-  emit('update:open', false)
-}
-
-function backdropClick(e: MouseEvent) {
-  if (e.target === e.currentTarget) close()
-}
-
-function onImportClick() {
-  emit('request-import')
-}
-
-const exporting = ref(false)
-async function onExportClick() {
-  if (props.treeState.framework.value == null) return
-  exporting.value = true
-  try {
-    await treeApi.exportFramework(
-      props.treeState.framework.value.id,
-      `${props.frameworkName}_통제구조.xlsx`,
-    )
-  } catch (e: any) {
-    console.error('[UnifiedControlsDialog.onExportClick]', e)
-    alert(e?.response?.data?.message ?? 'Export 에 실패했습니다.')
-  } finally {
-    exporting.value = false
-  }
-}
-
-// ====================================================================
-// 다이얼로그 트리에서 leaf 클릭 — 5-14g 는 no-op (편집 모드 미진입). 5-14h 에서
-// 인라인 편집 활성화 또는 leaf 행 expanded 표시.
-// ====================================================================
-function onTreeToggle(_nodeId: number, _nodeType: 'category' | 'control') {
-  // 카테고리는 펼침/접힘 그대로
-  if (_nodeType === 'category') {
-    props.treeState.toggleExpand(_nodeId)
-  }
-  // leaf 는 5-14g 에서는 액션 없음 (편집은 5-14h)
-}
-
-// ====================================================================
-// 푸터 — 5-14g 는 [닫기] 만, 5-14h 에서 [취소] / [변경 저장] 추가
-// ====================================================================
-const dirtyCount = computed(() => 0) // 5-14h placeholder
-
-// 트리 본문 카운트 (헤더 서브텍스트)
-const subText = computed(() => {
-  const s = props.treeState
-  return `통제 ${s.totalLeafCount.value}개 · 증빙 ${s.totalEvidenceTypeCount.value}개`
+// ============================================================================
+// 표시용 메타
+// ============================================================================
+const headerSubtitle = computed<string>(() => {
+  const cats = props.treeState.dialogCategoryCount.value
+  const ctrls = props.treeState.dialogControlCount.value
+  const dirty = props.treeState.dirtyCount.value
+  const parts = [props.frameworkName, `분류 ${cats}`, `통제 ${ctrls}`]
+  if (dirty > 0) parts.push(`미저장 변경 ${dirty}`)
+  return parts.join(' · ')
 })
+
+const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.length === 0)
 </script>
 
 <template>
   <Teleport to="body">
-    <Transition name="dialog">
-      <div
-        v-if="open"
-        class="fixed inset-0 bg-black/40 flex items-center justify-center z-[55]"
-        @click="backdropClick">
-        <div
-          class="bg-white rounded-xl shadow-xl flex flex-col w-full max-w-[720px] max-h-[85vh]"
-          @click.stop>
-          <!-- ────────────────────────────── 헤더 ────────────────────────────── -->
-          <div class="px-5 py-4 border-b border-gray-200 flex items-center gap-3">
-            <div class="flex-1 min-w-0">
-              <h2 class="text-[15px] font-semibold text-gray-900 truncate">통제 관리</h2>
-              <p class="text-[11px] text-gray-400 mt-0.5 truncate">
-                {{ frameworkName }} · {{ subText }}
-              </p>
-            </div>
-            <div class="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                @click="onImportClick"
-                class="h-8 w-8 inline-flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors"
-                title="엑셀 Import">
-                <i class="pi pi-upload text-[13px]"></i>
+    <div v-if="open" class="dialog-backdrop" @click.self="handleCloseRequest">
+      <div class="dialog-shell" role="dialog" aria-labelledby="unified-controls-title">
+        <!-- ─────────── 헤더 ─────────── -->
+        <header class="dialog-header">
+          <div class="header-left">
+            <h2 id="unified-controls-title" class="dialog-title">통제 항목 관리</h2>
+            <p class="dialog-subtitle">{{ headerSubtitle }}</p>
+          </div>
+          <div class="header-actions">
+            <button type="button" class="header-iconbtn" title="엑셀 Import"
+              @click="handleRequestImport">
+              <i class="pi pi-arrow-up"></i>
+            </button>
+            <button type="button" class="header-iconbtn" title="엑셀 Export"
+              :disabled="isExporting || isEmpty" @click="handleExport">
+              <i :class="['pi', isExporting ? 'pi-spinner pi-spin' : 'pi-arrow-down']"></i>
+            </button>
+            <button type="button" class="header-iconbtn" title="닫기"
+              @click="handleCloseRequest">
+              <i class="pi pi-times"></i>
+            </button>
+          </div>
+        </header>
+
+        <!-- ─────────── toast ─────────── -->
+        <div v-if="validationToast" class="dialog-toast dialog-toast-error">
+          <i class="pi pi-exclamation-triangle"></i> {{ validationToast }}
+        </div>
+        <div v-if="tabToast" class="dialog-toast dialog-toast-info">
+          <i class="pi pi-info-circle"></i> {{ tabToast }}
+        </div>
+
+        <!-- ─────────── 검색 ─────────── -->
+        <div class="dialog-search">
+          <i class="pi pi-search search-icon"></i>
+          <input
+            ref="searchInputRef"
+            class="search-input"
+            type="text"
+            placeholder="코드, 분류, 통제명 검색…"
+            :value="treeState.dialogSearch.value"
+            spellcheck="false"
+            @input="handleDialogSearchInput"
+          />
+          <span class="search-hint">⌘F</span>
+        </div>
+
+        <!-- ─────────── 본문 ─────────── -->
+        <div class="dialog-body">
+          <div v-if="treeState.loading.value" class="dialog-empty">
+            <i class="pi pi-spinner pi-spin"></i> 트리를 불러오는 중…
+          </div>
+          <div v-else-if="isEmpty" class="dialog-empty empty-cta">
+            <i class="pi pi-folder-open empty-icon"></i>
+            <p class="empty-title">통제 항목이 아직 없습니다</p>
+            <p class="empty-sub">
+              분류를 추가하고 통제를 만들어 시작하거나, 엑셀로 한 번에 가져올 수 있습니다.
+            </p>
+            <div class="empty-actions">
+              <button class="btn-primary" type="button" @click="handleAddRootCategory">
+                <i class="pi pi-plus"></i> 첫 분류 추가
               </button>
-              <button
-                type="button"
-                :disabled="exporting"
-                @click="onExportClick"
-                class="h-8 w-8 inline-flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors disabled:opacity-50"
-                title="엑셀 Export">
-                <i
-                  class="pi text-[13px]"
-                  :class="exporting ? 'pi-spin pi-spinner' : 'pi-download'"
-                ></i>
-              </button>
-              <button
-                type="button"
-                @click="close"
-                class="h-8 w-8 inline-flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors"
-                title="닫기">
-                <i class="pi pi-times text-[13px]"></i>
+              <button class="btn-secondary" type="button" @click="handleRequestImport">
+                <i class="pi pi-arrow-up"></i> 엑셀 Import
               </button>
             </div>
           </div>
-
-          <!-- ────────────────────────────── 검색 바 ────────────────────────────── -->
-          <div class="px-5 py-3 border-b border-gray-100">
-            <div class="relative">
-              <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-[12px]"></i>
-              <input
-                v-model="internalSearch"
-                type="text"
-                placeholder="코드, 분류, 통제명 검색..."
-                class="w-full h-9 pl-9 pr-3 border border-gray-200 rounded-md text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
-              />
-            </div>
-          </div>
-
-          <!-- ────────────────────────────── 트리 본문 ────────────────────────────── -->
-          <div class="flex-1 overflow-y-auto py-2">
-            <!-- 로딩 -->
-            <div
-              v-if="treeState.loading.value"
-              class="text-center py-12 text-gray-400 text-[13px]">
-              <i class="pi pi-spin pi-spinner text-xl mb-2"></i>
-              <div>불러오는 중...</div>
-            </div>
-
-            <!-- 에러 -->
-            <div
-              v-else-if="treeState.error.value"
-              class="mx-5 my-3 p-3 bg-red-50 border border-red-200 rounded-md text-[12px] text-red-700">
-              {{ treeState.error.value }}
-            </div>
-
-            <!-- 빈 트리 -->
-            <div
-              v-else-if="treeState.flatNodes.value.length === 0"
-              class="text-center py-12 text-gray-400 text-[13px]">
-              <i class="pi pi-list text-2xl mb-3 text-gray-300"></i>
-              <div class="mb-2">아직 등록된 통제가 없습니다.</div>
-              <div class="text-[11px] text-gray-300">
-                상단 [↑ Import] 로 엑셀 파일을 업로드하거나,<br />
-                Phase 5-14h 에서 분류 / 통제를 직접 추가할 수 있습니다.
-              </div>
-            </div>
-
-            <!-- 트리 -->
+          <template v-else>
             <ControlNodeRow
-              v-for="root in treeState.rootNodes.value"
-              v-else
-              :key="root.id"
+              v-for="root in treeState.dialogRootNodes.value"
+              :key="root._key"
               :node="root"
               mode="dialog"
-              :expanded-ids="treeState.effectiveExpandedIds.value"
-              :dimmed="treeState.filterActive.value && !treeState.isMatched(root.id)"
-              :is-root="true"
-              @toggle-expand="onTreeToggle"
+              @leaf-code-blur="handleLeafCodeBlur"
+              @tab-on-existing="handleTabOnExisting"
+              @request-move="handleRequestMove"
+              @request-delete="handleRequestDelete"
             />
-          </div>
-
-          <!-- ────────────────────────────── 푸터 ────────────────────────────── -->
-          <div class="px-5 py-3 border-t border-gray-200 flex items-center justify-between">
-            <div class="text-[11px] text-gray-400">
-              <!-- 5-14g 안내: 편집은 5-14h 에서 -->
-              <span v-if="dirtyCount === 0">
-                💡 이 단계는 읽기 전용입니다. 분류 / 통제 편집은 다음 업데이트에서 제공됩니다.
-              </span>
-              <span v-else class="text-blue-600 font-medium">
-                {{ dirtyCount }}건 미저장
-              </span>
+            <div class="add-root-row" @click="handleAddRootCategory">
+              <i class="pi pi-plus"></i>
+              <span>새 대분류 추가</span>
             </div>
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                @click="close"
-                class="h-8 px-3 text-[12px] bg-white border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 transition-colors">
-                닫기
-              </button>
-              <!-- 5-14h 진입 시 활성화:
-              <button
-                type="button"
-                :disabled="dirtyCount === 0"
-                class="h-8 px-3 text-[12px] bg-gray-900 text-white rounded-md hover:bg-gray-800 disabled:opacity-40 transition-colors">
-                변경 저장
-              </button>
-              -->
-            </div>
-          </div>
+          </template>
         </div>
+
+        <!-- ─────────── 푸터 ─────────── -->
+        <footer class="dialog-footer">
+          <div class="footer-hints">
+            <span class="hint"><kbd>Enter</kbd> 다음 통제</span>
+            <span class="hint-sep">·</span>
+            <span class="hint"><kbd>Tab</kbd> 자식 분류</span>
+            <span class="hint-sep">·</span>
+            <span class="hint"><kbd>Esc</kbd> 취소</span>
+            <span class="hint-sep">·</span>
+            <span class="hint"><kbd>⌘S</kbd> 저장</span>
+          </div>
+          <div class="footer-actions">
+            <button type="button" class="btn-secondary" @click="handleCancelClick">
+              취소
+            </button>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="!treeState.hasDirty.value || treeState.isSaving.value"
+              @click="handleSaveClick">
+              <i v-if="treeState.isSaving.value" class="pi pi-spinner pi-spin"></i>
+              변경 저장
+              <span v-if="treeState.dirtyCount.value > 0" class="dirty-badge">
+                {{ treeState.dirtyCount.value }}
+              </span>
+            </button>
+          </div>
+        </footer>
       </div>
-    </Transition>
+    </div>
+
+    <!-- ─────────── 보조 다이얼로그 (z: 70) ─────────── -->
+    <ControlCodeChangeWarningDialog
+      v-if="codeWarning"
+      :node="codeWarning.node"
+      :old-code="codeWarning.oldCode"
+      :new-code="codeWarning.newCode"
+      :impact="codeWarning.impact"
+      @confirm="handleCodeWarningConfirm"
+      @cancel="handleCodeWarningCancel"
+    />
+    <MoveNodeDialog
+      v-if="moveTarget"
+      :node="moveTarget"
+      :tree="treeState"
+      @confirm="handleMoveConfirm"
+      @cancel="handleMoveCancel"
+    />
+    <TreeConflictDialog
+      v-if="conflictData"
+      :current-version="conflictData.currentVersion"
+      @reload="handleConflictReload"
+      @dismiss="handleConflictDismiss"
+    />
   </Teleport>
 </template>
 
 <style scoped>
-.dialog-enter-active,
-.dialog-leave-active {
-  transition: opacity 0.15s ease;
+.dialog-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 55;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
 }
-.dialog-enter-from,
-.dialog-leave-to {
-  opacity: 0;
+
+.dialog-shell {
+  width: min(960px, 100%);
+  height: min(720px, 100%);
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+.dialog-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgb(229 231 235);
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-shrink: 0;
+}
+
+.header-left { flex: 1; min-width: 0; }
+.dialog-title { font-size: 16px; font-weight: 600; color: rgb(17 24 39); margin: 0 0 4px 0; }
+.dialog-subtitle { font-size: 12px; color: rgb(107 114 128); margin: 0; font-variant-numeric: tabular-nums; }
+
+.header-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.header-iconbtn {
+  width: 32px; height: 32px;
+  border: none; background: transparent; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; color: rgb(107 114 128);
+}
+.header-iconbtn:hover:not(:disabled) {
+  background: rgb(243 244 246); color: rgb(17 24 39);
+}
+.header-iconbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.dialog-toast {
+  margin: 8px 20px 0 20px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+.dialog-toast-error {
+  background: rgb(254 242 242);
+  color: rgb(153 27 27);
+  border: 1px solid rgb(252 165 165);
+}
+.dialog-toast-info {
+  background: rgb(239 246 255);
+  color: rgb(30 64 175);
+  border: 1px solid rgb(147 197 253);
+}
+
+.dialog-search {
+  padding: 12px 20px;
+  border-bottom: 1px solid rgb(243 244 246);
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+.search-icon { color: rgb(156 163 175); font-size: 12px; }
+.search-input {
+  flex: 1; border: none; outline: none;
+  font-size: 13px; height: 28px; background: transparent;
+}
+.search-hint {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; color: rgb(156 163 175);
+  padding: 1px 6px; background: rgb(243 244 246); border-radius: 4px;
+}
+
+.dialog-body {
+  flex: 1; overflow-y: auto;
+  padding: 8px 0 16px 0;
+}
+.dialog-empty {
+  text-align: center; padding: 48px 24px;
+  color: rgb(107 114 128); font-size: 13px;
+}
+.empty-cta {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.empty-icon { font-size: 32px; color: rgb(209 213 219); }
+.empty-title { font-size: 14px; font-weight: 500; color: rgb(55 65 81); margin: 8px 0 0 0; }
+.empty-sub { font-size: 12px; color: rgb(107 114 128); margin: 0 0 8px 0; }
+.empty-actions { display: flex; gap: 8px; }
+
+.add-root-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 20px;
+  margin: 6px 0 0 0;
+  border-top: 1px dashed rgb(229 231 235);
+  color: rgb(107 114 128);
+  font-size: 13px; font-weight: 500;
+  cursor: pointer;
+}
+.add-root-row:hover {
+  background: rgb(249 250 251);
+  color: rgb(37 99 235);
+}
+
+.dialog-footer {
+  padding: 12px 20px;
+  border-top: 1px solid rgb(229 231 235);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  background: rgb(249 250 251);
+  flex-shrink: 0;
+}
+.footer-hints {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: rgb(107 114 128);
+  flex-wrap: wrap;
+}
+.footer-hints kbd {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px; padding: 1px 5px;
+  background: white;
+  border: 1px solid rgb(229 231 235);
+  border-radius: 3px;
+  color: rgb(55 65 81);
+}
+.hint-sep { color: rgb(209 213 219); }
+
+.footer-actions { display: flex; gap: 8px; }
+
+.btn-primary {
+  height: 32px; padding: 0 14px;
+  background: rgb(17 24 39);
+  color: white; border: none; border-radius: 6px;
+  font-size: 12px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer;
+}
+.btn-primary:hover:not(:disabled) { background: rgb(31 41 55); }
+.btn-primary:disabled { background: rgb(209 213 219); cursor: not-allowed; }
+
+.btn-secondary {
+  height: 32px; padding: 0 14px;
+  background: white; color: rgb(17 24 39);
+  border: 1px solid rgb(229 231 235); border-radius: 6px;
+  font-size: 12px; font-weight: 500;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-secondary:hover { background: rgb(249 250 251); }
+
+.dirty-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px;
+  padding: 0 6px;
+  background: rgb(59 130 246);
+  color: white;
+  border-radius: 9999px;
+  font-size: 10.5px; font-weight: 600;
+  margin-left: 4px;
 }
 </style>

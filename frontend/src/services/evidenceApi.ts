@@ -6,8 +6,6 @@ import type {
   FrameworkInheritPayload,
   ControlItem,
   ControlDetail,
-  ControlCreatePayload,
-  ControlUpdatePayload,
   EvidenceTypePayload,
   EvidenceTypeResponse,
   EvidenceFileItem,
@@ -28,6 +26,20 @@ import type {
   TreePatchSuccessResponse,
   ImpactSummary,
 } from '@/types/evidence'
+
+/**
+ * v14 Phase 5-14h — axios 에러를 useControlTree.saveTree() 등에서 try/catch 로
+ * 받을 때의 최소 타입. axios 직접 의존성을 composable 에서 분리하기 위함.
+ *
+ * 실 axios.AxiosError<T> 와 호환되며, status / data 만 사용한다.
+ */
+export interface AxiosErrorLike<T = unknown> {
+  response?: {
+    status: number
+    data: T
+  }
+  message?: string
+}
 
 // ========================================
 // Frameworks API
@@ -80,21 +92,11 @@ export const controlsApi = {
     return api.get<ApiResponse<ControlDetail>>(`/controls/${id}`)
   },
   /**
-   * v14 Phase 5-14b — 백엔드 410 Gone 반환. 5-14h 에서 호출처 제거 예정.
-   * 신규 분류/통제 추가는 PATCH /tree (treeApi.patchTree) 로 이전.
+   * v14 Phase 5-14h 보존 — 백엔드 410 Gone (5-14f 부터). ControlsView 의 leaf 펼침
+   * 패널 [+ 증빙 유형] 흐름에서 호출되며, 410 응답 시 사용자 안내 toast 가
+   * "[통제 관리] 다이얼로그로 통합 예정" 메시지를 표시한다 (ControlsView.handleAddEvidenceType
+   * 의 410 분기). 후속 phase 에서 leaf 패널 안 evidence-type 추가 흐름이 통합되면 제거.
    */
-  create(frameworkId: number, data: ControlCreatePayload) {
-    return api.post<ApiResponse<ControlItem>>(`/frameworks/${frameworkId}/controls`, data)
-  },
-  /** v14 Phase 5-14f — 백엔드 410 Gone (5-14h 에서 호출처 제거 예정). */
-  update(id: number, data: ControlUpdatePayload) {
-    return api.put<ApiResponse<ControlItem>>(`/controls/${id}`, data)
-  },
-  /** v14 Phase 5-14f — 백엔드 410 Gone (5-14h 에서 호출처 제거 예정). */
-  delete(id: number) {
-    return api.delete(`/controls/${id}`)
-  },
-  /** v14 Phase 5-14f — 백엔드 410 Gone (5-14h 에서 호출처 제거 예정). */
   addEvidenceType(controlId: number, data: EvidenceTypePayload) {
     return api.post<ApiResponse<EvidenceTypeResponse>>(`/controls/${controlId}/evidence-types`, data)
   },

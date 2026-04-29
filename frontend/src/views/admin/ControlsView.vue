@@ -1,12 +1,24 @@
 <script setup lang="ts">
 /**
- * ControlsView (Framework 상세) — Phase 5-14g 트리 본문 전환 (v14.7).
+ * ControlsView (Framework 상세) — Phase 5-14h 편집 모드 진입 (v14.8 final).
  *
  * <p>spec §3.3 정합. v13 의 평면 테이블 (코드/영역/항목명/수집현황/상태/관리 6컬럼) 을
- * N단 재귀 트리로 전환. 단일 `[통제 관리]` 버튼 (HANDOFF 의 5-14h 통합 항목을 본
- * phase 로 앞당김 — 다이얼로그 read-only 라도 자연 동선이 더 깔끔).</p>
+ * 5-14g 에서 N단 재귀 트리로 전환했고, 5-14h 에서 단일 [통제 관리] 다이얼로그가
+ * read-only shell → 편집 모드 (dirty 추적 + PATCH /tree 단일 트랜잭션 저장) 로 진입.</p>
  *
- * <h3>동작 보존</h3>
+ * <h3>5-14h 변경점</h3>
+ * <ul>
+ *   <li>UnifiedControlsDialog 의 신규 emit `@saved` 처리 → 토스트 + 트리는 다이얼로그
+ *       내부에서 자동 reload 되므로 view 측에서는 별도 reload 불요</li>
+ *   <li>AddControlDialog / EditControlDialog 사용처 0 — Phase 5-14h 진입 결정 (Q2=A)
+ *       으로 본 phase 에서 파일도 함께 삭제됨. 신규 분류/통제 추가는 모두 다이얼로그
+ *       편집 모드에서 PATCH /tree 로 처리</li>
+ *   <li>controlsApi.create / update / delete 메서드 삭제 (5-14f 백엔드 410 Gone 동기화).
+ *       controlsApi.addEvidenceType 만 보존 — 본 view 의 [+ 증빙 유형] 흐름이 410 Gone
+ *       toast 로 안내 (후속 phase 에서 leaf 패널에 통합 예정)</li>
+ * </ul>
+ *
+ * <h3>5-14g 동작 보존</h3>
  * <ul>
  *   <li>leaf 행 클릭 → 인라인 펼침으로 evidence 카드 목록 (v12 5-12b)</li>
  *   <li>증빙 유형 카드 클릭 → EvidenceTypeDetailView 별도 페이지 이동 (goToEvidenceTypeDetail)</li>
@@ -14,22 +26,18 @@
  *   <li>[+ 증빙 유형] / [ZIP 다운로드] 버튼 (펼친 leaf 안)</li>
  *   <li>pending 행 배경 강조 (Phase 5-9)</li>
  *   <li>본문 헤더의 Framework 이름 + 카운트 서브텍스트 (Phase 5-13f)</li>
- * </ul>
- *
- * <h3>제거된 것</h3>
- * <ul>
- *   <li>평면 &lt;table&gt; — 트리 본문 (ControlNodeRow 재귀) 대체</li>
- *   <li>[엑셀 Import] / [+ 통제 항목] 두 버튼 — 단일 [통제 관리] 통합</li>
- *   <li>인라인 ✏ / 🗑 액션 (관리 컬럼) — 모든 편집은 다이얼로그 안에서만</li>
- *   <li>showAddControlDialog / showEditControlDialog / newControl / editControl
- *       — handleAddControl / openEditControl / handleEditControl / deleteControl</li>
+ *   <li>useControlTree(selectedFrameworkIdRef) 시그니처 + tree.load() / tree.reload() /
+ *       tree.searchText / tree.statusFilter 한국어 라벨 / tree.statusCounts /
+ *       tree.effectiveExpandedIds / tree.filterActive / tree.isMatched(id) /
+ *       tree.toggleExpand(id) 모두 보존</li>
  * </ul>
  *
  * <h3>유지되는 외부 컴포넌트</h3>
  * <ul>
+ *   <li>UnifiedControlsDialog — v-model:open / :tree-state / :framework-name /
+ *       @request-import 인터페이스 보존, 5-14h 에서 @saved emit 추가</li>
  *   <li>ImportControlsDialog — UnifiedControlsDialog 의 [↑ Import] 아이콘 클릭 → 본 페이지가
  *       기존 ImportControlsDialog 를 띄움 (다이얼로그가 다이얼로그를 띄우는 stacking 구조)</li>
- *   <li>AddControlDialog — 5-14g 에선 사용 안 함, 5-14h 진입 시 파일 삭제 예정</li>
  * </ul>
  */
 import { ref, computed, onMounted, watch } from 'vue'
@@ -211,6 +219,19 @@ function onRequestImport() {
 function closeImportDialog() {
   showImportDialog.value = false
   importResult.value = null
+}
+
+// ─── Phase 5-14h 신규 — UnifiedControlsDialog 저장 성공 핸들러 ───
+//
+// 다이얼로그가 PATCH /tree 호출 후 200 응답을 받으면 emit('saved', payload) 발화.
+// 다이얼로그는 닫지 않고 dirty=0 상태로 그대로 두므로 사용자가 추가 작업 가능.
+// view 측은 토스트만 노출 — 트리 reload 는 다이얼로그 내부에서 자동 (saveTree 안의
+// reload() 호출) 이므로 별도 호출 불요.
+function onUnifiedSaved(payload: { newVersion: number; createdCount: number }) {
+  const msg = payload.createdCount > 0
+    ? `저장되었습니다. (신규 ${payload.createdCount}개, v${payload.newVersion})`
+    : `저장되었습니다. (v${payload.newVersion})`
+  showToast(msg, 'success')
 }
 
 async function handleImport() {
@@ -450,6 +471,7 @@ watch(
       :tree-state="tree"
       :framework-name="currentFramework.name"
       @request-import="onRequestImport"
+      @saved="onUnifiedSaved"
     />
 
     <!-- ────────────────────────────── 다이얼로그: 엑셀 Import ────────────────────────────── -->

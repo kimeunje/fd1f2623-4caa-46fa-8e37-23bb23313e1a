@@ -1,396 +1,1172 @@
 /**
- * useControlTree — Phase 5-14g (β) 의 트리 상태 중심 composable.
+ * Phase 5-14g + 5-14h — useControlTree composable
  *
- * <h3>책임</h3>
- * <ul>
- *   <li>{@link treeApi.getTree} 호출 + 평탄 nodes[] → 트리 (children 보강) reconstruct</li>
- *   <li>expanded 상태 (Set&lt;number&gt;) 관리 + 펼침 default = depth=1 카테고리만</li>
- *   <li>검색 (코드 / 이름) — 매치 leaf 의 모든 ancestor 자동 펼침, 매치 없는 카테고리는 회색 처리</li>
- *   <li>상태 필터 (전체 / 완료 / 진행중 / 미수집 / 검토 대기) — leaf 만 매치 대상</li>
- *   <li>derive 카운트 — leaf 의 status, 카테고리의 자손 leaf 통계 합계</li>
- * </ul>
+ * 5-14g 인터페이스 (`useControlTree(Ref<number|null>)`, load/reload,
+ * searchText, statusFilter '전체'/'완료'/'진행중'/'미수집'/'검토 대기',
+ * effectiveExpandedIds, isMatched(id), toggleExpand(id) 등) **모두 보존**.
+ * 5-14h 추가 기능은 `dialog*` / `dirty*` / `unifiedNodes` / `saveTree()` /
+ * 편집 액션 등으로 별도 namespace 분리.
  *
- * <h3>데이터 흐름</h3>
- * <pre>
- *   GET /tree → flatNodes (평탄, 정렬됨)
- *      ↓ buildTree (parentId 매칭)
- *   rootNodes (children 채워진 트리)
- *      ↓ leafStatus 부여 + 검색/필터 매치 계산
- *   filteredView (visibleNodes + matchedLeafIds + dimmedNodeIds)
- * </pre>
+ * 5-14h 결정:
+ *   Q1=B 페이지 검색 / 다이얼로그 검색 분리 (`searchText` / `dialogSearch`)
+ *   Q2=A AddControlDialog 즉시 삭제 (composable 무영향, ControlsView 측)
+ *   Q3=혼합 Tab 은 draft 한정. existing leaf 변환은 'requires_save_first' 반환
+ *   Q4=B+헤더 dialog 헤더 메타 (categoryCount/controlCount/dirtyCount) + 푸터 카운트
  *
- * <h3>왜 store 가 아닌 composable 인가</h3>
- * <p>ControlsView 와 UnifiedControlsDialog 가 같은 트리 데이터를 공유한다 — 단,
- * 다이얼로그는 페이지 안에서만 띄워지고 닫힐 때 같이 unmount 된다. 별도 라우트 간
- * 공유가 아니므로 Pinia store 까지 필요 없음. composable 인스턴스를 ControlsView
- * 가 만들어 provide/inject 또는 props 로 다이얼로그에 넘기는 패턴.</p>
+ * Vue 3.5 SFC 컴파일러 학습: 본 composable 노출 메서드는 컴포넌트 템플릿에서
+ * 단일 expression 으로 호출되도록 설계 (`tree.createChildControl(node)` 한 줄).
  *
- * <p>v15 또는 후속 phase 에서 (1) 다이얼로그가 별도 라우트로 분리되거나 (2) 다중
- * 페이지에서 트리 캐시를 공유하게 되면 useControlTreeStore 로 승격 후보.</p>
+ * spec §3.3.1.4 (PATCH /tree) + §3.3.1.5 (코드 변경 경고) + §3.3.1.6 (단축키) 정합.
  */
 
-import { ref, computed, type Ref } from 'vue'
-import { treeApi } from '@/services/evidenceApi'
-import type { TreeNode, TreeFrameworkSummary } from '@/types/evidence'
+import {
+  computed,
+  reactive,
+  ref,
+  type ComputedRef,
+  type InjectionKey,
+  type Ref,
+} from 'vue'
+import { treeApi, type AxiosErrorLike } from '@/services/evidenceApi'
+import type {
+  ImpactSummary,
+  TreeFrameworkSummary,
+  TreeNode,
+  TreePatchErrorResponse,
+  TreePatchPayload,
+  TreeValidationDetail,
+} from '@/types/evidence'
 
-/**
- * 트리 노드 + 클라이언트 derive 필드. 원본 TreeNode 는 immutable, 본 타입이 children
- * 과 derive count 를 추가.
- */
-export interface TreeNodeView extends TreeNode {
-  children: TreeNodeView[]
-
-  /** category 만 채워짐 — 자손 leaf 의 evidenceTypeCount 합계. */
-  descendantEvidenceTypeCount?: number
-  /** category 만 채워짐 — 자손 leaf 의 collectedCount 합계. */
-  descendantCollectedCount?: number
-  /** category 만 채워짐 — 자손 leaf 의 pendingReviewCount 합계. */
-  descendantPendingReviewCount?: number
-  /** category 만 채워짐 — 자손 leaf 의 수 (즉 controls / N 의 N). */
-  descendantLeafCount?: number
-}
+// ============================================================================
+// 5-14g 인터페이스 — 페이지 본문용 status 라벨 (한국어)
+// ============================================================================
 
 export type LeafStatus = '완료' | '진행중' | '미수집' | '검토 대기'
+export type StatusFilterValue = '전체' | LeafStatus
+
+// ============================================================================
+// 5-14g — 트리 빌드 결과 (재귀 children 포함)
+// ============================================================================
 
 /**
- * leaf 의 status derive — `pendingReviewCount > 0` 가 최우선 (검토 대기 N 배지로 노출).
- * 그 외에는 `evidenceTypeCount` / `collectedCount` 비율로 계산.
+ * children 빌드된 트리 노드 — 5-14g 의 ControlNodeRow 가 props 로 받는 형태.
+ * 5-14h 의 unified (서버+dirty) 와 구분 위해 별도 타입으로 보존.
  */
-export function deriveLeafStatus(node: TreeNodeView | TreeNode): LeafStatus {
-  const pending = node.pendingReviewCount ?? 0
-  const total = node.evidenceTypeCount ?? 0
-  const collected = node.collectedCount ?? 0
-
-  if (pending > 0) return '검토 대기'
-  if (total === 0) return '미수집'
-  if (collected >= total) return '완료'
-  if (collected > 0) return '진행중'
-  return '미수집'
+export interface TreeRootNode extends TreeNode {
+  children: TreeRootNode[]
+  /** 자손 leaf 카운트 (post-order 합) */
+  descendantLeafCount: number
+  /** 자손 leaf 의 evidenceTypeCount 합 */
+  descendantEvidenceTypeCount: number
+  /** 자손 leaf 의 collectedCount 합 */
+  descendantCollectedCount: number
+  /** 자손 leaf 의 pendingReviewCount 합 */
+  descendantPendingReviewCount: number
 }
 
-export interface FilterState {
-  searchText: string
-  status: '전체' | LeafStatus
+// ============================================================================
+// 5-14h — dirty state
+// ============================================================================
+
+export type DraftParentId = number | string | null
+
+export interface DraftNode {
+  tempId: string
+  parentId: DraftParentId
+  nodeType: 'category' | 'control'
+  code: string
+  name: string
+  description?: string
+  displayOrder: number
+  depth: number
 }
 
-export function useControlTree(frameworkId: Ref<number | null>) {
-  // ====================================================================
-  // 원본 응답 / 빌드된 트리
-  // ====================================================================
+export interface UpdatedFields {
+  id: number
+  code?: string
+  name?: string
+  description?: string
+}
 
+export interface MovedFields {
+  id: number
+  newParentId: number | null
+  newDisplayOrder: number
+  newDepth: number
+}
+
+export interface DirtyChanges {
+  created: Map<string, DraftNode>
+  updated: Map<number, UpdatedFields>
+  moved: Map<number, MovedFields>
+  deleted: Set<number>
+}
+
+// ============================================================================
+// 5-14h — 통합 노드 (서버 + dirty 결합) — 다이얼로그 편집 모드 트리용
+// ============================================================================
+
+export interface UnifiedNode {
+  _kind: 'existing' | 'draft'
+  id: number
+  tempId?: string
+  _key: string
+
+  parentId: number | null
+  parentTempId: string | null
+
+  nodeType: 'category' | 'control'
+  code: string
+  name: string
+  description?: string
+  displayOrder: number
+  depth: number
+
+  evidenceTypeCount?: number
+  collectedCount?: number
+  pendingReviewCount?: number
+
+  _dirty: 'created' | 'updated' | 'moved' | 'deleted' | null
+  _validationErrors: TreeValidationDetail[]
+
+  children: UnifiedNode[]
+  descendantLeafCount: number
+}
+
+// ============================================================================
+// 5-14h — 저장 결과 union
+// ============================================================================
+
+export interface SaveSuccess {
+  ok: true
+  newVersion: number
+  mappings: Map<string, number>
+}
+
+export interface SaveConflict {
+  ok: false
+  kind: 'conflict'
+  currentVersion: number
+}
+
+export interface SaveValidation {
+  ok: false
+  kind: 'validation'
+  details: TreeValidationDetail[]
+}
+
+export interface SaveError {
+  ok: false
+  kind: 'error'
+  message: string
+}
+
+export type SaveResult = SaveSuccess | SaveConflict | SaveValidation | SaveError
+
+// ============================================================================
+// 5-14h — Tab 변환 결과
+// ============================================================================
+
+export type ConvertResult =
+  | { ok: true; childDraft: DraftNode }
+  | { ok: false; reason: 'requires_save_first' | 'depth_exceeded' }
+
+// ============================================================================
+// composable
+// ============================================================================
+
+/**
+ * @param frameworkIdRef — Ref<number|null>. 5-14g 인터페이스 보존. ControlsView 가
+ * `await tree.load()` 명시 호출하는 패턴 유지 (composable 내부 watch 안 함).
+ */
+export function useControlTree(frameworkIdRef: Ref<number | null>) {
+  // ─────────────────────── 5-14g 서버 상태 ───────────────────────
+  const framework = ref<TreeFrameworkSummary | null>(null)
+  const flatNodes = ref<TreeNode[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  /** 서버 응답의 framework 메타 (id / name / version). */
-  const framework = ref<TreeFrameworkSummary | null>(null)
-  /** 서버 응답의 평탄 nodes 배열 — 본 composable 안에서만 보존. */
-  const flatNodes = ref<TreeNode[]>([])
+  // ─────────────────────── 5-14g 페이지 본문 검색/필터 ───────────────────────
+  const searchText = ref('')
+  const statusFilter = ref<StatusFilterValue>('전체')
+  const expandedIds = ref<Set<number>>(new Set())
 
-  /**
-   * 트리 reconstruct.
-   *
-   * 서버가 (depth, parentId NULL FIRST, displayOrder) 정렬을 보장하므로 단일 패스로
-   * 빌드 가능 — 부모가 자식보다 먼저 등장.
-   */
-  const rootNodes = computed<TreeNodeView[]>(() => {
-    const byId = new Map<number, TreeNodeView>()
-    const roots: TreeNodeView[] = []
+  // ─────────────────────── 5-14h 다이얼로그 분리 (Q1=B) ───────────────────────
+  const dialogSearch = ref('')
+  const dialogExpandedIds = ref<Set<number>>(new Set())
+  const dialogExpandedTempIds = ref<Set<string>>(new Set())
 
+  // ─────────────────────── 5-14h dirty state ───────────────────────
+  const dirtyChanges = reactive<DirtyChanges>({
+    created: new Map(),
+    updated: new Map(),
+    moved: new Map(),
+    deleted: new Set(),
+  })
+
+  /** dirty 변경 시 +1, computed 트리거용 */
+  const dirtyVersion = ref(0)
+  const bumpDirty = () => {
+    dirtyVersion.value++
+  }
+
+  const validationErrors = ref<TreeValidationDetail[]>([])
+  const isSaving = ref(false)
+
+  // ─────────────────────── tempId 카운터 ───────────────────────
+  let tempIdCounter = 0
+  function nextTempId(): string {
+    tempIdCounter++
+    return `temp_${Date.now().toString(36)}_${tempIdCounter}`
+  }
+
+  // ─────────────────────── 5-14g 트리 빌드 (children 포함) ───────────────────────
+  const rootNodes = computed<TreeRootNode[]>(() => {
+    const byId = new Map<number, TreeRootNode>()
     for (const n of flatNodes.value) {
-      const view: TreeNodeView = { ...n, children: [] }
-      byId.set(n.id, view)
-      if (n.parentId == null) {
-        roots.push(view)
-      } else {
-        const parent = byId.get(n.parentId)
-        if (parent) parent.children.push(view)
-        else roots.push(view)   // 고아 — 정렬 보장 깨졌을 때 안전장치
-      }
+      byId.set(n.id, {
+        ...n,
+        children: [],
+        descendantLeafCount: 0,
+        descendantEvidenceTypeCount: 0,
+        descendantCollectedCount: 0,
+        descendantPendingReviewCount: 0,
+      })
     }
-
-    // 카테고리에 descendant 합계 채움 (post-order traversal)
-    function fillDescendantCounts(node: TreeNodeView): {
-      evidence: number
-      collected: number
-      pending: number
-      leafCount: number
-    } {
-      if (node.nodeType === 'control') {
-        return {
-          evidence: node.evidenceTypeCount ?? 0,
-          collected: node.collectedCount ?? 0,
-          pending: node.pendingReviewCount ?? 0,
-          leafCount: 1,
-        }
-      }
-      let evidence = 0, collected = 0, pending = 0, leafCount = 0
-      for (const c of node.children) {
-        const sub = fillDescendantCounts(c)
-        evidence += sub.evidence
-        collected += sub.collected
-        pending += sub.pending
-        leafCount += sub.leafCount
-      }
-      node.descendantEvidenceTypeCount = evidence
-      node.descendantCollectedCount = collected
-      node.descendantPendingReviewCount = pending
-      node.descendantLeafCount = leafCount
-      return { evidence, collected, pending, leafCount }
+    const roots: TreeRootNode[] = []
+    for (const n of flatNodes.value) {
+      const node = byId.get(n.id)!
+      if (n.parentId === null) roots.push(node)
+      else byId.get(n.parentId)?.children.push(node)
     }
-    for (const root of roots) fillDescendantCounts(root)
-
+    // 정렬
+    const sortChildren = (n: TreeRootNode) => {
+      n.children.sort((a, b) => a.displayOrder - b.displayOrder)
+      for (const c of n.children) sortChildren(c)
+    }
+    roots.sort((a, b) => a.displayOrder - b.displayOrder)
+    for (const r of roots) sortChildren(r)
+    // post-order 자손 카운트 합
+    const computeCounts = (n: TreeRootNode) => {
+      if (n.nodeType === 'control') {
+        n.descendantLeafCount = 1
+        n.descendantEvidenceTypeCount = n.evidenceTypeCount ?? 0
+        n.descendantCollectedCount = n.collectedCount ?? 0
+        n.descendantPendingReviewCount = n.pendingReviewCount ?? 0
+        return
+      }
+      let leafs = 0, ets = 0, col = 0, pend = 0
+      for (const c of n.children) {
+        computeCounts(c)
+        leafs += c.descendantLeafCount
+        ets += c.descendantEvidenceTypeCount
+        col += c.descendantCollectedCount
+        pend += c.descendantPendingReviewCount
+      }
+      n.descendantLeafCount = leafs
+      n.descendantEvidenceTypeCount = ets
+      n.descendantCollectedCount = col
+      n.descendantPendingReviewCount = pend
+    }
+    for (const r of roots) computeCounts(r)
     return roots
   })
 
-  /** id → TreeNodeView 룩업 (rootNodes 재계산 시 자연 갱신). */
-  const nodeById = computed<Map<number, TreeNodeView>>(() => {
-    const m = new Map<number, TreeNodeView>()
-    function walk(node: TreeNodeView) {
-      m.set(node.id, node)
-      for (const c of node.children) walk(c)
-    }
-    for (const r of rootNodes.value) walk(r)
-    return m
+  // ─────────────────────── 5-14g 통계 ───────────────────────
+  const totalLeafCount = computed(() => {
+    let n = 0
+    for (const r of rootNodes.value) n += r.descendantLeafCount
+    return n
   })
 
-  /** id → leaf status derive (검색/필터 카운트 계산용). */
-  const leafStatusById = computed<Map<number, LeafStatus>>(() => {
-    const m = new Map<number, LeafStatus>()
-    for (const n of flatNodes.value) {
-      if (n.nodeType === 'control') {
-        m.set(n.id, deriveLeafStatus(n))
-      }
-    }
-    return m
+  const totalEvidenceTypeCount = computed(() => {
+    let n = 0
+    for (const r of rootNodes.value) n += r.descendantEvidenceTypeCount
+    return n
   })
 
-  // ====================================================================
-  // 펼침 상태
-  // ====================================================================
+  // ─────────────────────── 5-14g leaf status 도출 ───────────────────────
+  function leafStatusOf(node: TreeNode): LeafStatus {
+    if (node.nodeType !== 'control') return '미수집'
+    const m = node.evidenceTypeCount ?? 0
+    const n = node.collectedCount ?? 0
+    if (m === 0) return '미수집'
+    if (n >= m) return '완료'
+    if (n > 0) return '진행중'
+    return '미수집'
+  }
 
-  /** 펼쳐진 노드 id 집합 — 카테고리만 의미 있음. leaf 클릭은 별도 expandedLeafId 로 관리. */
-  const expandedNodeIds = ref<Set<number>>(new Set())
-
-  /** depth=1 카테고리만 펼친 default 상태로 초기화. */
-  function applyDefaultExpansion() {
-    const next = new Set<number>()
-    for (const r of rootNodes.value) {
-      if (r.nodeType === 'category') next.add(r.id)
+  // ─────────────────────── 5-14g statusCounts ───────────────────────
+  const statusCounts = computed<Record<StatusFilterValue, number>>(() => {
+    const c: Record<StatusFilterValue, number> = {
+      전체: 0, 완료: 0, 진행중: 0, 미수집: 0, '검토 대기': 0,
     }
-    expandedNodeIds.value = next
-  }
-
-  function toggleExpand(nodeId: number) {
-    const next = new Set(expandedNodeIds.value)
-    if (next.has(nodeId)) next.delete(nodeId)
-    else next.add(nodeId)
-    expandedNodeIds.value = next
-  }
-
-  function expandAll() {
-    const next = new Set<number>()
-    for (const n of flatNodes.value) {
-      if (n.nodeType === 'category') next.add(n.id)
-    }
-    expandedNodeIds.value = next
-  }
-
-  function collapseAll() {
-    expandedNodeIds.value = new Set()
-  }
-
-  // ====================================================================
-  // 검색 / 필터
-  // ====================================================================
-
-  const searchText = ref('')
-  const statusFilter = ref<'전체' | LeafStatus>('전체')
-
-  /** 매치된 leaf id 집합. 검색 또는 상태 필터 모두 leaf 단위 매칭. */
-  const matchedLeafIds = computed<Set<number>>(() => {
-    const q = searchText.value.trim().toLowerCase()
-    const status = statusFilter.value
-    const matched = new Set<number>()
-
     for (const n of flatNodes.value) {
       if (n.nodeType !== 'control') continue
-
-      // 상태 필터
-      const leafStatus = leafStatusById.value.get(n.id)
-      if (status !== '전체' && leafStatus !== status) continue
-
-      // 텍스트 검색 — 코드 / 이름. 카테고리명은 leaf 매치를 통해 ancestor 펼침으로 흐름
-      if (q) {
-        const codeMatch = n.code.toLowerCase().includes(q)
-        const nameMatch = n.name.toLowerCase().includes(q)
-        // 추가로 ancestor 카테고리명에 매치되는 경우도 포함 — 사용자가 "관리체계" 검색하면
-        // 그 분류 안의 모든 leaf 가 보이는 게 자연스러움
-        let ancestorMatch = false
-        let cur = nodeById.value.get(n.id)?.parentId
-        while (cur != null && !ancestorMatch) {
-          const ancestor = nodeById.value.get(cur)
-          if (!ancestor) break
-          if (ancestor.code.toLowerCase().includes(q) || ancestor.name.toLowerCase().includes(q)) {
-            ancestorMatch = true
-          }
-          cur = ancestor.parentId
-        }
-        if (!codeMatch && !nameMatch && !ancestorMatch) continue
-      }
-
-      matched.add(n.id)
+      c['전체']++
+      c[leafStatusOf(n)]++
+      if ((n.pendingReviewCount ?? 0) > 0) c['검토 대기']++
     }
-    return matched
+    return c
+  })
+
+  // ─────────────────────── 5-14g 검색/필터 매치 ───────────────────────
+  /** leaf 매치 = (검색 매치) AND (필터 매치) */
+  function nodeMatchesPageSearch(node: TreeNode): boolean {
+    if (!searchText.value) return true
+    const q = searchText.value.toLowerCase()
+    return (
+      node.code.toLowerCase().includes(q) ||
+      node.name.toLowerCase().includes(q)
+    )
+  }
+
+  function leafMatchesStatusFilter(node: TreeNode): boolean {
+    if (statusFilter.value === '전체') return true
+    if (node.nodeType !== 'control') return false
+    if (statusFilter.value === '검토 대기') {
+      return (node.pendingReviewCount ?? 0) > 0
+    }
+    return leafStatusOf(node) === statusFilter.value
+  }
+
+  const filterActive = computed<boolean>(() => {
+    return searchText.value.length > 0 || statusFilter.value !== '전체'
   })
 
   /**
-   * 매치된 leaf 의 모든 ancestor id 집합. 검색/필터 활성 시 자동 펼침 대상 +
-   * 매치된 카테고리 강조 표시 (UI 가 hasMatch 로 활용).
+   * 매치된 leaf 의 모든 조상 ID — 자동 펼침 + dimmed 판정용
    */
   const matchedAncestorIds = computed<Set<number>>(() => {
-    const ancestors = new Set<number>()
-    for (const leafId of matchedLeafIds.value) {
-      let cur = nodeById.value.get(leafId)?.parentId
-      while (cur != null) {
-        ancestors.add(cur)
-        cur = nodeById.value.get(cur)?.parentId
+    const ids = new Set<number>()
+    if (!filterActive.value) return ids
+    const parentMap = new Map<number, number | null>()
+    for (const n of flatNodes.value) parentMap.set(n.id, n.parentId)
+    for (const n of flatNodes.value) {
+      if (n.nodeType !== 'control') continue
+      if (!nodeMatchesPageSearch(n)) continue
+      if (!leafMatchesStatusFilter(n)) continue
+      // 자기 + 모든 조상 추가
+      let cursor: number | null = n.id
+      while (cursor !== null) {
+        ids.add(cursor)
+        cursor = parentMap.get(cursor) ?? null
       }
     }
-    return ancestors
+    return ids
   })
 
-  /** 검색/필터 활성 여부 — UI 가 dimmed 처리 결정 + auto-expand 결정용. */
-  const filterActive = computed(
-    () => searchText.value.trim().length > 0 || statusFilter.value !== '전체'
-  )
-
-  /**
-   * 카테고리 / leaf 가 화면에 visible 한지 (회색 처리 또는 정상 표시).
-   * 정책: 매치 없는 카테고리는 회색 처리(완전 숨김 X). 매치 없는 leaf 도 회색 처리.
-   */
-  function isMatched(nodeId: number): boolean {
+  /** 5-14g — 매치 상태 (페이지 본문 dimmed 판정) */
+  function isMatched(id: number): boolean {
     if (!filterActive.value) return true
-    if (matchedLeafIds.value.has(nodeId)) return true
-    if (matchedAncestorIds.value.has(nodeId)) return true
-    return false
+    return matchedAncestorIds.value.has(id)
   }
 
   /**
-   * 검색/필터 활성 시 자동 펼침 — matched ancestors + matched leaves 자체. 사용자
-   * 토글한 expandedNodeIds 와 union.
+   * 효과 펼침 = 명시 펼침 + 검색 매치 자동 펼침
    */
   const effectiveExpandedIds = computed<Set<number>>(() => {
-    if (!filterActive.value) return expandedNodeIds.value
-    const u = new Set(expandedNodeIds.value)
-    for (const a of matchedAncestorIds.value) u.add(a)
-    return u
+    if (!filterActive.value) return expandedIds.value
+    return new Set([...expandedIds.value, ...matchedAncestorIds.value])
   })
 
-  // ====================================================================
-  // 상태 필터 카운트 (탭 옆에 표시)
-  // ====================================================================
+  // ─────────────────────── 5-14g 펼침 토글 ───────────────────────
+  function toggleExpand(id: number): void {
+    const next = new Set(expandedIds.value)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    expandedIds.value = next
+  }
 
-  const statusCounts = computed<Record<'전체' | LeafStatus, number>>(() => {
-    const counts: Record<'전체' | LeafStatus, number> = {
-      '전체': 0, '완료': 0, '진행중': 0, '미수집': 0, '검토 대기': 0,
-    }
-    for (const [, st] of leafStatusById.value) {
-      counts['전체']++
-      counts[st]++
-    }
-    return counts
-  })
-
-  // ====================================================================
-  // Framework 카운트 (본문 헤더 서브텍스트)
-  // ====================================================================
-
-  /** 전체 leaf 수 (Framework 의 "통제 N개"). */
-  const totalLeafCount = computed(
-    () => flatNodes.value.filter((n) => n.nodeType === 'control').length
-  )
-
-  /** 전체 evidence_types 수 (자손 합계). */
-  const totalEvidenceTypeCount = computed(() =>
-    flatNodes.value
-      .filter((n) => n.nodeType === 'control')
-      .reduce((sum, n) => sum + (n.evidenceTypeCount ?? 0), 0)
-  )
-
-  /** 전체 검토 대기 leaf 수 (배지 카운트 등). */
-  const totalPendingLeafCount = computed(
-    () =>
-      Array.from(leafStatusById.value.values()).filter((s) => s === '검토 대기').length
-  )
-
-  // ====================================================================
-  // 데이터 로드
-  // ====================================================================
-
-  async function load() {
-    if (frameworkId.value == null) return
+  // ─────────────────────── 5-14g 로드 / 재로드 ───────────────────────
+  async function load(): Promise<void> {
+    const fwId = frameworkIdRef.value
+    if (fwId === null) return
     loading.value = true
     error.value = null
     try {
-      const { data } = await treeApi.getTree(frameworkId.value)
-      if (data.success) {
-        framework.value = data.data.framework
-        flatNodes.value = data.data.nodes
-        applyDefaultExpansion()
-      } else {
-        error.value = data.message ?? '트리 조회에 실패했습니다.'
+      const response = await treeApi.getTree(fwId)
+      const body = response.data
+      if (!body.success) {
+        error.value = body.message ?? '트리를 불러오지 못했습니다'
+        return
       }
-    } catch (e: any) {
-      error.value = e?.response?.data?.message ?? '트리 조회 중 오류가 발생했습니다.'
-      console.error('[useControlTree.load]', e)
+      framework.value = body.data.framework
+      flatNodes.value = body.data.nodes
+      // dirty 자동 리셋 (load 가 처음 호출 + Framework 전환 시점)
+      dirtyChanges.created.clear()
+      dirtyChanges.updated.clear()
+      dirtyChanges.moved.clear()
+      dirtyChanges.deleted.clear()
+      validationErrors.value = []
+      bumpDirty()
+      // 기본 펼침 = depth=1 카테고리만 (5-14g Q3=A)
+      expandedIds.value = new Set(
+        body.data.nodes
+          .filter((n) => n.depth === 1 && n.nodeType === 'category')
+          .map((n) => n.id),
+      )
+      dialogExpandedIds.value = new Set(expandedIds.value)
+      dialogExpandedTempIds.value.clear()
+    } catch (e: unknown) {
+      error.value = (e as Error).message ?? '트리를 불러오지 못했습니다'
     } finally {
       loading.value = false
     }
   }
 
-  /** 외부에서 변경 후 재로드 (e.g. ImportControlsDialog 완료 후, PATCH /tree 후). */
-  async function reload() {
-    await load()
+  /** 펼침 상태/검색 보존하면서 트리만 재로드 */
+  async function reload(): Promise<void> {
+    const fwId = frameworkIdRef.value
+    if (fwId === null) return
+    loading.value = true
+    error.value = null
+    try {
+      const response = await treeApi.getTree(fwId)
+      const body = response.data
+      if (!body.success) {
+        error.value = body.message ?? '트리를 불러오지 못했습니다'
+        return
+      }
+      framework.value = body.data.framework
+      flatNodes.value = body.data.nodes
+      // reload 는 dirty 보존 (사용자 작업 중 외부 변경 추적 안 함 — saveTree 가 reload 직전에 dirty clear 호출)
+    } catch (e: unknown) {
+      error.value = (e as Error).message ?? '트리를 불러오지 못했습니다'
+    } finally {
+      loading.value = false
+    }
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // 이하 5-14h 추가 — 다이얼로그 편집 모드 전용
+  // ════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────── 5-14h unified (서버 + dirty) ───────────────────────
+  const unifiedNodes = computed<UnifiedNode[]>(() => {
+    void dirtyVersion.value
+
+    const result: UnifiedNode[] = []
+    // 1) deleted 자손 cascading 표시
+    const deletedIds = new Set<number>(dirtyChanges.deleted)
+    if (deletedIds.size > 0) {
+      const parentMap = new Map<number, number | null>()
+      for (const n of flatNodes.value) parentMap.set(n.id, n.parentId)
+      let added = true
+      while (added) {
+        added = false
+        for (const [id, pid] of parentMap) {
+          if (pid !== null && deletedIds.has(pid) && !deletedIds.has(id)) {
+            deletedIds.add(id)
+            added = true
+          }
+        }
+      }
+    }
+    // 2) 기존 노드 (deleted 제외)
+    for (const n of flatNodes.value) {
+      if (deletedIds.has(n.id)) continue
+      const upd = dirtyChanges.updated.get(n.id)
+      const mov = dirtyChanges.moved.get(n.id)
+      const errs = validationErrors.value.filter((d) => d.targetId === n.id)
+      let dirty: UnifiedNode['_dirty'] = null
+      if (upd) dirty = 'updated'
+      if (mov) dirty = 'moved'
+      result.push({
+        _kind: 'existing',
+        id: n.id,
+        _key: `id-${n.id}`,
+        parentId: mov ? mov.newParentId : n.parentId,
+        parentTempId: null,
+        nodeType: n.nodeType,
+        code: upd?.code ?? n.code,
+        name: upd?.name ?? n.name,
+        description: upd?.description ?? n.description ?? undefined,
+        displayOrder: mov ? mov.newDisplayOrder : n.displayOrder,
+        depth: mov ? mov.newDepth : n.depth,
+        evidenceTypeCount: n.evidenceTypeCount,
+        collectedCount: n.collectedCount,
+        pendingReviewCount: n.pendingReviewCount,
+        _dirty: dirty,
+        _validationErrors: errs,
+        children: [],
+        descendantLeafCount: 0,
+      })
+    }
+    // 3) draft 노드들
+    for (const draft of dirtyChanges.created.values()) {
+      const parentIdNum = typeof draft.parentId === 'number' ? draft.parentId : null
+      const parentTempId = typeof draft.parentId === 'string' ? draft.parentId : null
+      const errs = validationErrors.value.filter((d) => d.targetTempId === draft.tempId)
+      result.push({
+        _kind: 'draft',
+        id: -1,
+        tempId: draft.tempId,
+        _key: `temp-${draft.tempId}`,
+        parentId: parentIdNum,
+        parentTempId,
+        nodeType: draft.nodeType,
+        code: draft.code,
+        name: draft.name,
+        description: draft.description,
+        displayOrder: draft.displayOrder,
+        depth: draft.depth,
+        evidenceTypeCount: draft.nodeType === 'control' ? 0 : undefined,
+        collectedCount: draft.nodeType === 'control' ? 0 : undefined,
+        pendingReviewCount: draft.nodeType === 'control' ? 0 : undefined,
+        _dirty: 'created',
+        _validationErrors: errs,
+        children: [],
+        descendantLeafCount: 0,
+      })
+    }
+    return result
+  })
+
+  /**
+   * 다이얼로그 트리 — children 빌드 + 자손 leaf 카운트 합.
+   */
+  const dialogRootNodes = computed<UnifiedNode[]>(() => {
+    const all = unifiedNodes.value
+    const byId = new Map<number, UnifiedNode>()
+    const byTempId = new Map<string, UnifiedNode>()
+    for (const n of all) {
+      n.children = []
+      n.descendantLeafCount = 0
+      if (n._kind === 'existing') byId.set(n.id, n)
+      if (n._kind === 'draft' && n.tempId) byTempId.set(n.tempId, n)
+    }
+    const roots: UnifiedNode[] = []
+    for (const n of all) {
+      let parent: UnifiedNode | undefined
+      if (n.parentTempId) parent = byTempId.get(n.parentTempId)
+      else if (n.parentId !== null) parent = byId.get(n.parentId)
+      if (parent) parent.children.push(n)
+      else roots.push(n)
+    }
+    const sortChildren = (n: UnifiedNode) => {
+      n.children.sort((a, b) => {
+        if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder
+        if (a._kind !== b._kind) return a._kind === 'existing' ? -1 : 1
+        return a.code.localeCompare(b.code, 'ko')
+      })
+      for (const c of n.children) sortChildren(c)
+    }
+    roots.sort((a, b) => a.displayOrder - b.displayOrder)
+    for (const r of roots) sortChildren(r)
+    const computeLeaf = (n: UnifiedNode): number => {
+      if (n.nodeType === 'control') {
+        n.descendantLeafCount = 1
+        return 1
+      }
+      let s = 0
+      for (const c of n.children) s += computeLeaf(c)
+      n.descendantLeafCount = s
+      return s
+    }
+    for (const r of roots) computeLeaf(r)
+    return roots
+  })
+
+  // ─────────────────────── 5-14h 다이얼로그 통계 ───────────────────────
+  const dialogCategoryCount = computed(() => {
+    let n = 0
+    const visit = (node: UnifiedNode) => {
+      if (node.nodeType === 'category') n++
+      for (const c of node.children) visit(c)
+    }
+    for (const r of dialogRootNodes.value) visit(r)
+    return n
+  })
+
+  const dialogControlCount = computed(() => {
+    let n = 0
+    const visit = (node: UnifiedNode) => {
+      if (node.nodeType === 'control') n++
+      for (const c of node.children) visit(c)
+    }
+    for (const r of dialogRootNodes.value) visit(r)
+    return n
+  })
+
+  const dirtyCount = computed(() => {
+    void dirtyVersion.value
+    return (
+      dirtyChanges.created.size +
+      dirtyChanges.updated.size +
+      dirtyChanges.moved.size +
+      dirtyChanges.deleted.size
+    )
+  })
+
+  const hasDirty = computed(() => dirtyCount.value > 0)
+
+  // ─────────────────────── 5-14h 다이얼로그 검색 매치 + 자동 펼침 ───────────────────────
+  const dialogMatchedAncestorIds = computed<Set<number>>(() => {
+    const ids = new Set<number>()
+    if (!dialogSearch.value) return ids
+    const q = dialogSearch.value.toLowerCase()
+    const visit = (node: UnifiedNode, ancestors: number[]) => {
+      const newAncestors =
+        node._kind === 'existing' ? [...ancestors, node.id] : ancestors
+      const match =
+        node.code.toLowerCase().includes(q) || node.name.toLowerCase().includes(q)
+      if (match) for (const a of ancestors) ids.add(a)
+      for (const c of node.children) visit(c, newAncestors)
+    }
+    for (const r of dialogRootNodes.value) visit(r, [])
+    return ids
+  })
+
+  function dialogIsExpanded(node: UnifiedNode): boolean {
+    if (node._kind === 'draft' && node.tempId) {
+      return dialogExpandedTempIds.value.has(node.tempId)
+    }
+    if (dialogExpandedIds.value.has(node.id)) return true
+    if (dialogMatchedAncestorIds.value.has(node.id)) return true
+    return false
+  }
+
+  function dialogToggleExpand(node: UnifiedNode): void {
+    if (node._kind === 'draft' && node.tempId) {
+      const next = new Set(dialogExpandedTempIds.value)
+      if (next.has(node.tempId)) next.delete(node.tempId)
+      else next.add(node.tempId)
+      dialogExpandedTempIds.value = next
+      return
+    }
+    const next = new Set(dialogExpandedIds.value)
+    if (next.has(node.id)) next.delete(node.id)
+    else next.add(node.id)
+    dialogExpandedIds.value = next
+  }
+
+  // ─────────────────────── 5-14h 코드 자동 추론 ───────────────────────
+  function nextSiblingCode(parent: UnifiedNode | null): string {
+    const siblings = parent ? parent.children : dialogRootNodes.value
+    let maxNum = 0
+    if (parent) {
+      const prefix = `${parent.code}.`
+      for (const s of siblings) {
+        if (!s.code.startsWith(prefix)) continue
+        const tail = s.code.slice(prefix.length).split('.')[0]
+        const num = Number.parseInt(tail, 10)
+        if (!Number.isNaN(num) && num > maxNum) maxNum = num
+      }
+      return `${prefix}${maxNum + 1}`
+    }
+    for (const s of siblings) {
+      const head = s.code.split('.')[0]
+      const num = Number.parseInt(head, 10)
+      if (!Number.isNaN(num) && num > maxNum) maxNum = num
+    }
+    return `${maxNum + 1}`
+  }
+
+  function nextSiblingDisplayOrder(parent: UnifiedNode | null): number {
+    const siblings = parent ? parent.children : dialogRootNodes.value
+    let maxOrder = -1
+    for (const s of siblings) {
+      if (s.displayOrder > maxOrder) maxOrder = s.displayOrder
+    }
+    return maxOrder + 1
+  }
+
+  // ─────────────────────── 5-14h 액션 — 추가 ───────────────────────
+  function createChildControl(parent: UnifiedNode): DraftNode {
+    if (parent.nodeType !== 'category') {
+      throw new Error('자식 통제는 분류 노드에만 추가할 수 있습니다')
+    }
+    const tempId = nextTempId()
+    const draft: DraftNode = {
+      tempId,
+      parentId: parent._kind === 'existing' ? parent.id : (parent.tempId ?? null),
+      nodeType: 'control',
+      code: nextSiblingCode(parent),
+      name: '',
+      displayOrder: nextSiblingDisplayOrder(parent),
+      depth: parent.depth + 1,
+    }
+    dirtyChanges.created.set(tempId, draft)
+    if (parent._kind === 'existing') {
+      const next = new Set(dialogExpandedIds.value)
+      next.add(parent.id)
+      dialogExpandedIds.value = next
+    }
+    if (parent._kind === 'draft' && parent.tempId) {
+      const next = new Set(dialogExpandedTempIds.value)
+      next.add(parent.tempId)
+      dialogExpandedTempIds.value = next
+    }
+    bumpDirty()
+    return draft
+  }
+
+  function createChildCategory(parent: UnifiedNode): DraftNode {
+    if (parent.nodeType !== 'category') {
+      throw new Error('자식 분류는 분류 노드에만 추가할 수 있습니다')
+    }
+    if (parent.depth >= 10) {
+      throw new Error('최대 깊이(10) 를 초과할 수 없습니다')
+    }
+    const tempId = nextTempId()
+    const draft: DraftNode = {
+      tempId,
+      parentId: parent._kind === 'existing' ? parent.id : (parent.tempId ?? null),
+      nodeType: 'category',
+      code: nextSiblingCode(parent),
+      name: '',
+      displayOrder: nextSiblingDisplayOrder(parent),
+      depth: parent.depth + 1,
+    }
+    dirtyChanges.created.set(tempId, draft)
+    if (parent._kind === 'existing') {
+      const next = new Set(dialogExpandedIds.value)
+      next.add(parent.id)
+      dialogExpandedIds.value = next
+    }
+    if (parent._kind === 'draft' && parent.tempId) {
+      const next = new Set(dialogExpandedTempIds.value)
+      next.add(parent.tempId)
+      dialogExpandedTempIds.value = next
+    }
+    bumpDirty()
+    return draft
+  }
+
+  function createSiblingControl(sibling: UnifiedNode): DraftNode | null {
+    let parent: UnifiedNode | null = null
+    if (sibling.parentId !== null) parent = findById(sibling.parentId)
+    else if (sibling.parentTempId) parent = findByTempId(sibling.parentTempId)
+    if (!parent) return null
+    return createChildControl(parent)
+  }
+
+  function createRootCategory(): DraftNode {
+    const tempId = nextTempId()
+    const draft: DraftNode = {
+      tempId,
+      parentId: null,
+      nodeType: 'category',
+      code: nextSiblingCode(null),
+      name: '',
+      displayOrder: nextSiblingDisplayOrder(null),
+      depth: 1,
+    }
+    dirtyChanges.created.set(tempId, draft)
+    bumpDirty()
+    return draft
+  }
+
+  // ─────────────────────── 5-14h 액션 — 편집 ───────────────────────
+  function setCode(node: UnifiedNode, code: string): void {
+    if (node._kind === 'draft' && node.tempId) {
+      const d = dirtyChanges.created.get(node.tempId)
+      if (d) {
+        d.code = code
+        bumpDirty()
+      }
+      return
+    }
+    const original = flatNodes.value.find((n) => n.id === node.id)
+    if (!original) return
+    if (original.code === code) {
+      const u = dirtyChanges.updated.get(node.id)
+      if (u) {
+        delete u.code
+        if (u.code === undefined && u.name === undefined && u.description === undefined) {
+          dirtyChanges.updated.delete(node.id)
+        }
+      }
+    } else {
+      const u = dirtyChanges.updated.get(node.id) ?? { id: node.id }
+      u.code = code
+      dirtyChanges.updated.set(node.id, u)
+    }
+    bumpDirty()
+  }
+
+  function setName(node: UnifiedNode, name: string): void {
+    if (node._kind === 'draft' && node.tempId) {
+      const d = dirtyChanges.created.get(node.tempId)
+      if (d) {
+        d.name = name
+        bumpDirty()
+      }
+      return
+    }
+    const original = flatNodes.value.find((n) => n.id === node.id)
+    if (!original) return
+    if (original.name === name) {
+      const u = dirtyChanges.updated.get(node.id)
+      if (u) {
+        delete u.name
+        if (u.code === undefined && u.name === undefined && u.description === undefined) {
+          dirtyChanges.updated.delete(node.id)
+        }
+      }
+    } else {
+      const u = dirtyChanges.updated.get(node.id) ?? { id: node.id }
+      u.name = name
+      dirtyChanges.updated.set(node.id, u)
+    }
+    bumpDirty()
+  }
+
+  // ─────────────────────── 5-14h 액션 — 삭제 ───────────────────────
+  function countDescendants(node: UnifiedNode): {
+    total: number
+    categories: number
+    controls: number
+  } {
+    let cats = 0
+    let ctrls = 0
+    const visit = (n: UnifiedNode) => {
+      for (const c of n.children) {
+        if (c.nodeType === 'category') cats++
+        else ctrls++
+        visit(c)
+      }
+    }
+    visit(node)
+    return { total: cats + ctrls, categories: cats, controls: ctrls }
+  }
+
+  function deleteNode(node: UnifiedNode): void {
+    if (node._kind === 'draft' && node.tempId) {
+      const remove = new Set<string>([node.tempId])
+      let added = true
+      while (added) {
+        added = false
+        for (const d of dirtyChanges.created.values()) {
+          if (
+            typeof d.parentId === 'string' &&
+            remove.has(d.parentId) &&
+            !remove.has(d.tempId)
+          ) {
+            remove.add(d.tempId)
+            added = true
+          }
+        }
+      }
+      for (const t of remove) dirtyChanges.created.delete(t)
+      bumpDirty()
+      return
+    }
+    dirtyChanges.deleted.add(node.id)
+    dirtyChanges.updated.delete(node.id)
+    dirtyChanges.moved.delete(node.id)
+    bumpDirty()
+  }
+
+  // ─────────────────────── 5-14h 이동 ───────────────────────
+  function getMaxDescendantDepth(node: UnifiedNode): number {
+    let max = 0
+    const visit = (n: UnifiedNode, d: number) => {
+      if (d > max) max = d
+      for (const c of n.children) visit(c, d + 1)
+    }
+    visit(node, 0)
+    return max
+  }
+
+  function getMoveTargets(node: UnifiedNode): UnifiedNode[] {
+    if (node._kind === 'draft') return []
+    const forbidden = new Set<number>([node.id])
+    const collectDesc = (n: UnifiedNode) => {
+      for (const c of n.children) {
+        if (c._kind === 'existing') forbidden.add(c.id)
+        collectDesc(c)
+      }
+    }
+    collectDesc(node)
+    const targets: UnifiedNode[] = []
+    const visit = (n: UnifiedNode) => {
+      if (
+        n.nodeType === 'category' &&
+        n._kind === 'existing' &&
+        !forbidden.has(n.id) &&
+        n.depth + 1 + getMaxDescendantDepth(node) <= 10
+      ) {
+        targets.push(n)
+      }
+      for (const c of n.children) visit(c)
+    }
+    for (const r of dialogRootNodes.value) visit(r)
+    return targets
+  }
+
+  function moveNode(node: UnifiedNode, newParent: UnifiedNode): void {
+    if (node._kind !== 'existing' || newParent._kind !== 'existing') return
+    if (newParent.nodeType !== 'category') {
+      throw new Error('이동 대상은 분류 노드만 가능합니다')
+    }
+    const newDisplayOrder = nextSiblingDisplayOrder(newParent)
+    const newDepth = newParent.depth + 1
+    if (newDepth + getMaxDescendantDepth(node) > 10) {
+      throw new Error('최대 깊이(10) 를 초과할 수 없습니다')
+    }
+    dirtyChanges.moved.set(node.id, {
+      id: node.id,
+      newParentId: newParent.id,
+      newDisplayOrder,
+      newDepth,
+    })
+    bumpDirty()
+  }
+
+  // ─────────────────────── 5-14h Tab 변환 ───────────────────────
+  function convertNodeType(node: UnifiedNode): ConvertResult {
+    if (node._kind === 'existing') {
+      return { ok: false, reason: 'requires_save_first' }
+    }
+    if (!node.tempId) return { ok: false, reason: 'requires_save_first' }
+    const draft = dirtyChanges.created.get(node.tempId)
+    if (!draft) return { ok: false, reason: 'requires_save_first' }
+    if (draft.nodeType === 'category') {
+      const childDraft = createChildControl(node)
+      return { ok: true, childDraft }
+    }
+    if (draft.depth >= 10) {
+      return { ok: false, reason: 'depth_exceeded' }
+    }
+    draft.nodeType = 'category'
+    bumpDirty()
+    const childDraft = createChildControl(node)
+    return { ok: true, childDraft }
+  }
+
+  // ─────────────────────── 5-14h 코드 변경 영향 ───────────────────────
+  async function fetchImpactSummary(controlId: number): Promise<ImpactSummary> {
+    const response = await treeApi.getImpactSummary(controlId)
+    const body = response.data
+    if (!body.success) {
+      throw new Error(body.message ?? 'impact-summary 호출 실패')
+    }
+    return body.data
+  }
+
+  // ─────────────────────── 5-14h 저장 ───────────────────────
+  function buildPatchPayload(): TreePatchPayload {
+    if (!framework.value) {
+      throw new Error('Framework 가 로드되지 않았습니다')
+    }
+    return {
+      expectedVersion: framework.value.version,
+      changes: {
+        nodes: {
+          created: Array.from(dirtyChanges.created.values()).map((d) => ({
+            tempId: d.tempId,
+            parentId: d.parentId,
+            nodeType: d.nodeType,
+            code: d.code,
+            name: d.name,
+            description: d.description,
+            displayOrder: d.displayOrder,
+            depth: d.depth,
+          })),
+          updated: Array.from(dirtyChanges.updated.values()).map((u) => {
+            const o: { id: number; code?: string; name?: string; description?: string } = {
+              id: u.id,
+            }
+            if (u.code !== undefined) o.code = u.code
+            if (u.name !== undefined) o.name = u.name
+            if (u.description !== undefined) o.description = u.description
+            return o
+          }),
+          moved: Array.from(dirtyChanges.moved.values()),
+          deleted: Array.from(dirtyChanges.deleted).map((id) => ({ id })),
+        },
+      },
+    }
+  }
+
+  async function saveTree(): Promise<SaveResult> {
+    if (!framework.value) {
+      return { ok: false, kind: 'error', message: 'Framework 가 로드되지 않았습니다' }
+    }
+    if (dirtyCount.value === 0) {
+      return {
+        ok: true,
+        newVersion: framework.value.version,
+        mappings: new Map(),
+      }
+    }
+    isSaving.value = true
+    validationErrors.value = []
+    try {
+      const payload = buildPatchPayload()
+      const response = await treeApi.patchTree(framework.value.id, payload)
+      const body = response.data
+      if (!body.success) {
+        return {
+          ok: false,
+          kind: 'error',
+          message: body.message ?? '저장에 실패했습니다',
+        }
+      }
+      const mappings = new Map<string, number>()
+      for (const m of body.data.mappings.nodes) mappings.set(m.tempId, m.id)
+      // draft 펼침 → realId 펼침으로 옮기기
+      const draftExp = new Set(dialogExpandedTempIds.value)
+      const newExp = new Set(dialogExpandedIds.value)
+      for (const [tempId, realId] of mappings) {
+        if (draftExp.has(tempId)) newExp.add(realId)
+      }
+      const newVersion = body.data.version
+      // dirty 제거 + reload (서버 정합)
+      dirtyChanges.created.clear()
+      dirtyChanges.updated.clear()
+      dirtyChanges.moved.clear()
+      dirtyChanges.deleted.clear()
+      validationErrors.value = []
+      bumpDirty()
+      await reload()
+      // version 직접 갱신 (reload 가 성공하면 framework.version 동일하지만 안전)
+      if (framework.value) framework.value.version = newVersion
+      dialogExpandedIds.value = newExp
+      dialogExpandedTempIds.value = new Set()
+      return { ok: true, newVersion, mappings }
+    } catch (err) {
+      const ax = err as AxiosErrorLike<TreePatchErrorResponse>
+      if (ax?.response?.status === 409) {
+        const data = ax.response.data
+        return {
+          ok: false,
+          kind: 'conflict',
+          currentVersion: data?.currentVersion ?? framework.value.version,
+        }
+      }
+      if (ax?.response?.status === 422) {
+        const data = ax.response.data
+        const details = data?.details ?? []
+        validationErrors.value = details
+        return { ok: false, kind: 'validation', details }
+      }
+      return {
+        ok: false,
+        kind: 'error',
+        message: (err as Error).message ?? '저장에 실패했습니다',
+      }
+    } finally {
+      isSaving.value = false
+    }
+  }
+
+  function discardAllDirty(): void {
+    dirtyChanges.created.clear()
+    dirtyChanges.updated.clear()
+    dirtyChanges.moved.clear()
+    dirtyChanges.deleted.clear()
+    validationErrors.value = []
+    dialogExpandedTempIds.value = new Set()
+    bumpDirty()
+  }
+
+  // ─────────────────────── 5-14h 헬퍼 ───────────────────────
+  function findById(id: number): UnifiedNode | null {
+    const visit = (nodes: UnifiedNode[]): UnifiedNode | null => {
+      for (const n of nodes) {
+        if (n._kind === 'existing' && n.id === id) return n
+        const found = visit(n.children)
+        if (found) return found
+      }
+      return null
+    }
+    return visit(dialogRootNodes.value)
+  }
+
+  function findByTempId(tempId: string): UnifiedNode | null {
+    const visit = (nodes: UnifiedNode[]): UnifiedNode | null => {
+      for (const n of nodes) {
+        if (n._kind === 'draft' && n.tempId === tempId) return n
+        const found = visit(n.children)
+        if (found) return found
+      }
+      return null
+    }
+    return visit(dialogRootNodes.value)
+  }
+
+  function findByKey(key: string): UnifiedNode | null {
+    const visit = (nodes: UnifiedNode[]): UnifiedNode | null => {
+      for (const n of nodes) {
+        if (n._key === key) return n
+        const found = visit(n.children)
+        if (found) return found
+      }
+      return null
+    }
+    return visit(dialogRootNodes.value)
+  }
+
+  // ─────────────────────── return ───────────────────────
   return {
-    // state
-    loading,
-    error,
+    // 5-14g 인터페이스 (모두 보존)
     framework,
     flatNodes,
-
-    // tree
     rootNodes,
-    nodeById,
-    leafStatusById,
-
-    // expansion
-    expandedNodeIds,
-    effectiveExpandedIds,
-    toggleExpand,
-    expandAll,
-    collapseAll,
-    applyDefaultExpansion,
-
-    // search / filter
+    loading,
+    error,
     searchText,
     statusFilter,
+    expandedIds,
     filterActive,
-    matchedLeafIds,
-    matchedAncestorIds,
-    isMatched,
-    statusCounts,
-
-    // framework-level counts
+    effectiveExpandedIds,
     totalLeafCount,
     totalEvidenceTypeCount,
-    totalPendingLeafCount,
-
-    // actions
+    statusCounts,
+    isMatched,
+    toggleExpand,
     load,
     reload,
+    leafStatusOf,
+
+    // 5-14h 추가
+    dialogSearch,
+    dialogExpandedIds,
+    dialogExpandedTempIds,
+    dirtyChanges,
+    dirtyVersion,
+    validationErrors,
+    isSaving,
+    unifiedNodes,
+    dialogRootNodes,
+    dialogCategoryCount,
+    dialogControlCount,
+    dirtyCount,
+    hasDirty,
+    dialogIsExpanded,
+    dialogToggleExpand,
+    nextSiblingCode,
+    createChildControl,
+    createChildCategory,
+    createSiblingControl,
+    createRootCategory,
+    setCode,
+    setName,
+    deleteNode,
+    countDescendants,
+    getMoveTargets,
+    moveNode,
+    convertNodeType,
+    discardAllDirty,
+    fetchImpactSummary,
+    saveTree,
+    findById,
+    findByTempId,
+    findByKey,
   }
 }
 
-export type ControlTreeState = ReturnType<typeof useControlTree>
+export type ControlTreeApi = ReturnType<typeof useControlTree>
+
+/**
+ * provide / inject 키 — UnifiedControlsDialog 가 provide(), ControlNodeRow 가 inject().
+ *
+ * SFC 의 `<script setup>` 안에서는 일반 `export` 가 허용되지 않아 본 모듈에서 export.
+ * 양쪽 SFC 가 모두 본 파일에서 import.
+ */
+export const CONTROL_TREE_INJECTION_KEY = Symbol('controlTree') as InjectionKey<ControlTreeApi>
+
+export type { ComputedRef, Ref }
