@@ -48,7 +48,8 @@ class EvidenceApprovalTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
-    @Autowired private ControlRepository controlRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // v14 Phase 5-14f
+    @Autowired private ControlRepository controlRepository;           // legacy cleanup 용
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
 
@@ -63,6 +64,7 @@ class EvidenceApprovalTest {
     void setUp() {
         evidenceFileRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
+        controlNodeRepository.deleteAll();   // v14 Phase 5-14f
         controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
@@ -82,8 +84,11 @@ class EvidenceApprovalTest {
 
         Framework fw = frameworkRepository.save(Framework.builder()
                 .name("ISMS-P 2026 approval-test").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("2.2.1").name("임직원 교육").build());
+        // v14 Phase 5-14f: 패턴 A — 평면 leaf depth=1
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("2.2.1").name("임직원 교육")
+                .displayOrder(0).depth(1).build());
         ownedType = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("보안 교육 수료증").ownerUser(owner).build());
 

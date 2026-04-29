@@ -108,4 +108,48 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
           AND ef.reviewedAt IS NOT NULL
         """)
     long countReviewedByControlId(@Param("controlId") Long controlId);
+
+    // ====================================================================
+    // v14 Phase 5-14f — TreeService.getTree 의 leaf 별 pendingReviewCount 본격 집계용
+    // ====================================================================
+
+    /**
+     * 한 Framework 안의 leaf 별 pending evidence_files 카운트를 한 번에 집계.
+     *
+     * <p>응답: {@code Object[]} 의 배열. 각 항목 {@code [Long controlNodeId, Long count]}.
+     * pending 파일 0 개인 leaf 는 결과에 포함 안 됨.</p>
+     *
+     * <p>v14 Phase 5-14f 안전 버전 (Hibernate 6 호환):</p>
+     * <ol>
+     *   <li><b>explicit JOIN</b> — implicit 다단 path ({@code ef.evidenceType.control.framework.id})
+     *       대신 명시 JOIN 으로 nested association path resolution 안정성 확보.
+     *       같은 SQL 결과 (INNER JOIN evidence_files → evidence_types →
+     *       control_nodes → frameworks).</li>
+     *   <li><b>{@link ReviewStatus} parameter</b> — fully-qualified enum literal
+     *       ({@code com.secuhub.domain.evidence.entity.ReviewStatus.pending}) 가
+     *       Hibernate 6 SQM parser 에서 점({@code .}) 이 다수일 때 path 로 오인되어
+     *       UnknownPathException 발생. {@code :status} parameter 로 회피.</li>
+     * </ol>
+     *
+     * <p>5-14f 후: {@code et.control} 은 {@link com.secuhub.domain.evidence.entity.ControlNode}
+     * 매핑 (LAZY).</p>
+     *
+     * <p>TreeService 가 leaf 마다 호출하지 말고 Framework 단위로 1회 호출 후
+     * Map<controlNodeId, count> 빌드 (N+1 회피).</p>
+     *
+     * @param frameworkId Framework id
+     * @param status 일반적으로 {@link ReviewStatus#pending} 전달 (호출 측 명시)
+     * @return [controlNodeId, count] 배열의 리스트
+     */
+    @Query("""
+            SELECT cn.id, COUNT(ef)
+              FROM EvidenceFile ef
+              JOIN ef.evidenceType et
+              JOIN et.control cn
+             WHERE cn.framework.id = :frameworkId
+               AND ef.reviewStatus = :status
+             GROUP BY cn.id
+            """)
+    List<Object[]> countPendingGroupByControlIdInFramework(@Param("frameworkId") Long frameworkId,
+                                                            @Param("status") ReviewStatus status);
 }

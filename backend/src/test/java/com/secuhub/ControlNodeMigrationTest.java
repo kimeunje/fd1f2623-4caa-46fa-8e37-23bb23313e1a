@@ -199,8 +199,24 @@ class ControlNodeMigrationTest {
         Control c4 = controlRepository.save(Control.builder()
                 .framework(fw).code("2.1.2").domain("정책 수립").name("정기 검토").build());
 
-        evidenceTypeRepository.save(EvidenceType.builder().control(c1).name("회의록").build());
-        evidenceTypeRepository.save(EvidenceType.builder().control(c3).name("정책 문서").build());
+        // v14 Phase 5-14f: EvidenceType.control 의 JPA 타입이 ControlNode 로 변경되어
+        // controls.id 직접 매다는 JPA save 불가 → jdbcTemplate INSERT 로 우회.
+        // dev/test 의 evidence_types.control_id FK 가 control_nodes 가리키므로 SET
+        // REFERENTIAL_INTEGRITY FALSE 로 일시 disable. V6 마이그레이션 검증 본질
+        // (controls 의 row 가 V6 후 control_nodes 의 leaf 로 이주됨) 보존.
+        jdbcTemplate.execute("SET REFERENTIAL_INTEGRITY FALSE");
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO evidence_types (control_id, name, created_at, updated_at) " +
+                    "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    c1.getId(), "회의록");
+            jdbcTemplate.update(
+                    "INSERT INTO evidence_types (control_id, name, created_at, updated_at) " +
+                    "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    c3.getId(), "정책 문서");
+        } finally {
+            jdbcTemplate.execute("SET REFERENTIAL_INTEGRITY TRUE");
+        }
 
         entityManager.flush();
         entityManager.clear();
@@ -390,14 +406,25 @@ class ControlNodeMigrationTest {
         Control c1 = controlRepository.save(Control.builder()
                 .framework(fw).code("R-1").domain("재매핑").name("증빙 보유 통제").build());
 
-        EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c1).name("증빙 1").build());
-        EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c1).name("증빙 2").build());
-
         Long c1Id = c1.getId();
-        Long et1Id = et1.getId();
-        Long et2Id = et2.getId();
+
+        // v14 Phase 5-14f: EvidenceType.control 의 JPA 타입이 ControlNode 라
+        // controls.id 매다는 JPA save 불가 → jdbcTemplate INSERT 우회. V6 마이그레이션의
+        // evidence_types.control_id remap 검증 본질 (controls.id → controls.id+1_000_000)
+        // 보존.
+        jdbcTemplate.execute("SET REFERENTIAL_INTEGRITY FALSE");
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO evidence_types (control_id, name, created_at, updated_at) " +
+                    "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    c1Id, "증빙 1");
+            jdbcTemplate.update(
+                    "INSERT INTO evidence_types (control_id, name, created_at, updated_at) " +
+                    "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    c1Id, "증빙 2");
+        } finally {
+            jdbcTemplate.execute("SET REFERENTIAL_INTEGRITY TRUE");
+        }
 
         entityManager.flush();
         entityManager.clear();
@@ -407,14 +434,18 @@ class ControlNodeMigrationTest {
         // 새 leaf id 확인
         Long expectedLeafId = c1Id + 1_000_000L;
 
-        // 두 evidence_type 모두 새 leaf id 를 가리키도록 remap 됨
-        Long et1ControlId = jdbcTemplate.queryForObject(
-                "SELECT control_id FROM evidence_types WHERE id = ?", Long.class, et1Id);
-        Long et2ControlId = jdbcTemplate.queryForObject(
-                "SELECT control_id FROM evidence_types WHERE id = ?", Long.class, et2Id);
+        // v14 Phase 5-14f 검증 단순화: 두 evidence_types 모두 expectedLeafId 가리키는지
+        // (id 추출 대신 count 검증 — 의미 동일)
+        Long remappedCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM evidence_types WHERE control_id = ?",
+                Long.class, expectedLeafId);
+        assertThat(remappedCount).isEqualTo(2L);
 
-        assertThat(et1ControlId).isEqualTo(expectedLeafId);
-        assertThat(et2ControlId).isEqualTo(expectedLeafId);
+        // 원래 controls.id 가리키는 row 는 0건 (V6 후 모두 +1,000,000 으로 이주됨)
+        Long unmappedCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM evidence_types WHERE control_id = ?",
+                Long.class, c1Id);
+        assertThat(unmappedCount).isEqualTo(0L);
 
         // 그리고 그 leaf 가 실제로 control_nodes 에 존재 (참조 무결성)
         long leafExists = jdbcTemplate.queryForObject(

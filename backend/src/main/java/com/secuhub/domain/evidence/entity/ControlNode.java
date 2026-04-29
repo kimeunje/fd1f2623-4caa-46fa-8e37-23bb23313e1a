@@ -104,6 +104,24 @@ public class ControlNode extends BaseEntity {
     @Column(nullable = false)
     private int depth;
 
+    /**
+     * v14 Phase 5-14a 에서 의도적으로 미포함 → Phase 5-14f 에서 추가.
+     *
+     * <p>leaf ({@code node_type='control'}) 일 때만 의미 있음. category 인 경우 빈
+     * 리스트가 자연. {@link EvidenceType#control} 의 mappedBy 대상.</p>
+     *
+     * <p>spec §3.3.1.3 의 ControlNode 정의 정합. 5-14c 의 GET /tree 응답에서 leaf 의
+     * {@code evidenceTypeCount} 본격 집계 시 활용 (또는 별도 카운트 쿼리).</p>
+     *
+     * <p>cascade ALL + orphanRemoval — leaf 삭제 시 매달린 evidence_types 도 함께
+     * 삭제. DB 레벨 ON DELETE CASCADE 와 정합 (V6 Step 3c).</p>
+     */
+    @jakarta.persistence.OneToMany(mappedBy = "control",
+            cascade = jakarta.persistence.CascadeType.ALL,
+            orphanRemoval = true)
+    @lombok.Builder.Default
+    private java.util.List<EvidenceType> evidenceTypes = new java.util.ArrayList<>();
+
     // ============================================================
     // 메서드
     // ============================================================
@@ -193,5 +211,26 @@ public class ControlNode extends BaseEntity {
      */
     public boolean isLeaf() {
         return this.nodeType == NodeType.control;
+    }
+
+    /**
+     * v14 Phase 5-14f — leaf 통제에 증빙 유형을 매단다.
+     *
+     * <p>category 노드에서 호출 시 {@link IllegalStateException} — leaf 만 evidence_types
+     * 직접 매달 수 있음 (spec §3.3.1.3 정합). 5-14d 의 PATCH /tree 검증 규칙 #9
+     * (leaf-with-evidence) 와 정합.</p>
+     *
+     * <p>{@link Control#addEvidenceType} (5-14f 에서 제거됨) 의 대체. 호출 측은
+     * {@link Framework} → {@link ControlNode} (leaf) → addEvidenceType 흐름.</p>
+     *
+     * @throws IllegalStateException 본 노드가 category 인 경우
+     */
+    public void addEvidenceType(EvidenceType evidenceType) {
+        if (this.nodeType != NodeType.control) {
+            throw new IllegalStateException(
+                    "category 노드에는 증빙 유형을 직접 매달 수 없습니다. node_id=" + this.id);
+        }
+        this.evidenceTypes.add(evidenceType);
+        evidenceType.setControl(this);   // 5-14f 변경: setControl(ControlNode)
     }
 }

@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.*;
 class ScriptExecutionTest {
 
     @Autowired private FrameworkRepository frameworkRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // v14 Phase 5-14f
     @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
@@ -60,8 +61,10 @@ class ScriptExecutionTest {
     @Transactional
     void testExecuteWithNoScriptPath() {
         Framework fw = frameworkRepository.save(Framework.builder().name("테스트 FW").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("SC-01").name("스크립트 테스트 항목").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("SC-01").name("스크립트 테스트 항목")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("스크립트 증빙").build());
 
@@ -97,8 +100,10 @@ class ScriptExecutionTest {
     @Transactional
     void testExecuteWithNonExistentScript() {
         Framework fw = frameworkRepository.save(Framework.builder().name("테스트 FW").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("SC-02").name("스크립트 테스트 항목2").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("SC-02").name("스크립트 테스트 항목2")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("스크립트 증빙2").build());
 
@@ -159,8 +164,10 @@ class ScriptExecutionTest {
         }
 
         Framework fw = frameworkRepository.save(Framework.builder().name("테스트 FW").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("SC-03").name("성공 스크립트 항목").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("SC-03").name("성공 스크립트 항목")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("서버 점검 결과").build());
 
@@ -253,8 +260,10 @@ class ScriptExecutionTest {
         }
 
         Framework fw = frameworkRepository.save(Framework.builder().name("테스트 FW").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("SC-04").name("실패 스크립트 항목").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("SC-04").name("실패 스크립트 항목")
+                .displayOrder(0).depth(1).build());
 
         CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
                 .name("실패 테스트 작업")
@@ -294,8 +303,10 @@ class ScriptExecutionTest {
         Files.writeString(testFile, "테스트 PDF 내용입니다.");
 
         Framework fw = frameworkRepository.save(Framework.builder().name("다운로드 FW").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("DL-01").name("다운로드 테스트 항목").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("DL-01").name("다운로드 테스트 항목")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("다운로드 증빙").build());
 
@@ -346,8 +357,10 @@ class ScriptExecutionTest {
     @Transactional
     void testFileDownloadPhysicalFileMissing() {
         Framework fw = frameworkRepository.save(Framework.builder().name("미싱 FW").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("DL-02").name("미싱 테스트 항목").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("DL-02").name("미싱 테스트 항목")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("미싱 증빙").build());
 
@@ -376,8 +389,10 @@ class ScriptExecutionTest {
     @Transactional
     void testContentTypeDetermination() throws IOException {
         Framework fw = frameworkRepository.save(Framework.builder().name("CT 테스트").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("CT-01").name("CT 항목").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("CT-01").name("CT 항목")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("CT 증빙").build());
 

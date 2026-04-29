@@ -23,6 +23,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Phase 5-3 — Framework 목록 API 집계 필드 검증
  *
+ * <h3>v14 Phase 5-14f 회귀 픽스 (패턴 A — 평면 leaf depth=1)</h3>
+ * <p>{@code Control.builder()} → {@code ControlNode.builder().nodeType(NodeType.control)
+ * .displayOrder(N).depth(1)}. {@link FrameworkRepository} / FrameworkService 의 controlCount
+ * 집계는 5-14f patch 로 {@code controlNodeRepository.countByFrameworkIdAndNodeType
+ * (..., NodeType.control)} 위임 (FrameworkService_inherit_PATCH.md). leaf 만 카운트되어
+ * 의미 일치.</p>
+ *
  * <h3>검증 항목</h3>
  * <ul>
  *   <li>GET /api/v1/frameworks 응답에 status, parentFrameworkId/Name 포함</li>
@@ -45,7 +52,8 @@ class FrameworkListTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
-    @Autowired private ControlRepository controlRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // ← 5-14f
+    @Autowired private ControlRepository controlRepository;           // legacy cleanup 용
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
@@ -57,6 +65,7 @@ class FrameworkListTest {
         evidenceFileRepository.deleteAll();
         collectionJobRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
+        controlNodeRepository.deleteAll();   // ← 5-14f
         controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
@@ -104,9 +113,9 @@ class FrameworkListTest {
     void testCountsAccuracy() throws Exception {
         Framework fw = frameworkRepository.save(Framework.builder().name("Counted FW").build());
 
-        // 통제 2개
-        Control c1 = controlRepository.save(Control.builder().framework(fw).code("A-1").name("통제 1").build());
-        Control c2 = controlRepository.save(Control.builder().framework(fw).code("A-2").name("통제 2").build());
+        // 통제 2개 — v14 Phase 5-14f: 평면 leaf (패턴 A)
+        ControlNode c1 = createLeaf(fw, "A-1", "통제 1", 0);
+        ControlNode c2 = createLeaf(fw, "A-2", "통제 2", 1);
 
         // 증빙 유형 3개 (c1 에 2, c2 에 1)
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder().control(c1).name("증빙 A").build());
@@ -198,7 +207,7 @@ class FrameworkListTest {
     @DisplayName("[Filter] approved/rejected/auto_approved 파일은 pendingReviewCount 에서 제외")
     void testPendingOnly() throws Exception {
         Framework fw = frameworkRepository.save(Framework.builder().name("Mixed FW").build());
-        Control c = controlRepository.save(Control.builder().framework(fw).code("B-1").name("통제").build());
+        ControlNode c = createLeaf(fw, "B-1", "통제", 0);
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder().control(c).name("증빙").build());
 
         // 4가지 상태 파일 각 1건
@@ -225,5 +234,18 @@ class FrameworkListTest {
                 .andExpect(jsonPath("$.data[0].pendingReviewCount").value(1));
 
         System.out.println("✅ [Filter] pending 만 집계 (approved/rejected/auto_approved 제외)");
+    }
+
+    // ==================================================================
+    // helpers — v14 Phase 5-14f
+    // ==================================================================
+
+    /**
+     * v14 Phase 5-14f — 평면 ControlNode leaf 생성 (패턴 A: depth=1, displayOrder 명시).
+     */
+    private ControlNode createLeaf(Framework fw, String code, String name, int displayOrder) {
+        return controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code(code).name(name).displayOrder(displayOrder).depth(1).build());
     }
 }

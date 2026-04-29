@@ -5,14 +5,19 @@ import com.secuhub.domain.evidence.dto.TreeDto;
 import com.secuhub.domain.evidence.entity.ControlNode;
 import com.secuhub.domain.evidence.entity.Framework;
 import com.secuhub.domain.evidence.entity.NodeType;
+import com.secuhub.domain.evidence.entity.ReviewStatus;
 import com.secuhub.domain.evidence.repository.ControlNodeRepository;
+import com.secuhub.domain.evidence.repository.EvidenceFileRepository;
+import com.secuhub.domain.evidence.repository.EvidenceTypeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Phase 5-14c — GET /api/v1/frameworks/{id}/tree 서비스.
@@ -31,15 +36,14 @@ import java.util.List;
  *       정렬 중 "parent.id" 단계는 본 서비스가 JVM Comparator 로 추가 적용 —
  *       JPQL ORDER BY 의 NULL 처리 환경 의존성 회피. 100~수백 노드 규모에서
  *       비용 무시 가능.</li>
- *   <li><b>5-14c 카운트는 0 고정 (TODO 5-14f)</b> — leaf 의 evidenceTypeCount /
- *       pendingReviewCount 는 ControlNode.evidenceTypes OneToMany 매핑이
- *       5-14a 에서 미포함이고 EvidenceType.control 이 아직 controls 테이블을
- *       가리키므로, dev/test/prod 일관성 보장 위해 0 고정. 본격 집계는
- *       5-14f 에서 매핑 통합과 함께.</li>
+ *   <li><b>v14.6 (5-14f) leaf 두 카운트 본격 집계</b> — leaf 의 evidenceTypeCount /
+ *       pendingReviewCount 를 Framework 단위 1회 쿼리로 집계 후 Map 빌드.
+ *       N+1 회피. 5-14c 의 "0 고정 TODO" 해결.</li>
  * </ul>
  */
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class TreeService {
 
     /**
@@ -55,30 +59,74 @@ public class TreeService {
 
     private final FrameworkRepository frameworkRepository;
     private final ControlNodeRepository controlNodeRepository;
+    private final EvidenceTypeRepository evidenceTypeRepository;     // ← 5-14f 추가
+    private final EvidenceFileRepository evidenceFileRepository;     // ← 5-14f 추가
 
-    @Transactional(readOnly = true)
     public TreeDto.Response getTree(Long frameworkId) {
-        Framework fw = frameworkRepository.findById(frameworkId)
+        Framework framework = frameworkRepository.findById(frameworkId)
                 .orElseThrow(() -> new ResourceNotFoundException("프레임워크", frameworkId));
 
-        List<ControlNode> nodes = controlNodeRepository.findByFrameworkIdOrderByDepthAscDisplayOrderAsc(frameworkId);
+        List<ControlNode> nodes = controlNodeRepository
+                .findByFrameworkIdOrderByDepthAscDisplayOrderAsc(frameworkId);
 
-        List<TreeDto.NodeSummary> nodeSummaries = nodes.stream()
+        // JVM-side Comparator 정렬 — SPEC_ORDER 재사용
+        List<ControlNode> sorted = nodes.stream()
                 .sorted(SPEC_ORDER)
-                .map(this::toNodeSummary)
                 .toList();
 
+        // ─── v14 Phase 5-14f — leaf 두 카운트 본격 집계 (5-14c 의 0 고정 변경) ───
+        // Framework 단위 1회 쿼리 후 Map 빌드 (N+1 회피, explicit JOIN 으로 Hibernate 6 안전)
+        Map<Long, Long> evidenceTypeCounts = new HashMap<>();
+        for (Object[] row : evidenceTypeRepository.countGroupByControlIdInFramework(frameworkId)) {
+            evidenceTypeCounts.put((Long) row[0], (Long) row[1]);
+        }
+        Map<Long, Long> pendingReviewCounts = new HashMap<>();
+        // 5-14f 안전: ReviewStatus.pending 을 parameter 로 전달 (fully-qualified enum literal 의
+        //            Hibernate 6 SQM path 오인 회피)
+        for (Object[] row : evidenceFileRepository.countPendingGroupByControlIdInFramework(
+                frameworkId, ReviewStatus.pending)) {
+            pendingReviewCounts.put((Long) row[0], (Long) row[1]);
+        }
+
+        // toNodeSummary 호출 시 두 Map 함께 전달
+        List<TreeDto.NodeSummary> nodeSummaries = sorted.stream()
+                .map(n -> toNodeSummary(n, evidenceTypeCounts, pendingReviewCounts))
+                .toList();
+        // ────────────────────────────────────────────────────────────────────
+
         return TreeDto.Response.builder()
-                .framework(TreeDto.FrameworkSummary.from(fw))
+                .framework(TreeDto.FrameworkSummary.builder()
+                        .id(framework.getId())
+                        .name(framework.getName())
+                        .version(framework.getVersion())
+                        .build())
                 .nodes(nodeSummaries)
                 .build();
     }
 
-    private TreeDto.NodeSummary toNodeSummary(ControlNode cn) {
-        if (cn.getNodeType() == NodeType.category) {
-            return TreeDto.NodeSummary.fromCategory(cn);
+    /**
+     * v14 Phase 5-14f — Map 으로 카운트 lookup. 시그니처 변경 (5-14c 의 단일 인자 → 3 인자).
+     */
+    private TreeDto.NodeSummary toNodeSummary(ControlNode node,
+                                              Map<Long, Long> evidenceTypeCounts,
+                                              Map<Long, Long> pendingReviewCounts) {
+        TreeDto.NodeSummary.NodeSummaryBuilder b = TreeDto.NodeSummary.builder()
+                .id(node.getId())
+                .parentId(node.getParent() != null ? node.getParent().getId() : null)
+                .nodeType(node.getNodeType().name())
+                .code(node.getCode())
+                .name(node.getName())
+                .description(node.getDescription())
+                .displayOrder(node.getDisplayOrder())
+                .depth(node.getDepth());
+
+        if (node.getNodeType() == NodeType.control) {
+            // v14 Phase 5-14f — Map 에서 카운트 lookup, 없으면 0 (defaultIfMissing)
+            long etCount = evidenceTypeCounts.getOrDefault(node.getId(), 0L);
+            long prCount = pendingReviewCounts.getOrDefault(node.getId(), 0L);
+            b.evidenceTypeCount((int) etCount)
+             .pendingReviewCount(prCount);
         }
-        // leaf — TODO 5-14f: 본격 집계 (현재는 0 고정)
-        return TreeDto.NodeSummary.fromLeaf(cn, 0, 0L);
+        return b.build();
     }
 }

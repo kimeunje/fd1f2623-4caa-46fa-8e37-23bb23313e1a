@@ -23,6 +23,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Phase 5-14e — leaf 통제 코드 변경 사전 경고 (impact-summary) API 검증.
  *
+ * <h3>v14 Phase 5-14f 회귀 픽스 (패턴 A — 평면 leaf depth=1)</h3>
+ * <p>{@code Control.builder()} → {@code ControlNode.builder().nodeType(NodeType.control)
+ * .displayOrder(N).depth(1)}. 5-14e 의 {@code controlId} 의미가 5-14f 후 자연스럽게
+ * "leaf control_node.id" 로 정의됨 — JPQL 매칭이 자연 작동.</p>
+ *
  * <h3>검증 항목</h3>
  * <ul>
  *   <li>{@code GET /api/v1/controls/{id}/impact-summary} 응답 shape — { evidenceFileCount, jobCount, reviewCount }</li>
@@ -34,14 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   <li>존재하지 않는 controlId → 404 아님, 모두 0 (Q2 결정 — 단순함이 핵심)</li>
  * </ul>
  *
- * <p>spec §3.3.1.5 정합. v14.5 신규 (Phase 5-14e).</p>
- *
- * <p>5-14e 시점 의미: 본 테스트는 dev/test 환경 (V6 미실행) 에서 {@code controls.id} 로 호출.
- * impact-summary service 의 JPQL 매칭 ({@code evidence_types.control.id == :controlId}) 과
- * 자연 매칭. prod V6 후 클라이언트가 {@code leaf control_node.id} 로 호출 시에도 자연 매칭
- * (V6 Step 3b 에서 {@code evidence_types.control_id += 1,000,000} 이주됨).</p>
- *
- * <p>FrameworkListTest / EvidenceApprovalTest 와 동일한 cleanup + 토큰 발급 패턴.</p>
+ * <p>spec §3.3.1.5 정합. v14.5 신규 (Phase 5-14e), 5-14f 회귀 픽스 적용.</p>
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -56,7 +54,8 @@ class ImpactSummaryTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
-    @Autowired private ControlRepository controlRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // ← 5-14f
+    @Autowired private ControlRepository controlRepository;           // legacy cleanup 용
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
@@ -69,6 +68,7 @@ class ImpactSummaryTest {
         evidenceFileRepository.deleteAll();
         collectionJobRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
+        controlNodeRepository.deleteAll();   // ← 5-14f
         controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
@@ -93,9 +93,8 @@ class ImpactSummaryTest {
     void testCountsAccuracy() throws Exception {
         Framework fw = frameworkRepository.save(Framework.builder().name("FW-Impact").build());
 
-        // 대상 통제
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("1.1.1").name("정책 수립").build());
+        // 대상 통제 — v14 Phase 5-14f 패턴 A
+        ControlNode ctrl = createLeaf(fw, "1.1.1", "정책 수립", 0);
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("정책 문서").build());
         EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
@@ -134,8 +133,7 @@ class ImpactSummaryTest {
                 .scriptPath("/scripts/b.py").evidenceType(et2).build());
 
         // 다른 통제 (집계 누적 검증용 — 이쪽 카운트는 응답에 포함되면 안 됨)
-        Control other = controlRepository.save(Control.builder()
-                .framework(fw).code("1.1.2").name("다른 통제").build());
+        ControlNode other = createLeaf(fw, "1.1.2", "다른 통제", 1);
         EvidenceType etOther = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(other).name("다른 증빙").build());
         evidenceFileRepository.save(EvidenceFile.builder()
@@ -171,8 +169,7 @@ class ImpactSummaryTest {
     @DisplayName("[Empty] 빈 통제 + 존재 안 하는 id → 모두 0")
     void testZeroCounts() throws Exception {
         Framework fw = frameworkRepository.save(Framework.builder().name("FW-Empty").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("2.1.1").name("빈 통제").build());
+        ControlNode ctrl = createLeaf(fw, "2.1.1", "빈 통제", 0);
 
         // 데이터 0개 — 모두 0 자연
         mockMvc.perform(get("/api/v1/controls/{id}/impact-summary", ctrl.getId())
@@ -193,5 +190,15 @@ class ImpactSummaryTest {
                 .andExpect(jsonPath("$.data.reviewCount").value(0));
 
         System.out.println("✅ [Empty] 빈 통제 + 미존재 id 모두 0 0 0 (Q2-A 정합)");
+    }
+
+    // ==================================================================
+    // helpers — v14 Phase 5-14f
+    // ==================================================================
+
+    private ControlNode createLeaf(Framework fw, String code, String name, int displayOrder) {
+        return controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code(code).name(name).displayOrder(displayOrder).depth(1).build());
     }
 }

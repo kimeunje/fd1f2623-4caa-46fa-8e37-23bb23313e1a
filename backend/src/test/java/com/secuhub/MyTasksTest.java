@@ -51,6 +51,7 @@ class MyTasksTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // v14 Phase 5-14f
     @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
@@ -72,12 +73,13 @@ class MyTasksTest {
     private String nonOwnerDeveloperToken;
 
     private Framework framework;
-    private Control control;
+    private ControlNode control;   // v14 Phase 5-14f: Control → ControlNode
 
     @BeforeEach
     void setUp() {
         evidenceFileRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
+        controlNodeRepository.deleteAll();   // v14 Phase 5-14f
         controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
@@ -122,8 +124,11 @@ class MyTasksTest {
         nonOwnerDeveloperToken = jwtTokenProvider.createToken(nonOwnerDeveloper.getId(), nonOwnerDeveloper.getEmail(), "developer");
 
         framework = frameworkRepository.save(Framework.builder().name("ISMS-P 2026").build());
-        control = controlRepository.save(Control.builder()
-                .framework(framework).code("1.1.1").domain("관리체계").name("정보보호 정책 수립").build());
+        // v14 Phase 5-14f: 패턴 A — 평면 leaf depth=1 (domain 텍스트는 v14 후 의미 없음, 미사용)
+        control = controlNodeRepository.save(ControlNode.builder()
+                .framework(framework).parent(null).nodeType(NodeType.control)
+                .code("1.1.1").name("정보보호 정책 수립")
+                .displayOrder(0).depth(1).build());
     }
 
     // ==================================================================

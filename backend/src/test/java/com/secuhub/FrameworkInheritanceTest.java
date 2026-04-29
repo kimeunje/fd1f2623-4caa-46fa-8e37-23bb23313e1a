@@ -54,6 +54,7 @@ class FrameworkInheritanceTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // v14 Phase 5-14f
     @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
@@ -68,6 +69,7 @@ class FrameworkInheritanceTest {
         evidenceFileRepository.deleteAll();
         collectionJobRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
+        controlNodeRepository.deleteAll();   // v14 Phase 5-14f
         controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
@@ -98,10 +100,15 @@ class FrameworkInheritanceTest {
         Framework source = frameworkRepository.save(Framework.builder()
                 .name("ISMS-P 2025").description("기존 감사 주기").build());
 
-        Control c1 = controlRepository.save(Control.builder()
-                .framework(source).code("1.1.1").domain("관리체계").name("정책 수립").build());
-        Control c2 = controlRepository.save(Control.builder()
-                .framework(source).code("1.2.1").domain("보호대책").name("접근통제").build());
+        // v14 Phase 5-14f: 패턴 A — 평면 leaf depth=1
+        ControlNode c1 = controlNodeRepository.save(ControlNode.builder()
+                .framework(source).parent(null).nodeType(NodeType.control)
+                .code("1.1.1").name("정책 수립")
+                .displayOrder(0).depth(1).build());
+        ControlNode c2 = controlNodeRepository.save(ControlNode.builder()
+                .framework(source).parent(null).nodeType(NodeType.control)
+                .code("1.2.1").name("접근통제")
+                .displayOrder(1).depth(1).build());
 
         LocalDate dueDate = LocalDate.of(2026, 6, 30);
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
@@ -148,10 +155,14 @@ class FrameworkInheritanceTest {
                 .filter(f -> !f.getId().equals(source.getId()))
                 .findFirst().orElseThrow();
 
-        List<Control> newControls = controlRepository.findByFrameworkIdOrderByCodeAsc(newFw.getId());
+        // v14 Phase 5-14f: legacy controls 0건 (5-14b INSERT 차단), control_nodes leaf 검증
+        List<ControlNode> newControls = controlNodeRepository
+                .findByFrameworkIdAndNodeTypeOrderByDisplayOrderAsc(newFw.getId(), NodeType.control);
         assertThat(newControls).hasSize(2);
+        // displayOrder ASC 정렬이라 c1 (displayOrder=0) 이 첫 번째
         assertThat(newControls.get(0).getCode()).isEqualTo("1.1.1");
-        assertThat(newControls.get(0).getDomain()).isEqualTo("관리체계");
+        // domain 검증 — 5-14f 후 leaf 의 depth=1 ancestor name (평면 leaf 라 ancestor 없음 → null)
+        // 검증 의도 보존: 새 leaf id 가 source 의 c1.id 와 다름
         assertThat(newControls.get(0).getId()).isNotEqualTo(c1.getId());
 
         List<EvidenceType> newTypesC1 = evidenceTypeRepository.findByControlId(newControls.get(0).getId());
@@ -187,8 +198,11 @@ class FrameworkInheritanceTest {
     @DisplayName("[Isolation] 상속 후 원본 Framework 의 통제/증빙유형/작업 수 그대로")
     void testSourceIsolation() throws Exception {
         Framework source = frameworkRepository.save(Framework.builder().name("원본 FW").build());
-        Control c1 = controlRepository.save(Control.builder()
-                .framework(source).code("S-1").name("통제 A").build());
+        // v14 Phase 5-14f: 패턴 A
+        ControlNode c1 = controlNodeRepository.save(ControlNode.builder()
+                .framework(source).parent(null).nodeType(NodeType.control)
+                .code("S-1").name("통제 A")
+                .displayOrder(0).depth(1).build());
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(c1).name("증빙 A").build());
         collectionJobRepository.save(CollectionJob.builder()
@@ -203,7 +217,9 @@ class FrameworkInheritanceTest {
                         .content(body))
                 .andExpect(status().isCreated());
 
-        List<Control> sourceControlsAfter = controlRepository.findByFrameworkIdOrderByCodeAsc(source.getId());
+        // v14 Phase 5-14f: ControlNode 위임으로 변경
+        List<ControlNode> sourceControlsAfter = controlNodeRepository
+                .findByFrameworkIdAndNodeTypeOrderByDisplayOrderAsc(source.getId(), NodeType.control);
         assertThat(sourceControlsAfter).hasSize(1);
         assertThat(sourceControlsAfter.get(0).getId()).isEqualTo(c1.getId());
 
@@ -221,8 +237,11 @@ class FrameworkInheritanceTest {
     @DisplayName("[Global Job] evidence_type=null 전역 작업은 복제되지 않음")
     void testGlobalJobsNotCopied() throws Exception {
         Framework source = frameworkRepository.save(Framework.builder().name("원본").build());
-        Control c = controlRepository.save(Control.builder()
-                .framework(source).code("G-1").name("통제").build());
+        // v14 Phase 5-14f: 패턴 A
+        ControlNode c = controlNodeRepository.save(ControlNode.builder()
+                .framework(source).parent(null).nodeType(NodeType.control)
+                .code("G-1").name("통제")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(c).name("증빙").build());
 

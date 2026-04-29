@@ -13,7 +13,6 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +25,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Phase 5-2 — 증빙 접근 권한 검증 테스트
+ *
+ * <h3>v14 Phase 5-14f 회귀 픽스 (패턴 A — 평면 leaf depth=1)</h3>
+ * <p>Control → ControlNode 변환. 외부 API ({@code /evidence-files/upload}, {@code /by-type/{etId}}
+ * 등) 의 응답 shape 변경 없음.</p>
  *
  * <h3>검증 매트릭스</h3>
  * <pre>
@@ -50,7 +53,8 @@ class EvidencePermissionTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
-    @Autowired private ControlRepository controlRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // ← 5-14f
+    @Autowired private ControlRepository controlRepository;           // legacy cleanup 용
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
 
@@ -68,7 +72,7 @@ class EvidencePermissionTest {
     private String outsiderToken;
 
     // ------------------------------------------------------------------
-    // 공통 픽스처 — @BeforeEach 로 매번 초기화 (@DirtiesContext 대신)
+    // 공통 픽스처 — @BeforeEach 로 매번 초기화
     // ------------------------------------------------------------------
 
     @BeforeEach
@@ -77,6 +81,7 @@ class EvidencePermissionTest {
         // 기존 데이터 정리 (FK 역순)
         evidenceFileRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
+        controlNodeRepository.deleteAll();   // ← 5-14f
         controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
@@ -110,11 +115,14 @@ class EvidencePermissionTest {
                 .permissionEvidence(true).permissionVuln(true)
                 .build());
 
-        // Framework → Control → EvidenceType (owner = ownerWithPerm)
+        // Framework → ControlNode (leaf) → EvidenceType (owner = ownerWithPerm)
         Framework fw = frameworkRepository.save(Framework.builder()
                 .name("ISMS-P 2026 perm-test").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("2.2.1").name("임직원 교육").build());
+        // v14 Phase 5-14f — 패턴 A: depth=1 leaf 직접 생성
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("2.2.1").name("임직원 교육")
+                .displayOrder(0).depth(1).build());
         ownedType = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("보안 교육 수료증")
                 .ownerUser(ownerWithPerm)     // 👉 소유자

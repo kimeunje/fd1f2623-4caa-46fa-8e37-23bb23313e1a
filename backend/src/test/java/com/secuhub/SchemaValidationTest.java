@@ -48,6 +48,7 @@ class SchemaValidationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private FrameworkRepository frameworkRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // v14 Phase 5-14f
     @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
@@ -72,6 +73,7 @@ class SchemaValidationTest {
         collectionJobRepository.deleteAllInBatch();
         jobExecutionRepository.deleteAllInBatch();
         evidenceTypeRepository.deleteAllInBatch();
+        controlNodeRepository.deleteAllInBatch();   // v14 Phase 5-14f
         controlRepository.deleteAllInBatch();
         frameworkRepository.deleteAllInBatch();
         vulnActionLogRepository.deleteAllInBatch();
@@ -134,11 +136,15 @@ class SchemaValidationTest {
                 .description("정보보호 및 개인정보보호 관리체계 인증")
                 .build());
 
-        Control control = controlRepository.save(Control.builder()
+        // v14 Phase 5-14f: 패턴 A — 평면 leaf depth=1
+        ControlNode control = controlNodeRepository.save(ControlNode.builder()
                 .framework(framework)
+                .parent(null)
+                .nodeType(NodeType.control)
                 .code("1.1.1")
-                .domain("관리체계 수립")
                 .name("정보보호 정책 수립")
+                .displayOrder(0)
+                .depth(1)
                 .build());
 
         // evidence_types — file_type 필드 없이 생성
@@ -175,7 +181,9 @@ class SchemaValidationTest {
                 .build());
 
         // Then
-        assertThat(controlRepository.findByFrameworkIdOrderByCodeAsc(framework.getId())).hasSize(1);
+        // v14 Phase 5-14f: legacy controls 0건 (5-14b 부터 INSERT 차단), control_nodes leaf 1건 검증
+        assertThat(controlNodeRepository.findByFrameworkIdAndNodeTypeOrderByDisplayOrderAsc(
+                framework.getId(), NodeType.control)).hasSize(1);
         assertThat(evidenceTypeRepository.findByControlId(control.getId())).hasSize(2);
 
         List<EvidenceFile> files = evidenceFileRepository
@@ -204,8 +212,11 @@ class SchemaValidationTest {
     @Transactional
     void testCollectionJobExecution() {
         Framework fw = frameworkRepository.save(Framework.builder().name("테스트").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("T-01").name("테스트 항목").build());
+        // v14 Phase 5-14f: 패턴 A — 평면 leaf
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("T-01").name("테스트 항목")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("테스트 증빙").build());
 
@@ -476,8 +487,11 @@ class SchemaValidationTest {
 
         Framework fw = frameworkRepository.save(Framework.builder()
                 .name("ISMS-P 2026").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("2.2.1").name("임직원 교육").build());
+        // v14 Phase 5-14f: 패턴 A — 평면 leaf
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("2.2.1").name("임직원 교육")
+                .displayOrder(0).depth(1).build());
 
         // 담당자·마감일 포함 생성
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
@@ -531,8 +545,11 @@ class SchemaValidationTest {
 
         Framework fw = frameworkRepository.save(Framework.builder()
                 .name("ISMS-P 2026 승인테스트").build());
-        Control ctrl = controlRepository.save(Control.builder()
-                .framework(fw).code("2.2.1").name("임직원 교육").build());
+        // v14 Phase 5-14f: 패턴 A — 평면 leaf
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("2.2.1").name("임직원 교육")
+                .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(ctrl).name("교육 수료증").ownerUser(hrOwner)
                 .build());

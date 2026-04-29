@@ -23,15 +23,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Phase 5-9 — Control 목록 API 의 pendingReviewCount 집계 검증
  *
- * <h3>검증 항목</h3>
+ * <h3>v14 Phase 5-14f 회귀 픽스 (패턴 A — 평면 leaf depth=1)</h3>
+ * <p>{@code Control.builder()} → {@code ControlNode.builder().nodeType(NodeType.control)
+ * .displayOrder(0).depth(1).build()}. {@link EvidenceType#getControl()} 의 타입이
+ * {@link ControlNode} 로 변경되어 builder 의 {@code .control(leaf)} 호출 자연 매칭.</p>
+ *
+ * <h3>검증 항목 (의미 보존)</h3>
  * <ul>
  *   <li>GET /api/v1/frameworks/{fwId}/controls 응답에 pendingReviewCount 포함</li>
  *   <li>Control 간 집계 분리 — A control 의 pending 이 B control 에 누적되지 않음</li>
  *   <li>pending 아닌 상태(approved / rejected / auto_approved)는 집계 제외</li>
  *   <li>빈 Control / 파일 0개인 Control → pendingReviewCount=0</li>
  * </ul>
- *
- * <p>FrameworkListTest 와 동일한 스타일의 데이터 빌드 + 어설션.</p>
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -46,7 +49,8 @@ class ControlListPendingTest {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
-    @Autowired private ControlRepository controlRepository;
+    @Autowired private ControlNodeRepository controlNodeRepository;   // ← 5-14f
+    @Autowired private ControlRepository controlRepository;           // legacy cleanup 용
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
@@ -59,6 +63,7 @@ class ControlListPendingTest {
         evidenceFileRepository.deleteAll();
         collectionJobRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
+        controlNodeRepository.deleteAll();   // ← 5-14f
         controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
@@ -81,8 +86,7 @@ class ControlListPendingTest {
     @Order(1)
     @DisplayName("[Empty] 파일 없는 Control → pendingReviewCount=0")
     void testEmptyControlHasZeroPending() throws Exception {
-        controlRepository.save(Control.builder()
-                .framework(framework).code("X-1").name("빈 통제").build());
+        createLeaf(framework, "X-1", "빈 통제");
 
         mockMvc.perform(get("/api/v1/frameworks/" + framework.getId() + "/controls")
                         .header("Authorization", "Bearer " + adminToken))
@@ -101,10 +105,8 @@ class ControlListPendingTest {
     @Order(2)
     @DisplayName("[Isolation] Control A 에 pending 2건, Control B 에 0건 → 서로 격리")
     void testPendingIsolatedPerControl() throws Exception {
-        Control a = controlRepository.save(Control.builder()
-                .framework(framework).code("A-1").name("통제 A").build());
-        Control b = controlRepository.save(Control.builder()
-                .framework(framework).code("B-1").name("통제 B").build());
+        ControlNode a = createLeaf(framework, "A-1", "통제 A");
+        ControlNode b = createLeaf(framework, "B-1", "통제 B");
 
         EvidenceType etA = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(a).name("증빙 A").build());
@@ -132,8 +134,7 @@ class ControlListPendingTest {
     @Order(3)
     @DisplayName("[Filter] approved/rejected/auto_approved 는 pendingReviewCount 에서 제외")
     void testOnlyPendingCounted() throws Exception {
-        Control c = controlRepository.save(Control.builder()
-                .framework(framework).code("C-1").name("혼합 통제").build());
+        ControlNode c = createLeaf(framework, "C-1", "혼합 통제");
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(c).name("증빙").build());
 
@@ -159,8 +160,7 @@ class ControlListPendingTest {
     @Order(4)
     @DisplayName("[Aggregation] 같은 Control 의 서로 다른 증빙 유형 pending 은 합산")
     void testPendingAggregatedAcrossEvidenceTypes() throws Exception {
-        Control c = controlRepository.save(Control.builder()
-                .framework(framework).code("D-1").name("다중증빙 통제").build());
+        ControlNode c = createLeaf(framework, "D-1", "다중증빙 통제");
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(c).name("증빙 1").build());
         EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
@@ -190,16 +190,14 @@ class ControlListPendingTest {
     @DisplayName("[Scope] 다른 Framework 의 pending 은 무관")
     void testPendingScopedByFramework() throws Exception {
         // 현재 framework 에 Control E, pending 1건
-        Control e = controlRepository.save(Control.builder()
-                .framework(framework).code("E-1").name("통제 E").build());
+        ControlNode e = createLeaf(framework, "E-1", "통제 E");
         EvidenceType etE = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(e).name("증빙 E").build());
         savePending(etE, "e.pdf", 1);
 
         // 다른 Framework 에 Control F, pending 5건 (영향 없어야 함)
         Framework otherFw = frameworkRepository.save(Framework.builder().name("Other FW").build());
-        Control f = controlRepository.save(Control.builder()
-                .framework(otherFw).code("F-1").name("통제 F").build());
+        ControlNode f = createLeaf(otherFw, "F-1", "통제 F");
         EvidenceType etF = evidenceTypeRepository.save(EvidenceType.builder()
                 .control(f).name("증빙 F").build());
         for (int i = 1; i <= 5; i++) {
@@ -216,8 +214,18 @@ class ControlListPendingTest {
     }
 
     // ==================================================================
-    // helpers
+    // helpers — v14 Phase 5-14f
     // ==================================================================
+
+    /**
+     * v14 Phase 5-14f — 평면 ControlNode leaf 생성 (패턴 A: depth=1, displayOrder 자동 0).
+     * 같은 Framework 안의 leaf 가 모두 root 직속 (parent=null) 이라 displayOrder 충돌 없음.
+     */
+    private ControlNode createLeaf(Framework fw, String code, String name) {
+        return controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code(code).name(name).displayOrder(0).depth(1).build());
+    }
 
     private EvidenceFile savePending(EvidenceType et, String name, int version) {
         return saveWithStatus(et, name, version, ReviewStatus.pending);
