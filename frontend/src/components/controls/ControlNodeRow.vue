@@ -282,6 +282,14 @@ const dialogExpanded = computed<boolean>(() => {
   return tree.dialogIsExpanded(dialogNode.value)
 })
 
+// v15.1 5-15a 후속-2 — hybrid: leaf 도 자식 보유 가능. chev 노출 + 자식 재귀 가드.
+const leafDialogHasChildren = computed<boolean>(() => {
+  if (props.mode !== 'dialog') return false
+  if (props.node.nodeType !== 'control') return false
+  const n = props.node as UnifiedNode
+  return (n.children?.length ?? 0) > 0
+})
+
 function dialogHandleToggle(): void {
   if (!tree || !dialogNode.value) return
   tree.dialogToggleExpand(dialogNode.value)
@@ -342,14 +350,16 @@ async function dialogHandleEnterKey(): Promise<void> {
 async function dialogHandleTabKey(e: KeyboardEvent): Promise<void> {
   if (!tree || !dialogNode.value) return
   e.preventDefault()
-  if (dialogNode.value._kind === 'existing') {
-    emit('tab-on-existing', dialogNode.value)
-    return
-  }
-  const result = tree.convertNodeType(dialogNode.value)
-  if (result.ok) {
+  // v15.1 5-15a 후속-2 — hybrid Tab 의미 변경:
+  // existing/draft + leaf/category 구분 없이 "자식 통제 draft 추가".
+  // 변환 개념 폐기 (convertNodeType 은 BC layer 로만 보존, @deprecated).
+  // tab-on-existing emit 폐기 (UnifiedControlsDialog 의 핸들러는 noop).
+  try {
+    const childDraft = tree.createChildControl(dialogNode.value)
     await nextTick()
-    focusDraftByTempId(result.childDraft.tempId)
+    focusDraftByTempId(childDraft.tempId)
+  } catch (err) {
+    console.warn('[ControlNodeRow] Tab createChildControl failed', err)
   }
 }
 
@@ -776,12 +786,25 @@ function forwardRequestDelete(n: UnifiedNode): void {
       </div>
     </div>
 
-    <!-- leaf 행 -->
+    <!-- leaf 행 (v15.1 5-15a 후속-2 — hybrid 분기) -->
     <div
       v-else
       class="row-dialog control-row-dialog group"
-      :class="{ 'is-draft-row': isDraft }"
-      :style="{ paddingLeft: `${indentPx + 20}px` }">
+      :class="{ 'is-draft-row': isDraft, 'has-children-leaf': leafDialogHasChildren }"
+      :style="{ paddingLeft: `${indentPx + (leafDialogHasChildren ? 0 : 20)}px` }">
+      <!--
+        v15.1 5-15a 후속-2 — hybrid leaf 좌측 chevron.
+        leaf 가 자식 보유 시 노출. 클릭 = dialog 펼침 토글.
+      -->
+      <button
+        v-if="leafDialogHasChildren"
+        type="button"
+        class="chevron-btn"
+        :aria-label="dialogExpanded ? '자식 접기' : '자식 펼치기'"
+        @click="dialogHandleToggle">
+        <i :class="['pi text-xs text-gray-400 transition-transform duration-150',
+          dialogExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
+      </button>
       <input
         ref="codeInputRef"
         class="row-code-input ctrl-code-input"
@@ -815,9 +838,27 @@ function forwardRequestDelete(n: UnifiedNode): void {
         class="error-dot"
         :title="dialogValidationErrorTitle"></span>
       <div class="row-actions">
+        <!-- v15.1 5-15a 후속-2 — hybrid: leaf 도 자식 추가 가능 (Q2=B) -->
+        <button type="button" class="row-iconbtn" title="자식 분류 추가"
+          @click="dialogHandleAddChildCategory">
+          <i class="pi pi-folder-plus"></i>
+        </button>
+        <button type="button" class="row-iconbtn" title="자식 통제 추가"
+          @click="dialogHandleAddChildControl">
+          <i class="pi pi-plus"></i>
+        </button>
+        <!-- 기존 액션 (형제 통제 추가 / 이동 / 삭제) -->
         <button type="button" class="row-iconbtn" title="형제 통제 추가"
           @click="dialogHandleAddSiblingControl">
-          <i class="pi pi-plus"></i>
+          <i class="pi pi-clone"></i>
+        </button>
+        <button
+          v-if="dialogNode?._kind === 'existing'"
+          type="button"
+          class="row-iconbtn"
+          title="다른 위치로 이동"
+          @click="dialogHandleRequestMove">
+          <i class="pi pi-arrows-alt"></i>
         </button>
         <button type="button" class="row-iconbtn row-iconbtn-danger" title="삭제"
           @click="dialogHandleRequestDelete">
@@ -826,8 +867,13 @@ function forwardRequestDelete(n: UnifiedNode): void {
       </div>
     </div>
 
-    <!-- 자식 재귀 (dialog) -->
-    <div v-if="node.nodeType === 'category' && dialogExpanded">
+    <!--
+      자식 재귀 (dialog) — v15.1 5-15a 후속-2: hybrid 모든 노드 자식 재귀.
+      카테고리는 펼침 시 자식 0 이어도 add-row 노출 (기존 동작 보존).
+      hybrid leaf 는 chev 노출 (자식 1+) + 펼침 시 add-row 동일.
+      자식 0 leaf 는 chev 미노출 → 토글 불가 → dialogExpanded === false 자연 보장.
+    -->
+    <div v-if="dialogExpanded">
       <ControlNodeRow
         v-for="child in (node.children as UnifiedNode[])"
         :key="(child as UnifiedNode)._key"

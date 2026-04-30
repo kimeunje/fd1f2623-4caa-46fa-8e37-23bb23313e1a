@@ -833,10 +833,12 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     return maxOrder + 1
   }
 
-  // ─────────────────────── 5-14h 액션 — 추가 ───────────────────────
+  // ─────────────────────── 5-14h 액션 — 추가 (v15.1 hybrid) ───────────────
   function createChildControl(parent: UnifiedNode): DraftNode {
-    if (parent.nodeType !== 'category') {
-      throw new Error('자식 통제는 분류 노드에만 추가할 수 있습니다')
+    // v15.1 5-15a 후속-2 — hybrid: leaf parent 도 허용 (parent.nodeType 가드 제거).
+    // depth 가드는 보존 — createChildCategory 와 정합.
+    if (parent.depth >= 10) {
+      throw new Error('최대 깊이(10) 를 초과할 수 없습니다')
     }
     const tempId = nextTempId()
     const draft: DraftNode = {
@@ -864,9 +866,7 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
   }
 
   function createChildCategory(parent: UnifiedNode): DraftNode {
-    if (parent.nodeType !== 'category') {
-      throw new Error('자식 분류는 분류 노드에만 추가할 수 있습니다')
-    }
+    // v15.1 5-15a 후속-2 — hybrid: leaf parent 도 허용 (parent.nodeType 가드 제거).
     if (parent.depth >= 10) {
       throw new Error('최대 깊이(10) 를 초과할 수 없습니다')
     }
@@ -1043,8 +1043,8 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     collectDesc(node)
     const targets: UnifiedNode[] = []
     const visit = (n: UnifiedNode) => {
+      // v15.1 5-15a 후속-2 — hybrid: leaf 도 target 허용 (n.nodeType==='category' 가드 제거).
       if (
-        n.nodeType === 'category' &&
         n._kind === 'existing' &&
         !forbidden.has(n.id) &&
         n.depth + 1 + getMaxDescendantDepth(node) <= 10
@@ -1059,9 +1059,7 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
 
   function moveNode(node: UnifiedNode, newParent: UnifiedNode): void {
     if (node._kind !== 'existing' || newParent._kind !== 'existing') return
-    if (newParent.nodeType !== 'category') {
-      throw new Error('이동 대상은 분류 노드만 가능합니다')
-    }
+    // v15.1 5-15a 후속-2 — hybrid: leaf 도 newParent 허용 (newParent.nodeType 가드 제거).
     const newDisplayOrder = nextSiblingDisplayOrder(newParent)
     const newDepth = newParent.depth + 1
     if (newDepth + getMaxDescendantDepth(node) > 10) {
@@ -1076,25 +1074,24 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     bumpDirty()
   }
 
-  // ─────────────────────── 5-14h Tab 변환 ───────────────────────
+  // ─────────────────────── 5-14h Tab → v15.1 의미 단순화 ───────────────
+  /**
+   * v15.1 5-15a 후속-2 — hybrid 모델 후 변환 개념 무의미.
+   * BC: 시그니처 보존, "자식 통제 draft 추가" 로 의미 단순화.
+   * 호출처 (`dialogHandleTabKey`) 는 직접 `createChildControl` 호출 권장.
+   *
+   * @deprecated v15.1 — 본 함수는 호환 layer. 신규 코드는 `createChildControl` 사용.
+   */
   function convertNodeType(node: UnifiedNode): ConvertResult {
-    if (node._kind === 'existing') {
-      return { ok: false, reason: 'requires_save_first' }
-    }
-    if (!node.tempId) return { ok: false, reason: 'requires_save_first' }
-    const draft = dirtyChanges.created.get(node.tempId)
-    if (!draft) return { ok: false, reason: 'requires_save_first' }
-    if (draft.nodeType === 'category') {
-      const childDraft = createChildControl(node)
-      return { ok: true, childDraft }
-    }
-    if (draft.depth >= 10) {
+    if (node.depth >= 10) {
       return { ok: false, reason: 'depth_exceeded' }
     }
-    draft.nodeType = 'category'
-    bumpDirty()
-    const childDraft = createChildControl(node)
-    return { ok: true, childDraft }
+    try {
+      const childDraft = createChildControl(node)
+      return { ok: true, childDraft }
+    } catch (_err) {
+      return { ok: false, reason: 'depth_exceeded' }
+    }
   }
 
   // ─────────────────────── 5-14h 코드 변경 영향 ───────────────────────

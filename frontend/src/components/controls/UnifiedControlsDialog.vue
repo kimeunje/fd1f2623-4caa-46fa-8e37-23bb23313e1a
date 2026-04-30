@@ -241,17 +241,13 @@ function handleRequestDelete(node: UnifiedNode): void {
 }
 
 // ============================================================================
-// Tab on existing
+// Tab on existing — v15.1 5-15a 후속-2:
+// Tab 이 자식 통제 draft 추가로 의미 변경. ControlNodeRow 가 직접 처리하므로
+// 부모는 noop. emit 시그니처 + binding 은 BC 보존 (5-15b 또는 v15.x 일괄 정리).
+// tabToast / setTimeout / template 의 toast div 폐기.
 // ============================================================================
-const tabToast = ref<string | null>(null)
-let tabToastSeq = 0
 function handleTabOnExisting(_node: UnifiedNode): void {
-  tabToastSeq++
-  const seq = tabToastSeq
-  tabToast.value = '분류 변환은 먼저 통제를 삭제 후 분류로 다시 추가해 주세요. (자동 변환은 v2 예정)'
-  setTimeout(() => {
-    if (seq === tabToastSeq) tabToast.value = null
-  }, 4000)
+  // noop. v15.0 의 toast 안내 (변환 v2 예정) 는 hybrid 채택으로 obsolete.
 }
 
 // ============================================================================
@@ -365,9 +361,7 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
         <div v-if="validationToast" class="dialog-toast dialog-toast-error">
           <i class="pi pi-exclamation-triangle"></i> {{ validationToast }}
         </div>
-        <div v-if="tabToast" class="dialog-toast dialog-toast-info">
-          <i class="pi pi-info-circle"></i> {{ tabToast }}
-        </div>
+        <!-- v15.1 5-15a 후속-2 — tabToast 폐기 (Tab 의미 변경) -->
 
         <!-- ─────────── 검색 ─────────── -->
         <div class="dialog-search">

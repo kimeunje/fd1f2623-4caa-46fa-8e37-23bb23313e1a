@@ -61,7 +61,8 @@ function handleCancel(): void { emit('cancel') }
         <div class="move-body">
           <p class="move-hint">이동할 위치를 선택하세요</p>
           <div v-if="targets.length === 0" class="move-empty">
-            이동 가능한 분류가 없습니다.
+            <!-- v15.1 5-15a 후속-2: hybrid 후 leaf 도 target. "분류" → "위치" -->
+            이동 가능한 위치가 없습니다.
             <br />
             <span class="empty-sub">
               (자기 자신/자손은 제외되고, 깊이 10 을 초과하는 위치도 제외됩니다)
