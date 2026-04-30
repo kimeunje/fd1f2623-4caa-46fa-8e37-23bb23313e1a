@@ -47,6 +47,14 @@ interface Props {
   detailLoading?: boolean
   dimmed?: boolean
   isRoot?: boolean
+
+  // ─── view 모드 props (Phase 5-14i 추가, P12/P14) ───
+  /** P14 (5-14i) — 텍스트 → match-highlight 감싼 HTML 변환. 미전달 시 plain text. */
+  highlightFn?: (text: string) => string
+  /** P12 (5-14i) — categoryId → 자손 매치 카운트. 검색 활성 + count > 0 일 때 amber 핍 노출. */
+  matchCountByCategoryId?: Map<number, number>
+  /** 검색 또는 필터 활성 여부 — 매치 카운트 핍 노출 가드. */
+  searchActive?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -56,6 +64,9 @@ const props = withDefaults(defineProps<Props>(), {
   detailLoading: false,
   dimmed: false,
   isRoot: false,
+  highlightFn: undefined,
+  matchCountByCategoryId: () => new Map<number, number>(),
+  searchActive: false,
 })
 
 const emit = defineEmits<{
@@ -79,18 +90,34 @@ const emit = defineEmits<{
 const tree = inject<ControlTreeApi | null>(CONTROL_TREE_INJECTION_KEY, null)
 
 // ============================================================================
-// 공통 — depth 별 indent + font weight
+// 공통 — depth 별 indent + font weight (Phase 5-14i 폴리싱)
 // ============================================================================
-const indentPx = computed<number>(() => 16 + 20 * (props.node.depth - 1))
+/**
+ * P1 (5-14i v2) — indent scale 16 + 20*(d-1) → 14 + 18*(d-1) px.
+ * depth 5/6 에서 우측 컬럼 압박 완화. v6 mockup 의 .node.cat-N / .leaf.lv-N padding-left
+ * 와 정합 (cat-1=14, cat-2=32, cat-3=50, cat-4=68, cat-5=86, cat-6=104).
+ */
+const indentPx = computed<number>(() => 14 + 18 * (props.node.depth - 1))
 
+/**
+ * P5 (5-14i v2) — depth typography. weight + color 동시 변화로 트리 깊이 시각화.
+ * 카테고리 (node-cat-name) 만 적용, leaf 는 leaf-name 으로 단일 톤.
+ *
+ *   depth=1 → 14px / 700 / #111827
+ *   depth=2 → 13px / 600 / #111827
+ *   depth=3 → 12.5px / 500 / #374151
+ *   depth=4 → 12px / 500 / #4b5563
+ *   depth=5 → 11.5px / 500 / #6b7280
+ *   depth=6 → 11px / 500 / #6b7280
+ */
 const nameWeightClass = computed<string>(() => {
   switch (props.node.depth) {
-    case 1: return 'text-sm font-bold'
-    case 2: return 'text-sm font-semibold'
-    case 3: return 'text-sm font-medium'
-    case 4: return 'text-[13px] font-medium'
-    case 5: return 'text-[12.5px] font-medium'
-    default: return 'text-[12px] font-medium'
+    case 1: return 'text-[14px] font-bold text-gray-900'
+    case 2: return 'text-[13px] font-semibold text-gray-900'
+    case 3: return 'text-[12.5px] font-medium text-gray-700'
+    case 4: return 'text-[12px] font-medium text-gray-600'
+    case 5: return 'text-[11.5px] font-medium text-gray-500'
+    default: return 'text-[11px] font-medium text-gray-500'
   }
 })
 
@@ -120,6 +147,8 @@ function viewLeafStatus(): '완료' | '진행중' | '미수집' {
 }
 
 const viewStatusBadgeClass = computed<string>(() => {
+  // P2 (5-14i v2): 검토 대기 행은 status 배지도 amber 톤으로 정합 (pending vs 완료/진행중/미수집 구분)
+  if (viewHasPendingReview.value) return 'badge-pending'
   switch (viewLeafStatus()) {
     case '완료': return 'bg-green-100 text-green-700'
     case '진행중': return 'bg-blue-100 text-blue-700'
@@ -138,6 +167,33 @@ const viewProgressPercent = computed<number>(() => {
 const viewHasPendingReview = computed<boolean>(() =>
   props.node.nodeType === 'control' && (props.node.pendingReviewCount ?? 0) > 0
 )
+
+// ─── Phase 5-14i (P12, P14) — 검색 매치 표시 ───
+//
+// P14: highlightFn 이 전달되면 substring → amber 하이라이트 HTML 변환.
+//      미전달 시 (또는 검색어 없을 때) escape 만 적용된 plain text 반환.
+// P12: 카테고리 노드는 자손 매치 카운트가 1+ 이면 amber 핍 (`매치 N`) 노출.
+//      leaf 는 핍 없음 (자기 자신이 매치 표시).
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] ?? c))
+}
+
+const renderCode = computed<string>(() => {
+  if (props.highlightFn) return props.highlightFn(props.node.code)
+  return escapeHtml(props.node.code)
+})
+
+const renderName = computed<string>(() => {
+  if (props.highlightFn) return props.highlightFn(props.node.name)
+  return escapeHtml(props.node.name)
+})
+
+const catMatchCount = computed<number | null>(() => {
+  if (!props.searchActive) return null
+  if (props.node.nodeType !== 'category') return null
+  const c = props.matchCountByCategoryId.get(props.node.id) ?? 0
+  return c > 0 ? c : null
+})
 
 function viewOnGoEt(et: EvidenceTypeResponse): void {
   emit('go-evidence-type', et.id, props.node.id)
@@ -359,19 +415,32 @@ function forwardRequestDelete(n: UnifiedNode): void {
   <!-- 5-14g view 모드                                                          -->
   <!-- ════════════════════════════════════════════════════════════════════════ -->
   <div v-if="mode === 'view'" :class="['control-node-row-view', { dimmed }]">
-    <!-- 카테고리 행 -->
+    <!--
+      카테고리 행 — Phase 5-14i 폴리싱 (P5/P12/P14):
+        P5: depth 별 font weight + color 동시 변화 (nameWeightClass).
+        P14: highlightFn 으로 검색 매치 substring amber 하이라이트 (HTML 렌더).
+        P12: searchActive + matchCountByCategoryId.get(node.id) > 0 → amber 핍 노출.
+    -->
     <div
       v-if="node.nodeType === 'category'"
-      class="row-view category-row-view group cursor-pointer hover:bg-gray-50"
+      class="row-view category-row group cursor-pointer hover:bg-gray-50"
       :style="{ paddingLeft: `${indentPx}px` }"
       @click="viewHandleToggle">
-      <i :class="['pi text-xs text-gray-400 transition-transform duration-150 mr-2',
+      <i :class="['pi text-[11px] text-gray-400 transition-transform duration-150 mr-1.5 shrink-0',
         viewExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
-      <span class="cat-code-view font-mono text-[11px] text-gray-500 tabular-nums mr-2">
-        {{ node.code }}
-      </span>
-      <span :class="['cat-name-view text-gray-900 flex-1 truncate', nameWeightClass]">
-        {{ node.name }}
+      <span
+        class="cat-code-view font-mono text-[11px] text-gray-400 tabular-nums mr-2 shrink-0"
+        v-html="renderCode"
+      ></span>
+      <span
+        :class="['cat-name-view flex-1 truncate', nameWeightClass]"
+        v-html="renderName"
+      ></span>
+      <span
+        v-if="catMatchCount !== null"
+        class="match-count-pip"
+        aria-label="매치 카운트">
+        매치 {{ catMatchCount }}
       </span>
       <span class="text-[11px] text-gray-400 tabular-nums shrink-0 ml-2">
         통제
@@ -379,22 +448,30 @@ function forwardRequestDelete(n: UnifiedNode): void {
       </span>
     </div>
 
-    <!-- leaf 행 -->
+    <!--
+      leaf 행 — Phase 5-14i 폴리싱 (P2/P3/P10/P14):
+        P2: pending 우선 amber, 펼침 우선 blue. 좌측 3px 바 (CSS ::before).
+        P3: progress bar 두께 4px (h-1) + transition .3s (duration-300).
+        P10: leaf-chev hover 색 변화 (text-gray-300 → -gray-500), expanded → blue-500.
+        P14: highlightFn 으로 코드 + 이름 substring amber 하이라이트 (v-html).
+    -->
     <div
       v-else
       :class="[
-        'row-view control-row-view group cursor-pointer hover:bg-gray-50',
-        viewHasPendingReview ? 'bg-blue-50/50 hover:bg-blue-50/70' : '',
-        isLeafExpanded ? 'bg-gray-50/50' : '',
+        'row-view leaf-row group cursor-pointer',
+        viewHasPendingReview ? 'has-pending' : '',
+        isLeafExpanded ? 'expanded' : '',
       ]"
-      :style="{ paddingLeft: `${indentPx + 20}px` }"
+      :style="{ paddingLeft: `${indentPx + 16}px` }"
       @click="viewHandleToggle">
-      <span class="ctrl-code-view font-mono text-[11.5px] text-blue-600 tabular-nums w-16 shrink-0">
-        {{ node.code }}
-      </span>
-      <span class="ctrl-name-view text-sm text-gray-900 flex-1 truncate min-w-0">
-        {{ node.name }}
-      </span>
+      <span
+        class="ctrl-code-view font-mono text-[11.5px] text-blue-600 tabular-nums w-16 shrink-0"
+        v-html="renderCode"
+      ></span>
+      <span
+        class="ctrl-name-view text-[13px] text-gray-900 flex-1 truncate min-w-0"
+        v-html="renderName"
+      ></span>
       <span class="text-[11px] text-gray-500 tabular-nums w-14 text-right shrink-0">
         증빙 {{ node.evidenceTypeCount ?? 0 }}
       </span>
@@ -404,28 +481,31 @@ function forwardRequestDelete(n: UnifiedNode): void {
         </span>
         <div class="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
           <div
-            :class="['h-full rounded-full transition-all duration-200',
+            :class="['h-full rounded-full transition-all duration-300 ease-out',
               viewLeafStatus() === '완료' ? 'bg-green-500' : 'bg-blue-500']"
             :style="{ width: `${viewProgressPercent}%` }">
           </div>
         </div>
       </div>
       <span :class="[
-        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-medium shrink-0',
+        'inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium shrink-0',
         viewStatusBadgeClass,
       ]">
-        <span v-if="viewHasPendingReview" class="w-1 h-1 rounded-full bg-blue-600"></span>
-        {{ viewHasPendingReview ? `검토 ${node.pendingReviewCount ?? 0}` : viewLeafStatus() }}
+        <span v-if="viewHasPendingReview" class="pending-badge-dot"></span>
+        {{ viewHasPendingReview ? `검토 대기 ${node.pendingReviewCount ?? 0}` : viewLeafStatus() }}
       </span>
-      <i :class="['pi text-[10px] text-gray-400 ml-2',
+      <i :class="['leaf-chev pi text-[10px] ml-2 transition-all duration-150',
         isLeafExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
     </div>
 
-    <!-- leaf 펼침 패널 (evidence 카드 + 액션바) -->
+    <!--
+      leaf 펼침 패널 — Phase 5-14i 폴리싱: leaf row 가 (indentPx + 16) 이므로 펼침 패널은
+      그보다 더 안쪽 (+ 32) 으로 들여서 evidence 카드가 명확히 종속 표시.
+    -->
     <div
       v-if="isLeafExpanded && controlDetail"
-      class="leaf-expanded bg-gray-50/40 border-t border-gray-100"
-      :style="{ paddingLeft: `${indentPx + 40}px` }">
+      class="leaf-expanded bg-blue-50/40 border-t border-blue-100"
+      :style="{ paddingLeft: `${indentPx + 32}px` }">
       <div v-if="detailLoading" class="px-4 py-6 text-center text-gray-400 text-sm">
         <i class="pi pi-spin pi-spinner mr-2"></i> 로딩 중...
       </div>
@@ -485,7 +565,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
       </div>
     </div>
 
-    <!-- 자식 재귀 (view) -->
+    <!-- 자식 재귀 (view) — Stage 3 props 전달 (P12/P14) -->
     <div v-if="node.nodeType === 'category' && viewExpanded">
       <ControlNodeRow
         v-for="child in (node.children as TreeRootNode[])"
@@ -497,12 +577,28 @@ function forwardRequestDelete(n: UnifiedNode): void {
         :control-detail="controlDetail"
         :detail-loading="detailLoading"
         :dimmed="dimmed"
+        :highlight-fn="highlightFn"
+        :match-count-by-category-id="matchCountByCategoryId"
+        :search-active="searchActive"
         @toggle-expand="forwardToggle"
         @go-evidence-type="forwardGoEt"
         @add-evidence-type="forwardAddEt"
         @zip-download="forwardZip"
         @delete-evidence-type="forwardDeleteEt"
       />
+      <!--
+        P6 (5-14i v2) — empty CTA. category 가 자식 0 일 때 "통제 항목 없음" 점선 행.
+        분류 안 통제 0 인 신규 framework / import 직후 발견성 향상.
+      -->
+      <div
+        v-if="(node.children as TreeRootNode[]).length === 0"
+        class="empty-cta-row"
+        :style="{ paddingLeft: `${indentPx + 16}px` }">
+        <i class="pi pi-info-circle text-[10px] text-gray-300 mr-1.5"></i>
+        <span>이 분류에 통제 항목이 없습니다 ·</span>
+        <strong class="text-blue-500 ml-1">[통제 관리]</strong>
+        <span class="ml-1">에서 추가</span>
+      </div>
     </div>
   </div>
 
@@ -673,13 +769,22 @@ function forwardRequestDelete(n: UnifiedNode): void {
 </template>
 
 <style scoped>
-/* ─────────────────────── view 모드 ─────────────────────── */
+/* ─────────────────────── view 모드 (Phase 5-14i 폴리싱 적용) ─────────────────────── */
 .control-node-row-view {
   position: relative;
 }
 
+/*
+ * P13 (5-14i v3) — 필터/검색 비매치 dim 처리.
+ *   spec §3.3.1.4 line 423 "회색 처리, 숨김 X" 정합.
+ *   v6 mockup: opacity 0.35 → hover 0.6.
+ */
 .control-node-row-view.dimmed {
-  opacity: 0.4;
+  opacity: 0.35;
+  transition: opacity 0.15s;
+}
+.control-node-row-view.dimmed:hover {
+  opacity: 0.6;
 }
 
 .row-view {
@@ -689,7 +794,132 @@ function forwardRequestDelete(n: UnifiedNode): void {
   padding: 8px 16px 8px 0;
   font-size: 13px;
   user-select: none;
-  border-bottom: 1px solid rgb(243 244 246);
+  border-bottom: 1px solid rgb(249 250 251);
+  position: relative;
+  transition: background-color 0.12s;
+}
+
+.row-view.category-row {
+  border-bottom-color: rgb(243 244 246);
+}
+
+/*
+ * P2 (5-14i v2) — pending vs expanded 색 분리 + 좌측 3px bar.
+ *   pending  → bg amber-50 (#fffbeb) + 좌 3px amber-400 (#fbbf24)
+ *   expanded → bg blue-50  (#eff6ff) + 좌 3px blue-500  (#3b82f6)
+ *   pending + expanded 동시 → expanded 우선 (블루 톤)
+ */
+.row-view.leaf-row.has-pending {
+  background-color: rgb(255 251 235); /* amber-50 */
+}
+.row-view.leaf-row.has-pending:hover {
+  background-color: rgb(254 246 224);
+}
+.row-view.leaf-row.has-pending::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: rgb(251 191 36); /* amber-400 */
+}
+
+.row-view.leaf-row.expanded {
+  background-color: rgb(239 246 255); /* blue-50 */
+}
+.row-view.leaf-row.expanded:hover {
+  background-color: rgb(228 240 255);
+}
+.row-view.leaf-row.expanded::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: rgb(59 130 246); /* blue-500 */
+}
+
+.row-view.leaf-row:not(.has-pending):not(.expanded):hover {
+  background-color: rgb(249 250 251);
+}
+
+/*
+ * P2 (5-14i v2) — 검토 대기 status 배지 amber 톤 (pending 강조).
+ *   v6 mockup .badge-pending: bg amber-100 / color amber-700 / weight 600 / dot amber-500.
+ */
+.row-view .badge-pending {
+  background-color: rgb(254 243 199); /* amber-100 */
+  color: rgb(180 83 9);                /* amber-700 */
+  font-weight: 600;
+}
+.row-view .pending-badge-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background-color: rgb(245 158 11); /* amber-500 */
+  flex-shrink: 0;
+}
+
+/*
+ * P10 (5-14i v2) — leaf chevron hover 색 강화 + expanded 시 blue.
+ *   default: gray-300 / hover: gray-500 / expanded: blue-500 + rotate(90deg) (이미 pi-chevron-down 으로 표현)
+ */
+.row-view.leaf-row .leaf-chev {
+  color: rgb(209 213 219); /* gray-300 */
+}
+.row-view.leaf-row:hover .leaf-chev {
+  color: rgb(107 114 128); /* gray-500 */
+}
+.row-view.leaf-row.expanded .leaf-chev {
+  color: rgb(59 130 246); /* blue-500 */
+}
+
+/* ─────────────────────── P14 (5-14i) — 검색 매치 substring 하이라이트 ─────────────────────── */
+/* highlightFn 이 v-html 로 삽입한 <span class="match-highlight"> 에 적용. scoped 가
+   v-html 내용에는 자동 적용되지 않으므로 :deep() 으로 강제. */
+.row-view :deep(.match-highlight) {
+  background-color: rgb(254 243 199); /* amber-100 */
+  color: rgb(146 64 14);              /* amber-800 */
+  padding: 1px 2px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+/* ─────────────────────── P12 (5-14i) — 카테고리 매치 카운트 핍 ─────────────────────── */
+.match-count-pip {
+  background-color: rgb(254 243 199); /* amber-100 */
+  color: rgb(180 83 9);                /* amber-700 */
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  margin-left: 8px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─────────────────────── P19 (5-14i) — 첫 매치 focus-flash 애니메이션 ─────────────────────── */
+@keyframes focusFlash {
+  0%   { box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0); background-color: transparent; }
+  20%  { box-shadow: inset 0 0 0 2px rgb(251 191 36); background-color: rgb(255 251 235); }
+  100% { box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0); background-color: transparent; }
+}
+.row-view.focus-flash {
+  animation: focusFlash 1.4s ease-out;
+}
+
+/* ─────────────────────── P6 (5-14i) — empty CTA (분류 안 통제 0) ─────────────────────── */
+.empty-cta-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px dashed rgb(229 231 235);
+  font-size: 12px;
+  color: rgb(107 114 128);
+  cursor: default;
+  background-color: rgb(250 251 252);
 }
 
 .leaf-expanded {

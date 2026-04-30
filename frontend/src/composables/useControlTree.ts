@@ -378,6 +378,160 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     expandedIds.value = next
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // Phase 5-14i 폴리싱 — 페이지 본문 검색 인터랙션 (P12, P14, P19, P21)
+  //
+  // 본 영역은 5-14g 인터페이스 (searchText, statusFilter, expandedIds 등) 와
+  // 5-14h 의 다이얼로그 분리 (dialogSearch 등) 모두 보존하면서 페이지 본문 검색
+  // 의 UX 만 보강합니다. 다이얼로그 검색은 영향 없음.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /**
+   * P14 (5-14i v3) — 검색 debounce 200ms.
+   *
+   * `searchText` 는 input 즉시 갱신되지만, 무거운 매치/하이라이트는
+   * `debouncedSearchText` 를 watch 한 외부 측 (ControlsView) 이 처리.
+   * spec §3.3.1.5 line 547 (debounce 200ms) 정합.
+   *
+   * 사용 예 (ControlsView):
+   *   watch(tree.debouncedSearchText, () => tree.applySearchSideEffects())
+   */
+  const debouncedSearchText = ref('')
+  let _searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  // searchText 변경 → 200ms 후 debouncedSearchText 갱신
+  // (composable 안에서 직접 watch 하기보다 변경시점 hook 으로 단순화)
+  function setSearchText(v: string): void {
+    searchText.value = v
+    if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer)
+    _searchDebounceTimer = setTimeout(() => {
+      debouncedSearchText.value = v
+      applySearchSideEffects()
+    }, 200)
+  }
+
+  /**
+   * P21 (5-14i v5) — 검색 입력 시 펼친 leaf-expand 패널 자동 해제.
+   *
+   * 페이지 본문에서 사용자가 펼쳐둔 leaf 의 evidence 카드 패널은 검색 결과를
+   * 가릴 수 있으므로 검색어 입력 시점에 자동 닫힘. 자식 분기 (effectiveExpandedIds /
+   * matchedAncestorIds 자동 펼침) 와 시너지.
+   *
+   * ControlsView 가 expandedLeafId / controlDetail 을 자체 관리 (composable 외부) 하므로
+   * 본 helper 는 콜백 등록 패턴으로 외부에 위임.
+   */
+  type SearchHook = () => void
+  const _searchHooks = new Set<SearchHook>()
+  function onSearchApplied(hook: SearchHook): () => void {
+    _searchHooks.add(hook)
+    return () => _searchHooks.delete(hook)
+  }
+
+  /**
+   * 검색 적용 사이드 이펙트 — debounce 발화 시점에 호출.
+   * P21 의 expandedLeafId 해제, P19 의 focusFirstMatch 실행 trigger.
+   */
+  function applySearchSideEffects(): void {
+    for (const h of _searchHooks) h()
+  }
+
+  /**
+   * P12 (5-14i v3) — 카테고리별 매치 카운트.
+   *
+   * 검색어 입력 시 각 카테고리 우측에 `매치 N` 핍 노출용. 자손 leaf 중 검색
+   * 매치 + 필터 매치 동시 충족인 leaf 의 누적 카운트.
+   *
+   * Map<categoryId, count>. 검색어 없거나 매치 0 인 카테고리는 entry 없음.
+   */
+  const matchCountByCategoryId = computed<Map<number, number>>(() => {
+    const map = new Map<number, number>()
+    if (!filterActive.value) return map
+    const parentMap = new Map<number, number | null>()
+    for (const n of flatNodes.value) parentMap.set(n.id, n.parentId)
+    for (const n of flatNodes.value) {
+      if (n.nodeType !== 'control') continue
+      if (!nodeMatchesPageSearch(n)) continue
+      if (!leafMatchesStatusFilter(n)) continue
+      // 모든 조상 카테고리에 +1
+      let cursor = parentMap.get(n.id) ?? null
+      while (cursor !== null) {
+        map.set(cursor, (map.get(cursor) ?? 0) + 1)
+        cursor = parentMap.get(cursor) ?? null
+      }
+    }
+    return map
+  })
+
+  /**
+   * P14 (5-14i v3) — 검색 매치 substring 하이라이트 헬퍼.
+   *
+   * 텍스트 안 첫 매치만 amber 하이라이트로 감싼 HTML 반환. 일치 없으면 escape 만.
+   * v6 mockup 의 .match-highlight 클래스 사용 (ControlNodeRow.vue 에서 정의).
+   *
+   * XSS 방지: text 의 `& < >` 만 entity escape, query 는 lower-case 매치만 사용.
+   */
+  function highlightMatch(text: string, queryRaw?: string): string {
+    const query = (queryRaw ?? debouncedSearchText.value).trim().toLowerCase()
+    const escape = (s: string) =>
+      s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] ?? c))
+    if (!query) return escape(text)
+    const lower = text.toLowerCase()
+    const idx = lower.indexOf(query)
+    if (idx === -1) return escape(text)
+    const before = escape(text.slice(0, idx))
+    const match = escape(text.slice(idx, idx + query.length))
+    const after = escape(text.slice(idx + query.length))
+    return `${before}<span class="match-highlight">${match}</span>${after}`
+  }
+
+  /**
+   * P19 (5-14i v4) — 첫 매치 항목 자동 포커스.
+   *
+   * ControlsView 가 트리 본문 root 요소를 ref 로 가리키고, debounced 검색
+   * 발화 후 호출. 첫 매치 leaf 의 row 를 scrollIntoView({block:'center'}) +
+   * 1.4s flash 애니메이션. flash CSS 는 ControlNodeRow.vue scoped style.
+   *
+   * @param container - 트리 본문 root (typeof Element). null 이면 noop.
+   */
+  function focusFirstMatchInContainer(container: Element | null): void {
+    if (!container) return
+    // 이전 flash 제거
+    container.querySelectorAll('.focus-flash').forEach((el) => {
+      el.classList.remove('focus-flash')
+    })
+    const firstHighlight = container.querySelector('.match-highlight')
+    if (!firstHighlight) return
+    const row = firstHighlight.closest('.row-view, .leaf-row, .category-row')
+    if (!(row instanceof HTMLElement)) return
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // reflow trigger for animation restart
+    void row.offsetWidth
+    row.classList.add('focus-flash')
+    setTimeout(() => row.classList.remove('focus-flash'), 1500)
+  }
+
+  /**
+   * 매치 leaf (검색 + 필터 동시 매치) 카운트 — P18 의 no-results 자동 전환 정확도용.
+   * matchedAncestorIds 와 다르게 leaf 만 카운트.
+   */
+  const visibleLeafCount = computed<number>(() => {
+    if (!filterActive.value) {
+      // 필터 비활성 시 전체 leaf 노출
+      let n = 0
+      for (const node of flatNodes.value) {
+        if (node.nodeType === 'control') n++
+      }
+      return n
+    }
+    let n = 0
+    for (const node of flatNodes.value) {
+      if (node.nodeType !== 'control') continue
+      if (!nodeMatchesPageSearch(node)) continue
+      if (!leafMatchesStatusFilter(node)) continue
+      n++
+    }
+    return n
+  })
+
   // ─────────────────────── 5-14g 로드 / 재로드 ───────────────────────
   async function load(): Promise<void> {
     const fwId = frameworkIdRef.value
@@ -1156,6 +1310,15 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     findById,
     findByTempId,
     findByKey,
+
+    // 5-14i 추가 — 페이지 본문 검색 인터랙션 (P12, P14, P19, P21)
+    debouncedSearchText,
+    setSearchText,
+    matchCountByCategoryId,
+    highlightMatch,
+    focusFirstMatchInContainer,
+    visibleLeafCount,
+    onSearchApplied,
   }
 }
 
