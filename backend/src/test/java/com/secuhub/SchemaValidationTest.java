@@ -49,7 +49,6 @@ class SchemaValidationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private FrameworkRepository frameworkRepository;
     @Autowired private ControlNodeRepository controlNodeRepository;   // v14 Phase 5-14f
-    @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
@@ -74,7 +73,6 @@ class SchemaValidationTest {
         jobExecutionRepository.deleteAllInBatch();
         evidenceTypeRepository.deleteAllInBatch();
         controlNodeRepository.deleteAllInBatch();   // v14 Phase 5-14f
-        controlRepository.deleteAllInBatch();
         frameworkRepository.deleteAllInBatch();
         vulnActionLogRepository.deleteAllInBatch();
         approvalRequestRepository.deleteAllInBatch();
@@ -410,7 +408,6 @@ class SchemaValidationTest {
     void testAllRepositoriesInjected() {
         assertThat(userRepository).isNotNull();
         assertThat(frameworkRepository).isNotNull();
-        assertThat(controlRepository).isNotNull();
         assertThat(evidenceTypeRepository).isNotNull();
         assertThat(evidenceFileRepository).isNotNull();
         assertThat(collectionJobRepository).isNotNull();

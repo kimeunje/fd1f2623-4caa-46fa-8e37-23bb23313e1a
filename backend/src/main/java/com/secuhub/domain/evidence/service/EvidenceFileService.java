@@ -6,6 +6,8 @@ import com.secuhub.config.jwt.UserPrincipal;
 import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import com.secuhub.domain.evidence.entity.*;
 import com.secuhub.domain.evidence.repository.*;
+// v15.3 5-15b — Control 엔티티 + ControlRepository 제거. ControlNodeRepository 위임.
+//                wildcard import 그대로 사용 (Control 삭제 후 ControlNode + NodeType + ControlNodeRepository 자연 매칭).
 import com.secuhub.domain.user.entity.User;
 import com.secuhub.domain.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -40,7 +42,8 @@ public class EvidenceFileService {
 
     private final EvidenceFileRepository evidenceFileRepository;
     private final EvidenceTypeRepository evidenceTypeRepository;
-    private final ControlRepository controlRepository;
+    // v15.3 5-15b — ControlRepository → ControlNodeRepository 위임 (leaf-only 의미).
+    private final ControlNodeRepository controlNodeRepository;
     private final UserRepository userRepository;
 
     @Value("${app.storage.path:./storage}")
@@ -246,8 +249,13 @@ public class EvidenceFileService {
 
     @Transactional(readOnly = true)
     public String downloadZip(Long controlId, OutputStream outputStream) {
-        Control control = controlRepository.findById(controlId)
+        // v15.3 5-15b — ControlRepository → ControlNodeRepository 위임. controlId 는 leaf control_node.id
+        // (5-14e Q1=A 정의). leaf 가 아니면 IllegalState — 자식 이슈가 아닌 호출 측 잘못.
+        ControlNode leaf = controlNodeRepository.findById(controlId)
                 .orElseThrow(() -> new ResourceNotFoundException("통제항목", controlId));
+        if (leaf.getNodeType() != NodeType.control) {
+            throw new BusinessException("통제(leaf) 만 ZIP 다운로드 가능합니다. nodeId=" + controlId);
+        }
 
         List<EvidenceType> evidenceTypes = evidenceTypeRepository.findByControlId(controlId);
 
@@ -285,14 +293,14 @@ public class EvidenceFileService {
                 zos.closeEntry();
             }
 
-            log.info("ZIP 다운로드 완료: 통제항목 {} - {}개 파일", control.getCode(), fileCount);
+            log.info("ZIP 다운로드 완료: 통제항목 {} - {}개 파일", leaf.getCode(), fileCount);
 
         } catch (IOException e) {
-            log.error("ZIP 다운로드 실패: 통제항목 {} - {}", control.getCode(), e.getMessage(), e);
+            log.error("ZIP 다운로드 실패: 통제항목 {} - {}", leaf.getCode(), e.getMessage(), e);
             throw new BusinessException("ZIP 파일 생성에 실패했습니다.");
         }
 
-        return control.getCode() + "_증빙자료.zip";
+        return leaf.getCode() + "_증빙자료.zip";
     }
 
     @Transactional(readOnly = true)
@@ -314,7 +322,9 @@ public class EvidenceFileService {
                 .mapToLong(EvidenceFile::getFileSize)
                 .sum();
 
-        long totalControls = controlRepository.count();
+        // v15.3 5-15b — controlRepository.count() → ControlNode leaf 한정 카운트.
+        // ControlNodeRepository.countByNodeType(NodeType) Spring Data JPA derived query.
+        long totalControls = controlNodeRepository.countByNodeType(NodeType.control);
         long coveredControls = evidenceFileRepository.findAll().stream()
                 .map(f -> f.getEvidenceType().getControl().getId())
                 .distinct()

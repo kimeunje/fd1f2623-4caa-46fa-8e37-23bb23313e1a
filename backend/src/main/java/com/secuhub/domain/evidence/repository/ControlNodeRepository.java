@@ -113,4 +113,11 @@ public interface ControlNodeRepository extends JpaRepository<ControlNode, Long> 
      * Framework 헤더의 "통제 N" 표시 (5-14g) 등에 사용.
      */
     long countByFrameworkIdAndNodeType(Long frameworkId, NodeType nodeType);
+
+    /**
+     * Framework 와 무관하게 nodeType 별 전역 카운트.
+     * v15.3 5-15b 부터 EvidenceFileService.getStats() 의 controlCoverage
+     * 계산용 (이전 controlRepository.count() 대체).
+     */
+    long countByNodeType(NodeType nodeType);
 }

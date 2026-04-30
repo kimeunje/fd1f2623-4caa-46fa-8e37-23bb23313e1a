@@ -91,7 +91,6 @@ class Phase515aHybridIntegrationTest {
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
     @Autowired private ControlNodeRepository controlNodeRepository;
-    @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;

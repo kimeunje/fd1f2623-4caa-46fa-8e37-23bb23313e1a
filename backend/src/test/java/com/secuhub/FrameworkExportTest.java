@@ -62,7 +62,6 @@ class FrameworkExportTest {
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
     @Autowired private ControlNodeRepository controlNodeRepository;
-    @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
@@ -75,7 +74,6 @@ class FrameworkExportTest {
         collectionJobRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
         controlNodeRepository.deleteAll();   // 자기참조 self-FK + framework FK CASCADE
-        controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
 

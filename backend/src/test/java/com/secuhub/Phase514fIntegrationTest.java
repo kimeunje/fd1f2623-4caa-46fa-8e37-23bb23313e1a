@@ -73,7 +73,6 @@ class Phase514fIntegrationTest {
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
     @Autowired private ControlNodeRepository controlNodeRepository;
-    @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
@@ -88,7 +87,6 @@ class Phase514fIntegrationTest {
         collectionJobRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
         controlNodeRepository.deleteAll();
-        controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
 

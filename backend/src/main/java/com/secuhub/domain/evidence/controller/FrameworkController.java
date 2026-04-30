@@ -3,7 +3,6 @@ package com.secuhub.domain.evidence.controller;
 import com.secuhub.common.dto.ApiResponse;
 import com.secuhub.domain.evidence.dto.ExcelImportDto;
 import com.secuhub.domain.evidence.dto.FrameworkDto;
-import com.secuhub.domain.evidence.service.ExcelImportService;
 import com.secuhub.domain.evidence.service.FrameworkExportService;
 import com.secuhub.domain.evidence.service.FrameworkService;
 import jakarta.validation.Valid;
@@ -27,7 +26,6 @@ import java.util.List;
 public class FrameworkController {
 
     private final FrameworkService frameworkService;
-    private final ExcelImportService excelImportService;
     private final FrameworkExportService frameworkExportService;  // v14 Phase 5-14e 신규
 
     @GetMapping
@@ -81,18 +79,6 @@ public class FrameworkController {
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
         frameworkService.delete(id);
         return ResponseEntity.ok(ApiResponse.ok("프레임워크가 삭제되었습니다."));
-    }
-
-    /**
-     * 통제항목 엑셀 Import
-     * POST /api/v1/frameworks/{id}/import
-     */
-    @PostMapping(value = "/{id}/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<ApiResponse<ExcelImportDto.ImportResult>> importControls(
-            @PathVariable Long id,
-            @RequestParam("file") MultipartFile file) {
-        ExcelImportDto.ImportResult result = excelImportService.importControls(id, file);
-        return ResponseEntity.ok(ApiResponse.ok("엑셀 Import가 완료되었습니다.", result));
     }
 
     /**

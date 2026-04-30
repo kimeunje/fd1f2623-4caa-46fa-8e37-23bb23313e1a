@@ -55,7 +55,6 @@ class FrameworkInheritanceTest {
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
     @Autowired private ControlNodeRepository controlNodeRepository;   // v14 Phase 5-14f
-    @Autowired private ControlRepository controlRepository;
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
@@ -70,7 +69,6 @@ class FrameworkInheritanceTest {
         collectionJobRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
         controlNodeRepository.deleteAll();   // v14 Phase 5-14f
-        controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
 

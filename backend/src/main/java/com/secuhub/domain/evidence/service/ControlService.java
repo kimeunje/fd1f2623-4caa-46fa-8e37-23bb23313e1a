@@ -142,40 +142,7 @@ public class ControlService {
     // ====================================================================
     // 쓰기 — 모두 410 Gone (5-14b create / 5-14f update/delete/addEvidenceType)
     // ====================================================================
-
-    /**
-     * 통제항목 생성 — v14 Phase 5-14b 부터 차단.
-     *
-     * <p>HTTP 410 Gone 으로 응답한다. controls 테이블은 v14 동안 rollback
-     * 안전망으로 유지되지만 신규 데이터 진입은 control_nodes 트리 API
-     * (PATCH /api/v1/frameworks/{id}/tree, Phase 5-14d) 로만 가능하다.</p>
-     *
-     * <p>{@code @param frameworkId, request} 시그니처는 {@link com.secuhub.domain.evidence.controller.ControlController}
-     * 와 외부 API 호환을 위해 그대로 유지한다 — v15 에서 컨트롤러 엔드포인트
-     * 자체가 제거될 때 함께 정리된다.</p>
-     *
-     * @throws BusinessException 항상 (HttpStatus.GONE)
-     */
-    @Transactional
-    public ControlDto.Response create(Long frameworkId, ControlDto.CreateRequest request) {
-        throw new BusinessException(GONE_MESSAGE, HttpStatus.GONE);
-    }
-
-    /**
-     * 통제항목 수정 — v14 Phase 5-14f 부터 차단.
-     *
-     * <p>5-14b 의 {@link #create} 차단 정책 확장. 통제 수정은 {@code PATCH /api/v1/frameworks/{id}/tree}
-     * (TreeUpdateService 의 updated 액션) 사용.</p>
-     *
-     * @throws BusinessException 항상 (HttpStatus.GONE)
-     * @deprecated v14 Phase 5-14f. v15 에서 ControlController 엔드포인트 자체 제거.
-     */
-    @Deprecated(since = "v14 Phase 5-14f", forRemoval = true)
-    @Transactional
-    public ControlDto.Response update(Long controlId, ControlDto.UpdateRequest request) {
-        throw new BusinessException(GONE_MESSAGE, HttpStatus.GONE);
-    }
-
+    
     /**
      * 통제항목 삭제 — v14 Phase 5-14f 부터 차단.
      *
@@ -189,23 +156,6 @@ public class ControlService {
     @Deprecated(since = "v14 Phase 5-14f", forRemoval = true)
     @Transactional
     public void delete(Long controlId) {
-        throw new BusinessException(GONE_MESSAGE, HttpStatus.GONE);
-    }
-
-    /**
-     * 통제에 증빙 유형 추가 — v14 Phase 5-14f 부터 차단.
-     *
-     * <p>{@link Control} 직접 매달기 경로는 차단됨 — {@link EvidenceType#control} 의 타입이
-     * {@link ControlNode} 로 변경되어 더 이상 Control 엔티티에 매다는 의미 없음. 신규 흐름:
-     * (1) 트리 PATCH 로 leaf 추가 → (2) 별도 EvidenceType 추가 endpoint (있다면) 또는
-     * 같은 트리 PATCH 의 후속 액션 (v2 검토).</p>
-     *
-     * @throws BusinessException 항상 (HttpStatus.GONE)
-     * @deprecated v14 Phase 5-14f. v15 에서 ControlController 엔드포인트 자체 제거.
-     */
-    @Deprecated(since = "v14 Phase 5-14f", forRemoval = true)
-    @Transactional
-    public ControlDto.EvidenceTypeResponse addEvidenceType(Long controlId, ControlDto.EvidenceTypeRequest request) {
         throw new BusinessException(GONE_MESSAGE, HttpStatus.GONE);
     }
 

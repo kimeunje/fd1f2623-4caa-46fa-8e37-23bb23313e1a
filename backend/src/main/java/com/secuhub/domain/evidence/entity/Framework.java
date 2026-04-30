@@ -4,9 +4,6 @@ import com.secuhub.common.BaseEntity;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.util.ArrayList;
-import java.util.List;
-
 
 @Entity
 @Table(name = "frameworks", indexes = {
@@ -48,10 +45,6 @@ public class Framework extends BaseEntity {
     @Builder.Default
     private FrameworkStatus status = FrameworkStatus.active;
 
-    @OneToMany(mappedBy = "framework", cascade = CascadeType.ALL, orphanRemoval = true)
-    @Builder.Default
-    private List<Control> controls = new ArrayList<>();
-
     /**
      * v14 Phase 5-14a — Optimistic lock.
      *
@@ -74,11 +67,6 @@ public class Framework extends BaseEntity {
     public void update(String name, String description) {
         if (name != null) this.name = name;
         if (description != null) this.description = description;
-    }
-
-    public void addControl(Control control) {
-        this.controls.add(control);
-        control.setFramework(this);
     }
 
     // v11: 상태 전이

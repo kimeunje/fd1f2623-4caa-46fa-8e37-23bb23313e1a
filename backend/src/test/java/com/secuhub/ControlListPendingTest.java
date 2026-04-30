@@ -50,7 +50,6 @@ class ControlListPendingTest {
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private FrameworkRepository frameworkRepository;
     @Autowired private ControlNodeRepository controlNodeRepository;   // ← 5-14f
-    @Autowired private ControlRepository controlRepository;           // legacy cleanup 용
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
@@ -64,7 +63,6 @@ class ControlListPendingTest {
         collectionJobRepository.deleteAll();
         evidenceTypeRepository.deleteAll();
         controlNodeRepository.deleteAll();   // ← 5-14f
-        controlRepository.deleteAll();
         frameworkRepository.deleteAll();
         userRepository.deleteAll();
 

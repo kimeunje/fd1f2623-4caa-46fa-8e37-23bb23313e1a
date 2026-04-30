@@ -1,6 +1,5 @@
 package com.secuhub.domain.evidence.dto;
 
-import com.secuhub.domain.evidence.entity.Control;
 import com.secuhub.domain.evidence.entity.ControlNode;
 import com.secuhub.domain.evidence.entity.EvidenceType;
 import lombok.*;
@@ -11,63 +10,40 @@ import java.util.List;
 /**
  * 통제 항목 관련 DTO 모음.
  *
- * <h3>v14 Phase 5-14f 변경</h3>
+ * <h3>v15.3 (5-15b) 정리</h3>
  * <ul>
- *   <li>{@link Response#from(Control, int)} / {@link Response#from(Control, int, long)}
- *       — {@code @Deprecated} 처리. {@link Control#getEvidenceTypes()} 매핑이 5-14f 에서
- *       제거되어 evidenceTotal 을 0 으로 채움 (deprecated 경로). v15 에서 메서드 제거.</li>
- *   <li>{@link Response#from(ControlNode, int, int, long)} — 신규 팩토리. leaf
- *       {@link ControlNode} 직접 받아 빌드. domain 은 leaf 의 depth=1 ancestor name
- *       으로 채움 (FrameworkExportService 패턴). evidenceTotal 은 호출 측에서 명시 전달.</li>
- *   <li>{@link DetailResponse#ancestors} — spec §8.2 신규 필드. EvidenceTypeDetailView
- *       헤더 서브텍스트의 N단 경로용. depth=1 부터 leaf 직계 부모까지 순서대로.</li>
- *   <li>{@link AncestorSummary} — spec §8.2 신규 클래스 (id / code / name 만 노출).</li>
+ *   <li><b>제거</b>: {@code CreateRequest} / {@code UpdateRequest} / {@code EvidenceTypeRequest}
+ *       — 5-14b/5-14f 부터 백엔드 410 Gone, FE 호출처 0 (Phase 5-14h 에서 controlsApi.create/
+ *       update/delete 이미 삭제됨). 신규 진입은 모두 PATCH /tree.</li>
+ *   <li><b>제거</b>: {@code Response.from(Control, int)} / {@code Response.from(Control, int, long)}
+ *       deprecated 팩토리 — Control 엔티티 자체가 5-15b 에서 제거됨. 후속 호출 측은
+ *       {@link Response#from(ControlNode, int, int, long)} 사용.</li>
+ * </ul>
+ *
+ * <h3>v14 Phase 5-14f 변경 (보존)</h3>
+ * <ul>
+ *   <li>{@link Response#from(ControlNode, int, int, long)} — leaf {@link ControlNode}
+ *       직접 받아 빌드. domain 은 leaf 의 depth=1 ancestor name 으로 채움.
+ *       evidenceTotal 은 호출 측에서 명시 전달.</li>
+ *   <li>{@link DetailResponse#ancestors} — spec §8.2 EvidenceTypeDetailView 헤더
+ *       서브텍스트의 N단 경로용. depth=1 부터 leaf 직계 부모까지 순서대로.</li>
+ *   <li>{@link AncestorSummary} — spec §8.2 (id / code / name 만 노출).</li>
  * </ul>
  */
 public class ControlDto {
 
-    @Getter
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class CreateRequest {
-        @jakarta.validation.constraints.NotBlank(message = "통제항목 코드는 필수입니다.")
-        private String code;
-        private String domain;
-        @jakarta.validation.constraints.NotBlank(message = "통제항목 이름은 필수입니다.")
-        private String name;
-        private String description;
-        private List<EvidenceTypeRequest> evidenceTypes;
-    }
-
-    @Getter
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class UpdateRequest {
-        private String code;
-        private String domain;
-        private String name;
-        private String description;
-    }
-
-    @Getter
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class EvidenceTypeRequest {
-        @jakarta.validation.constraints.NotBlank(message = "증빙 유형 이름은 필수입니다.")
-        private String name;
-        private String description;
-    }
+    // v15.3 5-15b — write 관련 3 DTO (CreateRequest / UpdateRequest / EvidenceTypeRequest)
+    // 제거. 5-14b/5-14f 부터 백엔드 410 Gone, FE 호출처 0. 신규 진입은 PATCH /tree.
 
     /**
-     * 통제항목 목록/생성/수정 응답 DTO.
+     * 통제항목 응답 DTO (read-only).
      *
      * <p>v11 Phase 5-9 에서 Framework 상세 페이지의 행 단위 "검토 대기 N건" 배지를 위해
      * {@code pendingReviewCount} 필드를 추가했다. FrameworkDto.Response 와 동일한 규약:
      * 집계가 필요 없는 경로(생성/수정 직후)에서는 0 으로 채워진다.</p>
      *
      * <p>v14 Phase 5-14f — {@link #from(ControlNode, int, int, long)} 신규 팩토리. 신규
-     * 호출 코드는 ControlNode 받는 팩토리 사용 권장. {@link #from(Control, int)} 와
-     * {@link #from(Control, int, long)} 는 deprecated.</p>
+     * 호출 코드는 ControlNode 받는 팩토리 사용 권장. Control 엔티티 받는 두 deprecated 팩토리는 v15.3 5-15b 에서 제거됨.</p>
      */
     @Getter
     @Builder
@@ -87,49 +63,8 @@ public class ControlDto {
         // v11 Phase 5-9 — 통제항목 행 단위 검토 대기 배지
         private long pendingReviewCount;
 
-        /**
-         * 기존 2-인자 팩토리 — pendingReviewCount=0 으로 채움.
-         *
-         * @deprecated v14 Phase 5-14f. {@link #from(ControlNode, int, int, long)} 사용.
-         *     {@link Control#getEvidenceTypes()} 매핑 제거로 evidenceTotal=0 (deprecated 경로).
-         */
-        @Deprecated(since = "v14 Phase 5-14f", forRemoval = true)
-        public static Response from(Control entity, int collected) {
-            return from(entity, collected, 0L);
-        }
-
-        /**
-         * v11 Phase 5-9 집계 포함 팩토리.
-         *
-         * @deprecated v14 Phase 5-14f. {@link #from(ControlNode, int, int, long)} 사용.
-         *     {@link Control#getEvidenceTypes()} 매핑이 5-14f 에서 제거되어 evidenceTotal
-         *     은 0 으로 채워진다 (deprecated 경로 — 정확한 집계 필요 시 ControlNode 팩토리 사용).
-         */
-        @Deprecated(since = "v14 Phase 5-14f", forRemoval = true)
-        public static Response from(Control entity, int collected, long pendingReviewCount) {
-            // v14 Phase 5-14f: Control.evidenceTypes 매핑 제거됨 → evidenceTotal=0 (deprecated 경로)
-            int total = 0;
-            String status;
-            if (total == 0) status = "미수집";
-            else if (collected >= total) status = "완료";
-            else if (collected > 0) status = "진행중";
-            else status = "미수집";
-
-            return Response.builder()
-                    .id(entity.getId())
-                    .frameworkId(entity.getFramework() != null ? entity.getFramework().getId() : null)
-                    .code(entity.getCode())
-                    .domain(entity.getDomain())
-                    .name(entity.getName())
-                    .description(entity.getDescription())
-                    .evidenceTotal(total)
-                    .evidenceCollected(collected)
-                    .status(status)
-                    .createdAt(entity.getCreatedAt() != null ?
-                            entity.getCreatedAt().toString() : null)
-                    .pendingReviewCount(pendingReviewCount)
-                    .build();
-        }
+        // v15.3 5-15b — Control 엔티티 받는 deprecated 팩토리 2개 제거
+        // (from(Control, int) / from(Control, int, long)). 호출처 0 (5-14f 후 ControlNode 팩토리 사용).
 
         /**
          * v14 Phase 5-14f — leaf {@link ControlNode} 받는 신규 팩토리.
