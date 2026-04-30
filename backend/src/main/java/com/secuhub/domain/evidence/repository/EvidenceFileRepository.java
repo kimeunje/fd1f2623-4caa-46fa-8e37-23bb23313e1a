@@ -85,6 +85,9 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
      *
      * <p>패턴은 기존 {@link #countByControlIdAndReviewStatus(Long, ReviewStatus)} 와 동일
      * — review_status 필터만 제거.</p>
+     *
+     * <p>v15 Phase 5-15a 시점: hybrid impact-summary 의 {@code ownEvidenceFileCount}
+     * 알리아스로도 사용. 자손 카운트는 {@link #countByControlIds(List)} 사용.</p>
      */
     @Query("""
         SELECT COUNT(ef) FROM EvidenceFile ef
@@ -101,6 +104,9 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
      * auto_approved 는 reviewed_at 가 NULL 이라 제외.</p>
      *
      * <p>{@code controlId} 의미는 {@link #countByControlId(Long)} 와 동일.</p>
+     *
+     * <p>v15 Phase 5-15a 시점: hybrid impact-summary 의 {@code ownReviewCount}
+     * 알리아스로도 사용. 자손 카운트는 {@link #countReviewedByControlIds(List)} 사용.</p>
      */
     @Query("""
         SELECT COUNT(ef) FROM EvidenceFile ef
@@ -152,4 +158,43 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
             """)
     List<Object[]> countPendingGroupByControlIdInFramework(@Param("frameworkId") Long frameworkId,
                                                             @Param("status") ReviewStatus status);
+
+    // ====================================================================
+    // v15 Phase 5-15a — Hybrid impact-summary 의 자손 카운트 집계
+    //                   ControlNodeRepository.findAllDescendants 의 id list 를
+    //                   IN 절로 받아 카운트. 빈 list 면 호출 측이 본 메서드 호출 회피.
+    // ====================================================================
+
+    /**
+     * 자손 노드들에 매달린 모든 EvidenceFile 수.
+     *
+     * <p>Phase 5-15a hybrid impact-summary 의 {@code descendantEvidenceFileCount}
+     * 필드용. {@link #countByControlId(Long)} 의 IN 절 확장 버전 — 같은 SQL 패턴
+     * ({@code ef.evidenceType.control.id} 매칭) 에 단일 id 대신 id 리스트.</p>
+     *
+     * <p>호출 규약: {@code controlIds} 가 비어있을 경우 본 메서드 호출 금지
+     * (JPQL {@code IN ()} 의 환경 의존 동작 회피). 호출 측에서 빈 list 검사 후 0 리턴.</p>
+     *
+     * @param controlIds 자손 ControlNode.id 리스트 (본인 제외)
+     */
+    @Query("""
+        SELECT COUNT(ef) FROM EvidenceFile ef
+        WHERE ef.evidenceType.control.id IN :controlIds
+        """)
+    long countByControlIds(@Param("controlIds") List<Long> controlIds);
+
+    /**
+     * 자손 노드들에 매달린 EvidenceFile 중 명시 검토된 (reviewed_at IS NOT NULL) 수.
+     *
+     * <p>Phase 5-15a hybrid impact-summary 의 {@code descendantReviewCount} 필드용.
+     * {@link #countReviewedByControlId(Long)} 의 IN 절 확장 버전.</p>
+     *
+     * @param controlIds 자손 ControlNode.id 리스트 (본인 제외)
+     */
+    @Query("""
+        SELECT COUNT(ef) FROM EvidenceFile ef
+        WHERE ef.evidenceType.control.id IN :controlIds
+          AND ef.reviewedAt IS NOT NULL
+        """)
+    long countReviewedByControlIds(@Param("controlIds") List<Long> controlIds);
 }

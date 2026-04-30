@@ -247,21 +247,26 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     roots.sort((a, b) => a.displayOrder - b.displayOrder)
     for (const r of roots) sortChildren(r)
     // post-order 자손 카운트 합
+    //
+    // v15 Phase 5-15a (hybrid, spec §3.3.1.9):
+    //   mutex 폐기. leaf 도 자식 보유 가능 → 자식 재귀를 nodeType 무관 항상 수행.
+    //   자체 contribution 만 leaf/category 분기 (leaf=1, category=0).
+    //   기존 5-14g 의 leaf early-return 제거.
     const computeCounts = (n: TreeRootNode) => {
-      if (n.nodeType === 'control') {
-        n.descendantLeafCount = 1
-        n.descendantEvidenceTypeCount = n.evidenceTypeCount ?? 0
-        n.descendantCollectedCount = n.collectedCount ?? 0
-        n.descendantPendingReviewCount = n.pendingReviewCount ?? 0
-        return
-      }
-      let leafs = 0, ets = 0, col = 0, pend = 0
+      // 자체 contribution
+      // - descendantLeafCount: leaf 면 1, category 면 0
+      // - 나머지 3 카운트: 자체 evidence/collected/pending (모든 노드 가능, hybrid)
+      let leafs = n.nodeType === 'control' ? 1 : 0
+      let ets   = n.evidenceTypeCount     ?? 0
+      let col   = n.collectedCount        ?? 0
+      let pend  = n.pendingReviewCount    ?? 0
+      // 자식 재귀 + 합 (hybrid: leaf 도 자식 보유 가능)
       for (const c of n.children) {
         computeCounts(c)
         leafs += c.descendantLeafCount
-        ets += c.descendantEvidenceTypeCount
-        col += c.descendantCollectedCount
-        pend += c.descendantPendingReviewCount
+        ets   += c.descendantEvidenceTypeCount
+        col   += c.descendantCollectedCount
+        pend  += c.descendantPendingReviewCount
       }
       n.descendantLeafCount = leafs
       n.descendantEvidenceTypeCount = ets
@@ -708,12 +713,14 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     }
     roots.sort((a, b) => a.displayOrder - b.displayOrder)
     for (const r of roots) sortChildren(r)
+    // v15 Phase 5-15a (hybrid, spec §3.3.1.9):
+    //   mutex 폐기. leaf 도 자식 보유 가능 → 자식 재귀를 nodeType 무관 항상 수행.
+    //   자체 contribution 만 leaf/category 분기 (leaf=1, category=0).
+    //   기존 5-14h 의 leaf early-return 제거.
     const computeLeaf = (n: UnifiedNode): number => {
-      if (n.nodeType === 'control') {
-        n.descendantLeafCount = 1
-        return 1
-      }
-      let s = 0
+      // 자체 contribution: leaf 면 1, category 면 0
+      let s = n.nodeType === 'control' ? 1 : 0
+      // 자식 재귀 + 합 (hybrid: leaf 도 자식 보유 가능)
       for (const c of n.children) s += computeLeaf(c)
       n.descendantLeafCount = s
       return s

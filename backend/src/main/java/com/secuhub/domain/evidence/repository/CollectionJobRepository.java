@@ -32,10 +32,34 @@ public interface CollectionJobRepository extends JpaRepository<CollectionJob, Lo
      * 패턴은 {@link #countByFrameworkId(Long)} 와 동일 — framework 대신 control 단위.</p>
      *
      * <p>{@code j.evidenceType} 가 NULL 인 전역 작업은 자연스럽게 제외 (LEFT JOIN 아님).</p>
+     *
+     * <p>v15 Phase 5-15a 시점: hybrid impact-summary 의 {@code ownJobCount} 알리아스로도
+     * 사용. 자손 카운트는 {@link #countByControlIds(List)} 사용.</p>
      */
     @Query("""
         SELECT COUNT(j) FROM CollectionJob j
         WHERE j.evidenceType.control.id = :controlId
         """)
     long countByControlId(@Param("controlId") Long controlId);
+
+    // ====================================================================
+    // v15 Phase 5-15a — Hybrid impact-summary 의 자손 카운트 집계
+    // ====================================================================
+
+    /**
+     * 자손 노드들 산하 EvidenceType 에 바인딩된 CollectionJob 수.
+     *
+     * <p>Phase 5-15a hybrid impact-summary 의 {@code descendantJobCount} 필드용.
+     * {@link #countByControlId(Long)} 의 IN 절 확장 버전.</p>
+     *
+     * <p>호출 규약: {@code controlIds} 가 비어있을 경우 본 메서드 호출 금지
+     * (JPQL {@code IN ()} 의 환경 의존 동작 회피). 호출 측에서 빈 list 검사 후 0 리턴.</p>
+     *
+     * @param controlIds 자손 ControlNode.id 리스트 (본인 제외)
+     */
+    @Query("""
+        SELECT COUNT(j) FROM CollectionJob j
+        WHERE j.evidenceType.control.id IN :controlIds
+        """)
+    long countByControlIds(@Param("controlIds") List<Long> controlIds);
 }

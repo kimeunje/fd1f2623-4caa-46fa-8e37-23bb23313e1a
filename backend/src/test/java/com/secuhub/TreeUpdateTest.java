@@ -33,7 +33,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Phase 5-14d — PATCH /api/v1/frameworks/{id}/tree 검증
  *
- * <h3>8 케이스 (spec §3.3.1.4 의 12 검증 규칙 + 응답 shape)</h3>
+ * <h3>v15 Phase 5-15a — testLeafParentBlocked 삭제</h3>
+ * <p>5-14d 의 {@code parent_must_be_category} 검증이 v15 5-15a 의 hybrid 모델 채택으로
+ * 제거됨 → 본 케이스 (Order=8) 도 무효화 → 삭제. v15 hybrid 검증은 신규 클래스
+ * {@code Phase515aHybridIntegrationTest.testMoveNodeUnderLeaf} (Order=4) 가 inverted
+ * version 으로 커버 (이전 422 → 이제 200 기대).</p>
+ *
+ * <h3>7 케이스 (5-15a 후 8 → 7, spec §3.3.1.4 의 12 검증 규칙 중 10개 + 응답 shape)</h3>
  * <ol>
  *   <li>{@link #testHappyPath} — created 2 + updated 1 + moved 1 + deleted 1 → 200, version+1</li>
  *   <li>{@link #testVersionMismatch_409} — expectedVersion 불일치 → 409 currentVersion 노출</li>
@@ -42,7 +48,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   <li>{@link #testTempIdMapping} — created 의 parentId="tempA" → 위상 정렬 INSERT 후 mappings 정합</li>
  *   <li>{@link #testMoveAction} — parent / displayOrder / depth 갱신 정합</li>
  *   <li>{@link #testCycleDetected} — moved.newParentId 가 자기 자손 → 422</li>
- *   <li>{@link #testLeafParentBlocked} — moved.newParentId 가 leaf 노드 → 422</li>
+ *   <li>(✂ Order=8) <s>{@code testLeafParentBlocked}</s> — v15 5-15a 에서 삭제됨.
+ *       hybrid 모델: leaf 아래로 이동 가능 (Phase515aHybridIntegrationTest.testMoveNodeUnderLeaf 가 inverted 커버)</li>
  * </ol>
  *
  * <p>5-14b/c 학습 패턴 — FK off + DELETE + 본 테스트 전용 admin 정리.
@@ -440,43 +447,14 @@ class TreeUpdateTest {
     }
 
     // ========================================================================
-    // 8. leaf-with-evidence (Q2-A) — newParentId 가 leaf 노드면 거부
+    // 8. ✂ v15 Phase 5-15a — testLeafParentBlocked 삭제
+    //
+    //    5-14d 의 parent_must_be_category 검증이 v15 5-15a hybrid 모델 채택으로
+    //    제거됨 (TreeUpdateService.validateMoved 의 newParent.getNodeType() == control
+    //    체크 제거). 본 케이스는 status=422 를 기대하지만 hybrid 후 200 응답이라 fail.
+    //
+    //    하이브리드 시나리오 inverted version 은 신규 클래스
+    //    Phase515aHybridIntegrationTest.testMoveNodeUnderLeaf (Order=4) 가 커버
+    //    (이전 422 → 이제 200 기대).
     // ========================================================================
-    @Test
-    @Order(8)
-    @DisplayName("[Patch] parent_must_be_category — moved.newParentId 가 leaf 노드면 422")
-    void testLeafParentBlocked() throws Exception {
-        Framework fw = frameworkRepository.save(Framework.builder().name("LP FW").build());
-
-        ControlNode cat1 = controlNodeRepository.save(ControlNode.builder()
-                .framework(fw).parent(null).nodeType(NodeType.category)
-                .code("1").name("cat1").displayOrder(0).depth(1).build());
-        ControlNode leaf1 = controlNodeRepository.save(ControlNode.builder()
-                .framework(fw).parent(cat1).nodeType(NodeType.control)
-                .code("1.1").name("leaf1").displayOrder(0).depth(2).build());
-        ControlNode cat2 = controlNodeRepository.save(ControlNode.builder()
-                .framework(fw).parent(null).nodeType(NodeType.category)
-                .code("2").name("cat2").displayOrder(1).depth(1).build());
-
-        // cat2 를 leaf1 (control 노드) 의 자식으로 이동 시도 → leaf 는 자식 못 가짐
-        Map<String, Object> body = patchBody(0L,
-                List.of(), List.of(),
-                List.of(Map.of("id", cat2.getId(),
-                        "newParentId", leaf1.getId(),
-                        "newDisplayOrder", 0,
-                        "newDepth", 3)),
-                List.of()
-        );
-
-        mockMvc.perform(patch("/api/v1/frameworks/{id}/tree", fw.getId())
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(body)))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.error").value("validation_failed"))
-                .andExpect(jsonPath("$.details[*].code").value(
-                        org.hamcrest.Matchers.hasItem("parent_must_be_category")));
-
-        System.out.println("✅ [Patch] parent_must_be_category — leaf 아래로 이동 차단됨");
-    }
 }

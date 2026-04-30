@@ -28,10 +28,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Phase 5-14f — JPA 매핑 정합화 + leaf 카운트 본격 집계 + 트리 재귀 복제 통합 검증.
  *
- * <h3>검증 항목 (5건)</h3>
+ * <h3>v15 Phase 5-15a — testAddEvidenceTypeLeafOnly 삭제</h3>
+ * <p>5-14f 의 leaf-only invariant (category 호출 시 IllegalStateException) 가 v15
+ * 5-15a 의 hybrid 모델 채택으로 제거됨 → 본 테스트도 무효화 → 삭제. 5-15a hybrid
+ * 검증은 신규 클래스 {@code Phase515aHybridIntegrationTest} 가 커버
+ * (Order=1 testHybridAddEvidenceTypeAllNodes 가 inverted 후속). 5-14f 의 mapping
+ * 정합성 검증은 본 클래스의 {@code testEvidenceTypeMapsToControlNode} (Order=1) 가
+ * 충분히 커버.</p>
+ *
+ * <h3>검증 항목 (4건 — 5-15a 후 testAddEvidenceTypeLeafOnly 삭제로 5 → 4)</h3>
  * <ul>
  *   <li>{@link EvidenceType#getControl()} 의 타입이 {@link ControlNode} (leaf) 직접 매칭</li>
- *   <li>{@link ControlNode#addEvidenceType} — leaf 만 허용, category 호출 시 IllegalStateException</li>
  *   <li>{@code GET /api/v1/frameworks/{id}/tree} 응답의 leaf {@code evidenceTypeCount} /
  *       {@code pendingReviewCount} 가 본격 집계됨 (5-14c 의 0 고정 → 양수)</li>
  *   <li>{@code POST /api/v1/frameworks/inherit} 의 source 가 5단 mixed-depth 트리일 때
@@ -49,7 +56,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *       lazy chain 검증을 id 비교로 회피 (의미 보존)</li>
  * </ul>
  *
- * <p>spec §3.3.1.3 / §3.3.1.4 / §6.4 정합. v14.5 신규 (Phase 5-14f).</p>
+ * <p>spec §3.3.1.3 / §3.3.1.4 / §6.4 정합. v14.5 신규 (Phase 5-14f).
+ * v15 Phase 5-15a 시점에 Order=2 케이스 + helper 2개 삭제.</p>
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -134,43 +142,15 @@ class Phase514fIntegrationTest {
     }
 
     // ====================================================================
-    // 2. ControlNode.addEvidenceType — leaf 만 허용
+    // 2. ✂ v15 Phase 5-15a — testAddEvidenceTypeLeafOnly 삭제
+    //
+    //    5-14f 의 leaf-only invariant 가 v15 5-15a 에서 hybrid 모델 채택으로 제거됨
+    //    (ControlNode.addEvidenceType 의 IllegalStateException 가드 제거).
+    //    하이브리드 검증은 신규 Phase515aHybridIntegrationTest.testHybridAddEvidenceTypeAllNodes
+    //    (Order=1) 가 inverted version 으로 커버.
+    //
+    //    삭제: 본 케이스 + helper 2개 (catchThrowable, ThrowingRunnable interface)
     // ====================================================================
-
-    @Test
-    @Order(2)
-    @DisplayName("[Helper] ControlNode.addEvidenceType — leaf 만 허용, category 거부")
-    void testAddEvidenceTypeLeafOnly() {
-        Framework fw = frameworkRepository.save(Framework.builder().name("FW-helper").build());
-
-        ControlNode category = controlNodeRepository.save(ControlNode.builder()
-                .framework(fw).parent(null).nodeType(NodeType.category)
-                .code("1").name("분류 노드").displayOrder(0).depth(1).build());
-        ControlNode leaf = controlNodeRepository.save(ControlNode.builder()
-                .framework(fw).parent(category).nodeType(NodeType.control)
-                .code("1.1").name("leaf 통제").displayOrder(0).depth(2).build());
-
-        // leaf 호출 — OK
-        EvidenceType et = EvidenceType.builder().name("증빙 A").build();
-        leaf.addEvidenceType(et);
-        assertThat(et.getControl()).isEqualTo(leaf);
-        assertThat(leaf.getEvidenceTypes()).contains(et);
-
-        // category 호출 — IllegalStateException
-        EvidenceType etInvalid = EvidenceType.builder().name("잘못된 매달림").build();
-        assertThat(catchThrowable(() -> category.addEvidenceType(etInvalid)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("category");
-
-        System.out.println("✅ [Helper] ControlNode.addEvidenceType leaf-only 검증");
-    }
-
-    private static Throwable catchThrowable(ThrowingRunnable r) {
-        try { r.run(); return null; } catch (Throwable t) { return t; }
-    }
-
-    @FunctionalInterface
-    private interface ThrowingRunnable { void run() throws Throwable; }
 
     // ====================================================================
     // 3. GET /tree 의 leaf 두 카운트 본격 집계 (5-14c 의 0 고정 → 양수)

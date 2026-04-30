@@ -168,6 +168,44 @@ const viewHasPendingReview = computed<boolean>(() =>
   props.node.nodeType === 'control' && (props.node.pendingReviewCount ?? 0) > 0
 )
 
+// ────────────────────────────────────────────────────────────────────────────
+// v15 Phase 5-15a — Hybrid 모델 (spec §3.3.1.9)
+// ────────────────────────────────────────────────────────────────────────────
+//
+// mutex 폐기 — 모든 노드가 자식 + 증빙 동시 보유 가능. leaf 노드 (`nodeType === 'control'`)
+// 도 자식이 있을 수 있음. P20.v6 mockup 시각 정합:
+//   - leaf.has-children: leaf 행 그대로 + 좌측 chev 12px 추가 (색·라벨 추가 0)
+//   - 행 클릭 = 증빙 펼침 (regular leaf-expand, isLeafExpanded 토글)
+//   - 좌측 chev 클릭 = 자식 펼침/접힘 (expandedIds 토글, 'category' 시그널 트릭)
+//
+// 부모 ControlsView 변경 0 — 기존 'toggle-expand' 시그널의 두 번째 인자가
+// 'category' 면 expandedIds 토글, 'control' 이면 expandedLeafId 토글. hybrid leaf 의
+// chev 는 'category' 시그널 보내서 자연스럽게 expandedIds 토글되어 자식 영역
+// 펼쳐짐. 인터페이스 backward-compatible.
+
+const hasChildren = computed<boolean>(() => {
+  // view 모드 leaf 만 대상. dialog 모드 hybrid 변환은 후속 phase.
+  if (props.mode !== 'view') return false
+  if (props.node.nodeType !== 'control') return false
+  // TreeRootNode.children 은 useControlTree 의 buildRootNodes 가 모든 노드에 빌드.
+  return (props.node.children?.length ?? 0) > 0
+})
+
+/** hybrid leaf 의 자식 펼침 상태 (expandedIds 의 별칭, semantic 명료성). */
+const viewChildrenExpanded = computed<boolean>(() => hasChildren.value && viewExpanded.value)
+
+/**
+ * P20.v6 (5-14i 결정, v15 5-15a 구현) — hybrid leaf 의 좌측 chev 클릭.
+ *
+ * 행 클릭 (`viewHandleToggle`) 은 그대로 'control' 시그널 → 부모가 expandedLeafId
+ * 토글 (증빙 펼침). 본 chev 클릭은 'category' 시그널 → 부모가 expandedIds
+ * 토글 (자식 펼침). 두 동작 독립이라 hybrid 노드는 증빙 + 자식 동시 펼침 가능.
+ */
+function viewHandleToggleChildren(e: Event): void {
+  e.stopPropagation()
+  emit('toggle-expand', props.node.id, 'category')
+}
+
 // ─── Phase 5-14i (P12, P14) — 검색 매치 표시 ───
 //
 // P14: highlightFn 이 전달되면 substring → amber 하이라이트 HTML 변환.
@@ -454,16 +492,43 @@ function forwardRequestDelete(n: UnifiedNode): void {
         P3: progress bar 두께 4px (h-1) + transition .3s (duration-300).
         P10: leaf-chev hover 색 변화 (text-gray-300 → -gray-500), expanded → blue-500.
         P14: highlightFn 으로 코드 + 이름 substring amber 하이라이트 (v-html).
+
+      v15 Phase 5-15a (hybrid):
+        P20.v6: hasChildren 일 때 좌측 chev 12px SVG + padding-left 16px 깊이.
+        chev 클릭 = 'category' 시그널 트릭 (자식 펼침), 행 클릭 = 'control' (증빙 펼침).
     -->
     <div
       v-else
       :class="[
         'row-view leaf-row group cursor-pointer',
+        hasChildren ? 'has-children' : '',
+        viewChildrenExpanded ? 'children-expanded' : '',
+        hasChildren && !viewExpanded ? 'children-collapsed' : '',
         viewHasPendingReview ? 'has-pending' : '',
         isLeafExpanded ? 'expanded' : '',
       ]"
-      :style="{ paddingLeft: `${indentPx + 16}px` }"
+      :style="{ paddingLeft: `${hasChildren ? indentPx + 32 : indentPx + 16}px` }"
       @click="viewHandleToggle">
+      <!--
+        v15 Phase 5-15a (P20.v6) — hybrid 좌측 chev.
+        행 클릭과 분리 (.stop). collapsed 상태는 CSS .children-collapsed 가 -90deg.
+        a11y: role/tabindex/aria-expanded.
+      -->
+      <span
+        v-if="hasChildren"
+        class="leading-chev"
+        :style="{ left: `${indentPx + 14}px` }"
+        role="button"
+        tabindex="0"
+        :aria-label="viewExpanded ? '자식 노드 접기' : '자식 노드 펼치기'"
+        :aria-expanded="viewExpanded"
+        @click.stop="viewHandleToggleChildren"
+        @keydown.enter.prevent="viewHandleToggleChildren"
+        @keydown.space.prevent="viewHandleToggleChildren">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="12" height="12" aria-hidden="true">
+          <path d="M4 6l4 4 4-4"/>
+        </svg>
+      </span>
       <span
         class="ctrl-code-view font-mono text-[11.5px] text-blue-600 tabular-nums w-16 shrink-0"
         v-html="renderCode"
@@ -563,6 +628,33 @@ function forwardRequestDelete(n: UnifiedNode): void {
           </button>
         </div>
       </div>
+    </div>
+
+    <!--
+      v15 Phase 5-15a (P20.v6) — hybrid leaf 의 자식 재귀.
+      좌측 chev 클릭 (viewChildrenExpanded === true) 시 자식 트리 표시.
+      category 자식 재귀와 같은 props/emits 패턴 (forwarding 동일).
+    -->
+    <div v-if="node.nodeType === 'control' && viewChildrenExpanded">
+      <ControlNodeRow
+        v-for="child in (node.children as TreeRootNode[])"
+        :key="child.id"
+        :node="child"
+        mode="view"
+        :expanded-ids="expandedIds"
+        :expanded-leaf-id="expandedLeafId"
+        :control-detail="controlDetail"
+        :detail-loading="detailLoading"
+        :dimmed="dimmed"
+        :highlight-fn="highlightFn"
+        :match-count-by-category-id="matchCountByCategoryId"
+        :search-active="searchActive"
+        @toggle-expand="forwardToggle"
+        @go-evidence-type="forwardGoEt"
+        @add-evidence-type="forwardAddEt"
+        @zip-download="forwardZip"
+        @delete-evidence-type="forwardDeleteEt"
+      />
     </div>
 
     <!-- 자식 재귀 (view) — Stage 3 props 전달 (P12/P14) -->
@@ -874,6 +966,61 @@ function forwardRequestDelete(n: UnifiedNode): void {
 }
 .row-view.leaf-row.expanded .leaf-chev {
   color: rgb(59 130 246); /* blue-500 */
+}
+
+/* ─────────────────────── v15 Phase 5-15a — hybrid leaf 의 좌측 chev (P20.v6) ─────────────────────── */
+/*
+ * spec §3.3.1.9 + 5-14i v6 mockup CSS 정합:
+ *   .leaf.has-children: 일반 leaf 보다 padding-left +16px (chev 자리 확보, :style 동적).
+ *   .leading-chev: 12px SVG, position absolute, vertical-center.
+ *     색  default = #9ca3af (gray-400)
+ *     색  hover (행) = #4b5563 (gray-600)
+ *     색  hover (chev 직접) = #111827 (gray-900)
+ *   .children-collapsed: chev -90deg 회전 (아래 펼침 → 우측 화살표).
+ *
+ * 행 자체는 일반 leaf 와 동일 톤 (P20.v6: "추가 색·라벨 0").
+ * pending / expanded 의 좌측 3px bar 도 그대로 (chev 와 별도 시각 채널).
+ */
+.row-view.leaf-row.has-children .leading-chev {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translateY(-50%);
+  color: rgb(156 163 175); /* gray-400 */
+  cursor: pointer;
+  transition: transform 0.15s, color 0.15s;
+  z-index: 2;
+  /* 작은 클릭 패딩 영역 — chev 본체 12px + 외곽 4px 확장 = 20px 클릭 타겟 */
+  padding: 4px;
+  margin: -4px;
+  box-sizing: content-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.row-view.leaf-row.has-children:hover .leading-chev {
+  color: rgb(75 85 99); /* gray-600 */
+}
+
+.row-view.leaf-row.has-children .leading-chev:hover {
+  color: rgb(17 24 39); /* gray-900 */
+}
+
+/* 키보드 포커스 — a11y */
+.row-view.leaf-row.has-children .leading-chev:focus-visible {
+  outline: 2px solid rgb(59 130 246); /* blue-500 */
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.row-view.leaf-row.has-children.children-collapsed .leading-chev {
+  transform: translateY(-50%) rotate(-90deg);
+}
+
+.row-view.leaf-row.has-children .leading-chev svg {
+  display: block;
 }
 
 /* ─────────────────────── P14 (5-14i) — 검색 매치 substring 하이라이트 ─────────────────────── */

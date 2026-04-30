@@ -25,6 +25,22 @@ import java.util.*;
  * <p>spec §3.3.1.4 의 12개 검증 규칙을 단일 트랜잭션 안에서 실행하고,
  * 모든 검증 통과 시 INSERT/UPDATE/MOVE/DELETE 를 적용한다.</p>
  *
+ * <h3>v15 Phase 5-15a — Hybrid 모델 채택 (검증 규칙 12 → 10)</h3>
+ * <p>spec §3.3.1.9 의 hybrid 모델 채택에 따라 다음 2 검증 제거:</p>
+ * <ul>
+ *   <li><b>parent_must_be_category</b> — leaf 아래에 자식 노드 추가/이동 가능
+ *       (validateCreated number 분기 + tempId 분기 + validateMoved number 분기 +
+ *       tempId 분기, 총 4 occurrence 제거)</li>
+ *   <li><b>leaf_with_evidence</b> — entity 가드 ({@link ControlNode#addEvidenceType})
+ *       에서만 enforce 되고 있어 5-15a 의 ControlNode 가드 제거와 동시에 자연 무력화.
+ *       본 service 측 별도 변경 없음</li>
+ * </ul>
+ *
+ * <p>나머지 10 검증은 그대로 유지 (blank_name, blank_code, invalid_node_type,
+ * parent_not_found, depth_mismatch, max_depth_exceeded, unresolved_temp_id,
+ * invalid_parent_type, node_type_change_not_allowed, cycle_detected,
+ * sibling_code_duplicate, node_not_found).</p>
+ *
  * <h3>알고리즘 흐름</h3>
  * <ol>
  *   <li>Framework lookup (404 fallback)</li>
@@ -43,8 +59,10 @@ import java.util.*;
  *
  * <h3>5-14d 정책 결정</h3>
  * <ul>
- *   <li>updated 의 nodeType 변경: 거부 (v2 또는 delete+create 로 우회)</li>
- *   <li>moved 의 newParentId 가 leaf 노드: 거부 (leaf 는 자식 못 가짐)</li>
+ *   <li>updated 의 nodeType 변경: 거부 (v2 또는 delete+create 로 우회).
+ *       v15 5-15a 시점에도 보존 (transitional, 5-15b 일괄 정리)</li>
+ *   <li>moved 의 newParentId 가 leaf 노드: <s>거부</s> →
+ *       <b>v15 5-15a 에서 허용</b> (hybrid)</li>
  *   <li>evidence 매달림 카운트 검증: 5-14f (매핑 이주 후) 본격 구현</li>
  *   <li>lastEditedBy / lastEditedAt: 5-14d 범위 외 (Q1=B), 후속 phase</li>
  * </ul>
@@ -216,8 +234,9 @@ public class TreeUpdateService {
     // ========================================================================
     // 검증 — created
     //   규칙 3 (이름/코드 not blank), 4 (nodeType 유효),
-    //   5 (parentId 유효), 6 (depth 일관성), 7 (depth ≤ 10),
-    //   9-부분 (parent 가 leaf 면 거부)
+    //   5 (parentId 유효), 6 (depth 일관성), 7 (depth ≤ 10)
+    //
+    // v15 Phase 5-15a — 9-부분 (parent 가 leaf 면 거부) 제거. hybrid 모델 채택.
     // ========================================================================
     private void validateCreated(List<TreeUpdateDto.CreatedNode> created,
                                   Map<Long, ControlNode> existingNodes,
@@ -240,7 +259,8 @@ public class TreeUpdateService {
                 continue;  // 이후 검증은 nodeType 의존
             }
 
-            // 규칙 5 — parentId 유효 + 9-부분 (parent 가 leaf 면 거부)
+            // 규칙 5 — parentId 유효
+            // v15 Phase 5-15a: 9-부분 (parent 가 leaf 면 거부) 제거 — hybrid 모델
             Object pid = c.getParentId();
             Integer parentDepth = null;
             if (pid != null) {
@@ -251,10 +271,8 @@ public class TreeUpdateService {
                         details.add(detailTemp(c, "parentId", "parent_not_found",
                                 "parentId " + parentLong + " 노드를 찾을 수 없습니다"));
                     } else {
-                        if (parent.getNodeType() == NodeType.control) {
-                            details.add(detailTemp(c, "parentId", "parent_must_be_category",
-                                    "통제(leaf) 아래에는 자식 노드를 둘 수 없습니다"));
-                        }
+                        // v15 Phase 5-15a — parent_must_be_category 제거 (hybrid 모델, spec §3.3.1.9).
+                        // 모든 노드 아래에 자식 노드 추가 가능. 10단 가드는 별도 규칙(7)으로 유지.
                         parentDepth = parent.getDepth();
                     }
                 } else if (pid instanceof String) {
@@ -265,10 +283,7 @@ public class TreeUpdateService {
                                 "parentId 의 임시 식별자 '" + parentTempId
                                         + "' 가 같은 요청 안에 정의되지 않았습니다"));
                     } else {
-                        if ("control".equalsIgnoreCase(parentCreated.getNodeType())) {
-                            details.add(detailTemp(c, "parentId", "parent_must_be_category",
-                                    "통제(leaf) 아래에는 자식 노드를 둘 수 없습니다"));
-                        }
+                        // v15 Phase 5-15a — parent_must_be_category 제거 (hybrid 모델, spec §3.3.1.9).
                         parentDepth = parentCreated.getDepth();
                     }
                 } else {
@@ -296,6 +311,9 @@ public class TreeUpdateService {
     // ========================================================================
     // 검증 — updated
     //   규칙 5 (id 유효), 9-부분 (nodeType 변경 거부)
+    //
+    // v15 Phase 5-15a 시점에 nodeType 변경 거부 보존 (transitional).
+    // 5-15b 또는 그 이후 enum 일괄 제거 시 함께 정리 검토.
     // ========================================================================
     private void validateUpdated(List<TreeUpdateDto.UpdatedNode> updated,
                                   Map<Long, ControlNode> existingNodes,
@@ -323,8 +341,9 @@ public class TreeUpdateService {
 
     // ========================================================================
     // 검증 — moved
-    //   규칙 5 (id 유효, newParentId 유효), 6 (depth), 7 (max depth),
-    //   9-부분 (newParentId 가 leaf 면 거부), 10 (사이클)
+    //   규칙 5 (id 유효, newParentId 유효), 6 (depth), 7 (max depth), 10 (사이클)
+    //
+    // v15 Phase 5-15a — 9-부분 (newParentId 가 leaf 면 거부) 제거. hybrid 모델 채택.
     // ========================================================================
     private void validateMoved(List<TreeUpdateDto.MovedNode> moved,
                                 Map<Long, ControlNode> existingNodes,
@@ -364,11 +383,8 @@ public class TreeUpdateService {
                         details.add(detailId(m.getId(), "newParentId", "parent_not_found",
                                 "newParentId " + parentLong + " 노드를 찾을 수 없습니다"));
                     } else {
-                        // 규칙 9-부분: newParentId 가 leaf 면 거부
-                        if (parent.getNodeType() == NodeType.control) {
-                            details.add(detailId(m.getId(), "newParentId", "parent_must_be_category",
-                                    "통제(leaf) 아래로는 이동할 수 없습니다"));
-                        }
+                        // v15 Phase 5-15a — parent_must_be_category 제거 (hybrid 모델, spec §3.3.1.9).
+                        // 모든 노드 아래로 이동 가능. 10단 가드는 별도 규칙(7)으로 유지.
                         parentDepth = parent.getDepth();
                     }
                 } else if (pid instanceof String) {
@@ -379,10 +395,7 @@ public class TreeUpdateService {
                                 "newParentId 의 임시 식별자 '" + parentTempId
                                         + "' 가 같은 요청 안에 정의되지 않았습니다"));
                     } else {
-                        if ("control".equalsIgnoreCase(parentCreated.getNodeType())) {
-                            details.add(detailId(m.getId(), "newParentId", "parent_must_be_category",
-                                    "통제(leaf) 아래로는 이동할 수 없습니다"));
-                        }
+                        // v15 Phase 5-15a — parent_must_be_category 제거 (hybrid 모델, spec §3.3.1.9).
                         parentDepth = parentCreated.getDepth();
                     }
                 } else {
