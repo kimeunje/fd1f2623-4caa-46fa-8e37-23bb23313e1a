@@ -21,9 +21,9 @@ import java.util.List;
  *   "nodes": [
  *     { "id", "parentId", "nodeType", "code", "name", "description",
  *       "displayOrder", "depth",
- *       "evidenceTypeCount"?,        // leaf 만 (category 는 omit)
- *       "collectedCount"?,           // leaf 만 — v14.7 (5-14g β) 신규
- *       "pendingReviewCount"?        // leaf 만 (category 는 omit)
+ *       "evidenceTypeCount",         // 모든 노드 (v15.2 hybrid, own only)
+ *       "collectedCount",            // 모든 노드 (v15.2 hybrid, own only)
+ *       "pendingReviewCount"         // 모든 노드 (v15.2 hybrid, own only)
  *     }
  *   ]
  * }
@@ -41,6 +41,13 @@ import java.util.List;
  * 와 "완료 / 진행중 / 미수집" 상태 derive 용으로 {@code collectedCount} 추가.
  * 정의: leaf 에 매달린 evidence_types 중 evidence_files 가 1개 이상 있는 type 의
  * distinct 수. category 는 omit.</p>
+ *
+ * <p><b>v15.2 (5-15a 후속-1) 변경</b>: hybrid 모델 정합. 모든 노드에 세 카운트 필드
+ * ({@code evidenceTypeCount}, {@code collectedCount}, {@code pendingReviewCount})
+ * 노출 — Q1=A own only 정의 (자체 evidence_types 만 카운트, 자손 평탄화 0). Q2=A
+ * Map miss 시 0 명시 (NULL 없음). Repository 쿼리는 5-14f/5-14g 의 explicit JOIN
+ * 패턴이 leaf/category 구분 없이 own 카운트 자연 집계 — 추가 변경 0. category 자체에
+ * evidence_types 매달림 가능 (v15.0 hybrid backend 보장).</p>
  */
 public class TreeDto {
 
@@ -80,8 +87,10 @@ public class TreeDto {
 
     // ========================================================================
     // NodeSummary — 평탄 노드 표현
-    //   category 와 leaf 가 같은 클래스를 사용. leaf 만 카운트 필드(3개)를 채우고,
-    //   category 는 모두 null 로 두어 Jackson 이 omit (필드별 @JsonInclude).
+    //   category 와 leaf 가 같은 클래스를 사용. v15.2 5-15a 후속-1: 모든 노드에
+    //   세 카운트 필드 노출 (own only 정의, Q1=A). 5-14c~5-14g 시점의 leaf 한정
+    //   분기 (@JsonInclude NON_NULL) 폐기 — hybrid 카테고리 자체 evidence 카운트
+    //   표시 정합.
     //   parentId / description 은 null 도 explicit 직렬화 (spec 의 첫 cat
     //   응답 예제: "parentId": null, "description": null).
     // ========================================================================
@@ -99,30 +108,42 @@ public class TreeDto {
         private Integer displayOrder;
         private Integer depth;
 
-        // leaf 만 채우고 category 는 null → JSON omit (필드별 @JsonInclude)
-        @JsonInclude(JsonInclude.Include.NON_NULL)
+        /**
+         * v15.2 (5-15a 후속-1) — 모든 노드에 own evidence_types 수 노출 (Q1=A own only).
+         * mutex 데이터 (5-14g 까지) 에서는 category=0, leaf=양수. hybrid (v15.0+) 후
+         * 카테고리도 양수 가능. Map miss 시 0 명시.
+         */
         private Integer evidenceTypeCount;
 
         /**
-         * v14.7 (5-14g β) 신규 — leaf 에 매달린 evidence_types 중 evidence_files 가
-         * 1개 이상 있는 type 의 distinct 수. ControlsView 의 진행바 N/M 의 N + 상태
-         * derive ("완료/진행중/미수집") 용. category 는 omit.
+         * v14.7 (5-14g β) 신규 — own evidence_types 중 evidence_files 가 1개 이상 있는
+         * type 의 distinct 수. ControlsView 의 진행바 N/M 의 N + 상태 derive
+         * ("완료/진행중/미수집") 용. v15.2 (5-15a 후속-1): 모든 노드 노출 (own only).
          */
-        @JsonInclude(JsonInclude.Include.NON_NULL)
         private Integer collectedCount;
 
-        @JsonInclude(JsonInclude.Include.NON_NULL)
+        /**
+         * v15.2 (5-15a 후속-1) — 모든 노드에 own evidence_types 산하 pending 파일 수
+         * 노출 (Q1=A own only). 검토 대기 N 배지용.
+         */
         private Long pendingReviewCount;
 
-        /** category 노드 — 모든 카운트 필드 omit. */
+        /**
+         * @deprecated v15.2 5-15a 후속-1 — mutex 모델 가정 (category 카운트 omit).
+         *             hybrid 후 모든 노드에 카운트 노출. {@code TreeService.toNodeSummary}
+         *             가 직접 빌드 (본 헬퍼 미사용). 5-15b 또는 v15.x 일괄 정리 검토.
+         */
+        @Deprecated(since = "v15.2 Phase 5-15a")
         public static NodeSummary fromCategory(ControlNode cn) {
             return baseBuilder(cn).build();
         }
 
         /**
-         * leaf 노드 — 세 카운트 필드 항상 노출 (5-14c 에서는 0 고정,
-         * 5-14f / 14g 에서 본격 집계).
+         * @deprecated v15.2 5-15a 후속-1 — mutex 모델 가정 (leaf 한정 카운트).
+         *             hybrid 후 모든 노드에 own 카운트 노출. {@code TreeService.toNodeSummary}
+         *             가 직접 빌드 (본 헬퍼 미사용). 5-15b 또는 v15.x 일괄 정리 검토.
          */
+        @Deprecated(since = "v15.2 Phase 5-15a")
         public static NodeSummary fromLeaf(ControlNode cn,
                                            int evidenceTypeCount,
                                            int collectedCount,

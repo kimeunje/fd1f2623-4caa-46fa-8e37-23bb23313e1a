@@ -43,6 +43,11 @@ import java.util.Map;
  *       6컬럼 진행바 ({@code N/M}) 를 위해 {@code collectedCount} 추가. 정의: leaf 에
  *       매달린 evidence_types 중 evidence_files 가 1개 이상 있는 type 의 distinct 수.
  *       5-14f 와 동일 패턴 (Framework 단위 single query + Map building, N+1 회피).</li>
+ *   <li><b>v15.2 (5-15a 후속-1) 모든 노드 카운트 노출</b> — hybrid 모델 정합.
+ *       {@code toNodeSummary} 의 nodeType 분기 폐기 — 모든 노드 (category + leaf)
+ *       에 own 카운트 (Q1=A own only) 채움. Repository 쿼리 변경 0 (5-14f/5-14g 의
+ *       explicit JOIN 패턴이 leaf/category 구분 없이 own 카운트 자연 집계).
+ *       Q2=A: Map miss 시 0 명시 (NULL 없음).</li>
  * </ul>
  */
 @Service
@@ -119,12 +124,21 @@ public class TreeService {
     /**
      * v14 Phase 5-14f — Map 으로 카운트 lookup.
      * v14 Phase 5-14g (β) — collectedCounts 매개변수 추가 (시그니처 변경).
+     * v15.2 5-15a 후속-1 — hybrid: 모든 노드 (category + leaf) 에 own 카운트 노출
+     *                     (Q1=A own only, Q2=A Map miss 시 0).
      */
     private TreeDto.NodeSummary toNodeSummary(ControlNode node,
                                               Map<Long, Long> evidenceTypeCounts,
                                               Map<Long, Long> collectedCounts,
                                               Map<Long, Long> pendingReviewCounts) {
-        TreeDto.NodeSummary.NodeSummaryBuilder b = TreeDto.NodeSummary.builder()
+        // v15.2 5-15a 후속-1 — Map 에서 카운트 lookup (없으면 0 default).
+        // Repository 의 explicit JOIN (et.control cn) 이 leaf/category 구분 없이
+        // own evidence_types 자연 집계. nodeType 분기 폐기.
+        long etCount = evidenceTypeCounts.getOrDefault(node.getId(), 0L);
+        long ccCount = collectedCounts.getOrDefault(node.getId(), 0L);
+        long prCount = pendingReviewCounts.getOrDefault(node.getId(), 0L);
+
+        return TreeDto.NodeSummary.builder()
                 .id(node.getId())
                 .parentId(node.getParent() != null ? node.getParent().getId() : null)
                 .nodeType(node.getNodeType().name())
@@ -132,17 +146,10 @@ public class TreeService {
                 .name(node.getName())
                 .description(node.getDescription())
                 .displayOrder(node.getDisplayOrder())
-                .depth(node.getDepth());
-
-        if (node.getNodeType() == NodeType.control) {
-            // v14 Phase 5-14f — Map 에서 카운트 lookup, 없으면 0 (defaultIfMissing)
-            long etCount = evidenceTypeCounts.getOrDefault(node.getId(), 0L);
-            long ccCount = collectedCounts.getOrDefault(node.getId(), 0L);   // ← 5-14g (β)
-            long prCount = pendingReviewCounts.getOrDefault(node.getId(), 0L);
-            b.evidenceTypeCount((int) etCount)
-             .collectedCount((int) ccCount)                                  // ← 5-14g (β)
-             .pendingReviewCount(prCount);
-        }
-        return b.build();
+                .depth(node.getDepth())
+                .evidenceTypeCount((int) etCount)
+                .collectedCount((int) ccCount)
+                .pendingReviewCount(prCount)
+                .build();
     }
 }

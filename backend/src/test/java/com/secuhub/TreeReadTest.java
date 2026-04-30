@@ -2,9 +2,11 @@ package com.secuhub;
 
 import com.secuhub.config.jwt.JwtTokenProvider;
 import com.secuhub.domain.evidence.entity.ControlNode;
+import com.secuhub.domain.evidence.entity.EvidenceType;
 import com.secuhub.domain.evidence.entity.Framework;
 import com.secuhub.domain.evidence.entity.NodeType;
 import com.secuhub.domain.evidence.repository.ControlNodeRepository;
+import com.secuhub.domain.evidence.repository.EvidenceTypeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
 import com.secuhub.domain.user.entity.User;
 import com.secuhub.domain.user.entity.UserRole;
@@ -56,6 +58,7 @@ class TreeReadTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private FrameworkRepository frameworkRepository;
     @Autowired private ControlNodeRepository controlNodeRepository;
+    @Autowired private EvidenceTypeRepository evidenceTypeRepository;  // v15.2 5-15a 후속-1
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtTokenProvider jwtTokenProvider;
@@ -124,7 +127,7 @@ class TreeReadTest {
     // ========================================================================
     @Test
     @Order(2)
-    @DisplayName("[Tree] 단순 트리 — depth/parentId 정합, leaf 만 두 카운트(0) 노출, category 는 omit")
+    @DisplayName("[Tree] 단순 트리 — depth/parentId 정합, 모든 노드에 카운트 0 명시 노출 (v15.2 5-15a 후속-1)")
     void testSimpleTree() throws Exception {
         Framework fw = frameworkRepository.save(Framework.builder().name("Simple FW").build());
 
@@ -156,9 +159,11 @@ class TreeReadTest {
                 .andExpect(jsonPath("$.data.nodes[0].depth").value(1))
                 .andExpect(jsonPath("$.data.nodes[0].code").value("1"))
                 .andExpect(jsonPath("$.data.nodes[0].name").value("관리체계"))
-                // category 는 두 카운트 omit (NodeSummary 의 필드별 @JsonInclude NON_NULL)
-                .andExpect(jsonPath("$.data.nodes[0].evidenceTypeCount").doesNotExist())
-                .andExpect(jsonPath("$.data.nodes[0].pendingReviewCount").doesNotExist())
+                // v15.2 5-15a 후속-1 — hybrid 정합: 카테고리도 own 카운트 명시 노출 (Q1=A own only, Q2=A 0 명시).
+                // 5-14c~5-14g 시점에는 doesNotExist() (@JsonInclude NON_NULL) 었음.
+                .andExpect(jsonPath("$.data.nodes[0].evidenceTypeCount").value(0))
+                .andExpect(jsonPath("$.data.nodes[0].collectedCount").value(0))
+                .andExpect(jsonPath("$.data.nodes[0].pendingReviewCount").value(0))
 
                 // [1] leaf1 — displayOrder=0
                 .andExpect(jsonPath("$.data.nodes[1].id").value(leaf1.getId()))
@@ -176,7 +181,7 @@ class TreeReadTest {
                 .andExpect(jsonPath("$.data.nodes[2].displayOrder").value(1))
                 .andExpect(jsonPath("$.data.nodes[2].evidenceTypeCount").value(0));
 
-        System.out.println("✅ [Tree] 단순 트리 — depth/parentId 정합, leaf 만 두 카운트 노출");
+        System.out.println("✅ [Tree] 단순 트리 — depth/parentId 정합, 모든 노드에 0 명시 (v15.2 hybrid 정합)");
     }
 
     // ========================================================================
@@ -291,5 +296,64 @@ class TreeReadTest {
                 .andExpect(jsonPath("$.data.framework.version").value(1));
 
         System.out.println("✅ [Tree] version 노출 — 0 → 1, name 변경 정합");
+    }
+
+    // ========================================================================
+    // 5. v15.2 5-15a 후속-1 — hybrid 노드 own 카운트 노출
+    //    카테고리에 자체 evidence_types 매달림 + 자식 leaf 도 자체 evidence_types
+    //    각자 own 카운트 (Q1=A own only, 자손 합산 X).
+    //    카테고리 카운트도 응답에 명시 (Q2=A Map miss 시 0, NON_NULL 가드 폐기).
+    // ========================================================================
+    @Test
+    @Order(5)
+    @DisplayName("[Tree] hybrid 노드 — 카테고리/leaf 모두 own evidenceTypeCount 노출 (v15.2 5-15a 후속-1)")
+    void testHybridNodeOwnCountsExposed() throws Exception {
+        Framework fw = frameworkRepository.save(Framework.builder().name("Hybrid FW").build());
+
+        // 카테고리 (hybrid: 자체 evidence_types 1개 매달림 + 자식 1개)
+        ControlNode hybridCat = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.category)
+                .code("1").name("범위 설정 (자체 증빙 보유)")
+                .displayOrder(0).depth(1).build());
+
+        // 자식 leaf (자체 evidence_types 2개 매달림)
+        ControlNode childLeaf = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(hybridCat).nodeType(NodeType.control)
+                .code("1.1").name("범위 문서화")
+                .displayOrder(0).depth(2).build());
+
+        // 카테고리 자체에 evidence_types 1개 (v15.0 hybrid backend 가 leaf-only 가드 제거)
+        evidenceTypeRepository.save(EvidenceType.builder()
+                .control(hybridCat).name("범위 정의서 (카테고리 자체)").build());
+
+        // leaf 에 evidence_types 2개
+        evidenceTypeRepository.save(EvidenceType.builder()
+                .control(childLeaf).name("범위 문서 v1").build());
+        evidenceTypeRepository.save(EvidenceType.builder()
+                .control(childLeaf).name("범위 문서 v2").build());
+
+        // 응답 검증:
+        //   nodes[0] = hybridCat (depth=1)   — own evidenceTypeCount=1 (자체만, 자손 평탄화 X)
+        //   nodes[1] = childLeaf (depth=2)   — own evidenceTypeCount=2
+        // 두 노드 모두 collectedCount=0, pendingReviewCount=0 명시 (Q2=A NULL 없음).
+        mockMvc.perform(get("/api/v1/frameworks/{id}/tree", fw.getId())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.nodes.length()").value(2))
+
+                // [0] hybridCat — 카테고리도 own 카운트 노출 (5-14g 까지는 omit)
+                .andExpect(jsonPath("$.data.nodes[0].nodeType").value("category"))
+                .andExpect(jsonPath("$.data.nodes[0].evidenceTypeCount").value(1))
+                .andExpect(jsonPath("$.data.nodes[0].collectedCount").value(0))
+                .andExpect(jsonPath("$.data.nodes[0].pendingReviewCount").value(0))
+
+                // [1] childLeaf — leaf own 카운트 (5-14f 부터 본격 집계, 정합 보존)
+                .andExpect(jsonPath("$.data.nodes[1].nodeType").value("control"))
+                .andExpect(jsonPath("$.data.nodes[1].evidenceTypeCount").value(2))
+                .andExpect(jsonPath("$.data.nodes[1].collectedCount").value(0))
+                .andExpect(jsonPath("$.data.nodes[1].pendingReviewCount").value(0));
+
+        System.out.println("✅ [Tree] hybrid 카테고리 own 카운트 노출 — cat.evidenceTypeCount=1 (자체) / leaf=2");
     }
 }
