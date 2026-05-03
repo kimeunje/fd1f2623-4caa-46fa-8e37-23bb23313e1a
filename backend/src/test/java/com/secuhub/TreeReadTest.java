@@ -78,7 +78,6 @@ class TreeReadTest {
         try {
             jdbcTemplate.execute("DELETE FROM evidence_types");
             jdbcTemplate.execute("DELETE FROM control_nodes");
-            jdbcTemplate.execute("DELETE FROM controls");
             jdbcTemplate.execute("DELETE FROM frameworks");
             // 본 테스트 전용 admin 만 정리 (다른 테스트 클래스 leftover 보존)
             jdbcTemplate.execute(

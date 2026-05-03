@@ -112,7 +112,6 @@ class Phase515aHybridIntegrationTest {
             jdbcTemplate.execute("DELETE FROM collection_jobs");
             jdbcTemplate.execute("DELETE FROM evidence_types");
             jdbcTemplate.execute("DELETE FROM control_nodes");
-            jdbcTemplate.execute("DELETE FROM controls");
             jdbcTemplate.execute("DELETE FROM frameworks");
             // 본 클래스 전용 user 만 정리 (다른 테스트 leftover 보존)
             jdbcTemplate.execute(

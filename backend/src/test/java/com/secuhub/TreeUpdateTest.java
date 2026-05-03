@@ -82,7 +82,6 @@ class TreeUpdateTest {
         try {
             jdbcTemplate.execute("DELETE FROM evidence_types");
             jdbcTemplate.execute("DELETE FROM control_nodes");
-            jdbcTemplate.execute("DELETE FROM controls");
             jdbcTemplate.execute("DELETE FROM frameworks");
             jdbcTemplate.execute(
                     "DELETE FROM users WHERE email LIKE '%-5-14d@test.com'");

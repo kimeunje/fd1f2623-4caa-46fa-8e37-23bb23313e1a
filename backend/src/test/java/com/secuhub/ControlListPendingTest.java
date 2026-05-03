@@ -21,16 +21,25 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * Phase 5-9 — Control 목록 API 의 pendingReviewCount 집계 검증
+ * Phase 5-9 — Tree API 의 pendingReviewCount 집계 검증 (v15.4 /tree 이전)
  *
  * <h3>v14 Phase 5-14f 회귀 픽스 (패턴 A — 평면 leaf depth=1)</h3>
  * <p>{@code Control.builder()} → {@code ControlNode.builder().nodeType(NodeType.control)
  * .displayOrder(0).depth(1).build()}. {@link EvidenceType#getControl()} 의 타입이
  * {@link ControlNode} 로 변경되어 builder 의 {@code .control(leaf)} 호출 자연 매칭.</p>
  *
+ * <h3>v15.4 회귀 정리 — endpoint 이전 (의미 보존, 케이스 5 그대로)</h3>
+ * <p>v15.3 의 {@code ControlController.java} 통째 삭제로 GET
+ * {@code /api/v1/frameworks/{fwId}/controls} 폐기 (v14.3 결정 — TreeController 분리,
+ * v15 에서 ControlController 자연 제거 시 잔존). 본 회귀 픽스는 GET
+ * {@code /api/v1/frameworks/{fwId}/tree} 로 이전. v15.2 후속-1 의 {@code toNodeSummary}
+ * leaf 한정 분기 제거로 모든 노드 (category + leaf, hybrid 포함) 에 evidenceTypeCount /
+ * pendingReviewCount / collectedCount 가 노출되어 의미 동등 보존. assertion path 만
+ * {@code $.data[i]} → {@code $.data.nodes[i]} 로 변경, 5 케이스 의미 그대로.</p>
+ *
  * <h3>검증 항목 (의미 보존)</h3>
  * <ul>
- *   <li>GET /api/v1/frameworks/{fwId}/controls 응답에 pendingReviewCount 포함</li>
+ *   <li>GET /api/v1/frameworks/{fwId}/tree 응답의 모든 노드에 pendingReviewCount 포함 (v15.2 후속-1)</li>
  *   <li>Control 간 집계 분리 — A control 의 pending 이 B control 에 누적되지 않음</li>
  *   <li>pending 아닌 상태(approved / rejected / auto_approved)는 집계 제외</li>
  *   <li>빈 Control / 파일 0개인 Control → pendingReviewCount=0</li>
@@ -40,7 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-@DisplayName("Phase 5-9 — Control 목록 API pending 집계")
+@DisplayName("Phase 5-9 — Tree API pending 집계 (v15.4 /tree 이전)")
 class ControlListPendingTest {
 
     @Autowired private MockMvc mockMvc;
@@ -86,11 +95,11 @@ class ControlListPendingTest {
     void testEmptyControlHasZeroPending() throws Exception {
         createLeaf(framework, "X-1", "빈 통제");
 
-        mockMvc.perform(get("/api/v1/frameworks/" + framework.getId() + "/controls")
+        mockMvc.perform(get("/api/v1/frameworks/{id}/tree", framework.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].code").value("X-1"))
-                .andExpect(jsonPath("$.data[0].pendingReviewCount").value(0));
+                .andExpect(jsonPath("$.data.nodes[0].code").value("X-1"))
+                .andExpect(jsonPath("$.data.nodes[0].pendingReviewCount").value(0));
 
         System.out.println("✅ [Empty] 빈 Control pendingReviewCount=0");
     }
@@ -115,11 +124,11 @@ class ControlListPendingTest {
         savePending(etA, "a1.pdf", 1);
         savePending(etA, "a2.pdf", 2);
 
-        mockMvc.perform(get("/api/v1/frameworks/" + framework.getId() + "/controls")
+        mockMvc.perform(get("/api/v1/frameworks/{id}/tree", framework.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[?(@.code == 'A-1')].pendingReviewCount").value(2))
-                .andExpect(jsonPath("$.data[?(@.code == 'B-1')].pendingReviewCount").value(0));
+                .andExpect(jsonPath("$.data.nodes[?(@.code == 'A-1')].pendingReviewCount").value(2))
+                .andExpect(jsonPath("$.data.nodes[?(@.code == 'B-1')].pendingReviewCount").value(0));
 
         System.out.println("✅ [Isolation] Control 간 pending 집계 격리 확인");
     }
@@ -142,10 +151,10 @@ class ControlListPendingTest {
         saveWithStatus(et, "r.pdf", 3, ReviewStatus.rejected);
         saveWithStatus(et, "auto.pdf", 4, ReviewStatus.auto_approved);
 
-        mockMvc.perform(get("/api/v1/frameworks/" + framework.getId() + "/controls")
+        mockMvc.perform(get("/api/v1/frameworks/{id}/tree", framework.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].pendingReviewCount").value(1));
+                .andExpect(jsonPath("$.data.nodes[0].pendingReviewCount").value(1));
 
         System.out.println("✅ [Filter] pending 만 집계 (다른 상태 제외)");
     }
@@ -171,10 +180,10 @@ class ControlListPendingTest {
         savePending(et2, "2.pdf", 1);
         savePending(et3, "3.pdf", 1);
 
-        mockMvc.perform(get("/api/v1/frameworks/" + framework.getId() + "/controls")
+        mockMvc.perform(get("/api/v1/frameworks/{id}/tree", framework.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].pendingReviewCount").value(3));
+                .andExpect(jsonPath("$.data.nodes[0].pendingReviewCount").value(3));
 
         System.out.println("✅ [Aggregation] 증빙 유형별 pending 합산 확인");
     }
@@ -202,11 +211,11 @@ class ControlListPendingTest {
             savePending(etF, "f" + i + ".pdf", i);
         }
 
-        mockMvc.perform(get("/api/v1/frameworks/" + framework.getId() + "/controls")
+        mockMvc.perform(get("/api/v1/frameworks/{id}/tree", framework.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].code").value("E-1"))
-                .andExpect(jsonPath("$.data[0].pendingReviewCount").value(1));
+                .andExpect(jsonPath("$.data.nodes[0].code").value("E-1"))
+                .andExpect(jsonPath("$.data.nodes[0].pendingReviewCount").value(1));
 
         System.out.println("✅ [Scope] Framework 단위 pending 격리 확인");
     }
