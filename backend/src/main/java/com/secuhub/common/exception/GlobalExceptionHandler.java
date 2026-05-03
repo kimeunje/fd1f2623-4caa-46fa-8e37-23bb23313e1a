@@ -10,6 +10,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
 
@@ -69,6 +70,33 @@ public class GlobalExceptionHandler {
         log.warn("Optimistic lock conflict: current version = {}", e.getCurrentVersion());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(TreeUpdateErrorResponse.versionMismatch(e.getCurrentVersion()));
+    }
+
+    // ========================================================================
+    // v15 Phase 5-15b Round 3 (v15.6) — 부수 발견 L24 픽스
+    // ========================================================================
+
+    /**
+     * 매핑 없는 path 호출 시 404 + 표준 에러 응답.
+     *
+     * <p>v15.4 부수 발견 (L24 픽스). v15.5.1 운영 회귀의 직접 원인:</p>
+     * <pre>
+     *   FE 호출 GET /api/v1/controls/5  (v15.3 폐기 endpoint)
+     *     → DispatcherServlet 매핑 없음
+     *     → ResourceHttpRequestHandler fallback → static resource 부재
+     *     → NoResourceFoundException
+     *     → (v15.5 까지) 마지막 generic Exception 핸들러 → 500
+     *     → (v15.6 본 핸들러) 404 + 표준 메시지
+     * </pre>
+     *
+     * <p>본 매핑은 의미 정정 (404 가 정합) + 운영 로그 noise 감소
+     * ({@code log.warn} 로 격하 — generic 의 {@code log.error} stacktrace 회피).</p>
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(NoResourceFoundException e) {
+        log.warn("No resource found: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("요청한 리소스를 찾을 수 없습니다."));
     }
 
     @ExceptionHandler(Exception.class)

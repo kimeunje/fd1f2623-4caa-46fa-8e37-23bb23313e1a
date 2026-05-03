@@ -4,8 +4,8 @@ import type {
   Framework,
   FrameworkCreatePayload,
   FrameworkInheritPayload,
-  ControlItem,
   ControlDetail,
+  EvidenceTypeResponse,
   EvidenceFileItem,
   EvidenceFileStats,
   ApproveRequest,
@@ -80,17 +80,59 @@ export const frameworksApi = {
 }
 
 // ========================================
-// Controls API
+// v15 Phase 5-15b Round 3 (v15.6) — Control Nodes API
+//
+// v15.3 폐기된 controlsApi (3 메서드: listByFramework / getDetail / deleteEvidenceType)
+// 의 후속. 옛 controlsApi 의 처리:
+//   - listByFramework  → 제거 (사용처 0, endpoint 폐기 dead code)
+//   - getDetail        → 본 객체의 getDetail 로 이전 (새 path /control-nodes/{id})
+//   - deleteEvidenceType → evidenceTypesApi.delete 로 분리 (namespace 일치 — 옵션 b)
+//
+// 본 객체의 getImpactSummary 는 옛 treeApi.getImpactSummary 의 이전 (path namespace
+// 일치 — Q2=B). 옛 path /controls/{id}/impact-summary 는 v15.6 에서 일괄 폐기 (Q1=A).
 // ========================================
-export const controlsApi = {
-  listByFramework(frameworkId: number) {
-    return api.get<ApiResponse<ControlItem[]>>(`/frameworks/${frameworkId}/controls`)
-  },
+export const controlNodesApi = {
+  /**
+   * v15.6 신규 — leaf control_node 상세 조회.
+   *
+   * <p>v15.3 폐기된 옛 GET /api/v1/controls/{id} (controlsApi.getDetail) 의 응답
+   * shape 보존. ControlsView 의 leaf 클릭 인라인 펼침에서 사용. v15.5.1 의
+   * 워크어라운드 catch 가 본 endpoint 정상화로 회수됨.</p>
+   */
   getDetail(id: number) {
-    return api.get<ApiResponse<ControlDetail>>(`/controls/${id}`)
+    return api.get<ApiResponse<ControlDetail>>(`/control-nodes/${id}`)
   },
-  /** v14 Phase 5-14f 보존 — leaf 의 evidence_type 단건 삭제는 그대로 유효. */
-  deleteEvidenceType(evidenceTypeId: number) {
+
+  /**
+   * v15.6 신규 — leaf 의 evidence-types 만 분리 응답.
+   *
+   * <p>evidence 운영 화면에서 detail 전체 재로드 회피용.</p>
+   */
+  getEvidenceTypes(id: number) {
+    return api.get<ApiResponse<EvidenceTypeResponse[]>>(`/control-nodes/${id}/evidence-types`)
+  },
+
+  /**
+   * v14.5 도입 / v15.6 URL 이전 — leaf 코드 변경 사전 경고용 카운트 조회.
+   *
+   * <p>옛 path: /controls/{id}/impact-summary (v14.5 ~ v15.5).
+   * 새 path: /control-nodes/{id}/impact-summary (v15.6 ~).
+   * BC layer 0, deprecation 0 — Q1=A 결정 정합.</p>
+   */
+  getImpactSummary(id: number) {
+    return api.get<ApiResponse<ImpactSummary>>(`/control-nodes/${id}/impact-summary`)
+  },
+}
+
+// ========================================
+// v15 Phase 5-15b Round 3 (v15.6) — Evidence Types API
+//
+// 옛 controlsApi.deleteEvidenceType 의 이전. 옵션 §1.7-b (FE 추상화 = path 일치).
+// 후속 phase 에서 evidence-types CRUD 추가 시 본 객체에 자연 확장.
+// ========================================
+export const evidenceTypesApi = {
+  /** v14 Phase 5-14f — leaf 의 evidence_type 단건 삭제. v15.6 namespace 정리. */
+  delete(evidenceTypeId: number) {
     return api.delete(`/evidence-types/${evidenceTypeId}`)
   },
 }
@@ -98,9 +140,8 @@ export const controlsApi = {
 // ========================================
 // v14 Phase 5-14g — 통제 트리 API (control_nodes 자기참조)
 //
-// spec §3.3.1.4 의 4개 신규 엔드포인트를 모은 단일 객체.
-// 5-14g 는 read 만 적극 활용 (getTree / getImpactSummary / exportFramework).
-// patchTree 는 5-14h 에서 본격 사용 — 정의만 노출.
+// v15.6: getImpactSummary 가 controlNodesApi.getImpactSummary 로 이전됨 (Q2=B).
+// 본 객체는 framework 단위 트리 read/write/export 만 담당.
 // ========================================
 export const treeApi = {
   /**
@@ -119,7 +160,7 @@ export const treeApi = {
    * PATCH /api/v1/frameworks/{id}/tree (5-14d).
    *
    * <p>nodes.{created,updated,moved,deleted} 단일 트랜잭션, Optimistic lock, tempId
-   * 매핑. 12 검증 규칙. 5-14g 는 정의만 노출, 5-14h 에서 본격 호출.</p>
+   * 매핑. 12 검증 규칙. 5-14h 에서 본격 호출.</p>
    *
    * <p>409 (version_mismatch) / 422 (validation_failed) 는 axios 가 reject 하므로
    * 호출 측은 try/catch + e.response.data 로 TreePatchErrorResponse shape 처리.</p>
@@ -129,18 +170,6 @@ export const treeApi = {
       `/frameworks/${frameworkId}/tree`,
       payload
     )
-  },
-
-  /**
-   * GET /api/v1/controls/{id}/impact-summary (5-14e).
-   *
-   * <p>leaf 코드 변경 사전 경고용 3 카운트 (evidenceFileCount / jobCount / reviewCount).
-   * 합산 > 0 이면 5-14h 의 코드 변경 경고 다이얼로그 발동. 5-14g 는 정의만 노출.</p>
-   *
-   * <p>존재하지 않는 controlId 도 404 가 아닌 {0,0,0} 반환 (5-14e Q2-A).</p>
-   */
-  getImpactSummary(controlId: number) {
-    return api.get<ApiResponse<ImpactSummary>>(`/controls/${controlId}/impact-summary`)
   },
 
   /**
@@ -251,8 +280,12 @@ export const evidenceFilesApi = {
     window.URL.revokeObjectURL(url)
   },
 
-  async downloadZip(controlId: number, controlCode: string) {
-    const response = await api.get(`/evidence-files/zip/${controlId}`, {
+  /**
+   * v15.6: param 명 controlId → nodeId rename (FE 측). URL path variable 자체는
+   * BE wire shape 보존 (Q3=B — `/evidence-files/zip/{controlId}` 는 별도 phase).
+   */
+  async downloadZip(nodeId: number, controlCode: string) {
+    const response = await api.get(`/evidence-files/zip/${nodeId}`, {
       responseType: 'blob',
     })
 

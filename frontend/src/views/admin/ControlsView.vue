@@ -13,14 +13,15 @@
  *   <li>AddControlDialog / EditControlDialog 사용처 0 — Phase 5-14h 진입 결정 (Q2=A)
  *       으로 본 phase 에서 파일도 함께 삭제됨. 신규 분류/통제 추가는 모두 다이얼로그
  *       편집 모드에서 PATCH /tree 로 처리</li>
- *   <li>controlsApi.create / update / delete 메서드 삭제 (5-14f 백엔드 410 Gone 동기화)</li>
+ *   <li>v15.6: controlsApi 통째 제거 — controlNodesApi (detail/evidence-types/impact-summary)
+ *       + evidenceTypesApi (delete) 로 분리 (Q1=A / Q2=B / Q4=A 결정 정합)</li>
  * </ul>
  *
  * <h3>5-14g 동작 보존</h3>
  * <ul>
  *   <li>leaf 행 클릭 → 인라인 펼침으로 evidence 카드 목록 (v12 5-12b)</li>
  *   <li>증빙 유형 카드 클릭 → EvidenceTypeDetailView 별도 페이지 이동 (goToEvidenceTypeDetail)</li>
- *   <li>증빙 유형 우측 🗑 → controlsApi.deleteEvidenceType (5-14f 보존 endpoint)</li>
+ *   <li>증빙 유형 우측 🗑 → evidenceTypesApi.delete (v15.6 namespace 일치)</li>
  *   <li>[ZIP 다운로드] 버튼 (펼친 leaf 안). 증빙 유형 추가는 [통제 관리] 다이얼로그로 통합 (v15.5)</li>
  *   <li>pending 행 배경 강조 (Phase 5-9)</li>
  *   <li>본문 헤더의 Framework 이름 + 카운트 서브텍스트 (Phase 5-13f)</li>
@@ -42,7 +43,8 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   frameworksApi,
-  controlsApi,
+  controlNodesApi,
+  evidenceTypesApi,
   evidenceFilesApi,
 } from '@/services/evidenceApi'
 import { useControlTree, type LeafStatus } from '@/composables/useControlTree'
@@ -87,26 +89,24 @@ const expandedLeafId = ref<number | null>(null)
 const controlDetail = ref<ControlDetail | null>(null)
 const detailLoading = ref(false)
 
-async function toggleLeaf(controlId: number) {
-  if (expandedLeafId.value === controlId) {
+async function toggleLeaf(nodeId: number) {
+  if (expandedLeafId.value === nodeId) {
     expandedLeafId.value = null
     controlDetail.value = null
     return
   }
-  expandedLeafId.value = controlId
+  expandedLeafId.value = nodeId
   detailLoading.value = true
   try {
-    const { data } = await controlsApi.getDetail(controlId)
+    const { data } = await controlNodesApi.getDetail(nodeId)
     if (data.success) controlDetail.value = data.data
   } catch (e) {
     console.error(e)
-    // v15.5.1 워크어라운드 — v15.3 ControlController 삭제로 GET /api/v1/controls/{id}
-    // endpoint 폐기됨 (FE 호출 잔존지 미정리). v15.6 통합 phase 에서 control_nodes
-    // 기반 신규 endpoint 신설 + FE 명명 정리 (controlsApi → controlNodesApi) 예정.
-    // 사용자 안내 후 펼침 상태 롤백 (시각적 펼침 안 됨, 트리 정합).
+    // v15.6 정상화: 새 endpoint /control-nodes/{id} 호출. 단순 에러 토스트 + 펼침
+    // 상태 롤백. v15.5.1 의 안내 메시지 ("v15.6 업데이트에서 정상화 예정") 회수.
     expandedLeafId.value = null
     controlDetail.value = null
-    showToast('증빙 유형 조회는 점검 중입니다. v15.6 업데이트에서 정상화 예정.', 'error')
+    showToast('증빙 유형을 불러오지 못했습니다.', 'error')
   } finally {
     detailLoading.value = false
   }
@@ -115,13 +115,13 @@ async function toggleLeaf(controlId: number) {
 async function refreshDetail() {
   if (!expandedLeafId.value) return
   try {
-    const { data } = await controlsApi.getDetail(expandedLeafId.value)
+    const { data } = await controlNodesApi.getDetail(expandedLeafId.value)
     if (data.success) controlDetail.value = data.data
   } catch (e) {
     console.error(e)
-    // v15.5.1 워크어라운드 — toggleLeaf 와 동일 사유. 기존 controlDetail 그대로
-    // 보존 (fallback) — 갱신 실패가 화면을 비우지 않도록.
-    showToast('증빙 유형 갱신은 점검 중입니다. v15.6 업데이트에서 정상화 예정.', 'error')
+    // v15.6 정상화. 기존 controlDetail 보존 (fallback) — 갱신 실패가 화면을 비우지
+    // 않도록.
+    showToast('증빙 유형을 갱신하지 못했습니다.', 'error')
   }
 }
 
@@ -192,13 +192,18 @@ function onTreeToggle(nodeId: number, nodeType: 'category' | 'control') {
   }
 }
 
-function goToEvidenceTypeDetail(evidenceTypeId: number, controlId: number) {
+/**
+ * v15.6: param 명 controlId → nodeId 정리. router params 의 `controlId` 키는
+ * router/index.ts 의 path 정의 (/evidence-types/:controlId) wire shape 보존
+ * (BE 명명 변경은 별도 phase — Q3=B 정합).
+ */
+function goToEvidenceTypeDetail(evidenceTypeId: number, nodeId: number) {
   if (selectedFrameworkId.value == null) return
   router.push({
     name: 'evidence-type-detail',
     params: {
       frameworkId: selectedFrameworkId.value,
-      controlId,
+      controlId: nodeId,   // ← router 정의 wire shape 보존
       evidenceTypeId,
     },
   })
@@ -362,11 +367,11 @@ async function handleImport() {
 // ========================================
 // leaf 펼침 안의 액션
 // ========================================
-async function onZipDownload(controlId: number, controlCode: string) {
+async function onZipDownload(nodeId: number, controlCode: string) {
   if (zipDownloading.value) return
   zipDownloading.value = true
   try {
-    await evidenceFilesApi.downloadZip(controlId, controlCode)
+    await evidenceFilesApi.downloadZip(nodeId, controlCode)
     showToast('ZIP 다운로드가 완료되었습니다.', 'success')
   } catch (e) {
     console.error('ZIP 다운로드 실패:', e)
@@ -384,7 +389,7 @@ async function onDeleteEvidenceType(etId: number, etName: string) {
   )
     return
   try {
-    await controlsApi.deleteEvidenceType(etId)
+    await evidenceTypesApi.delete(etId)
     await refreshDetail()
     await tree.reload()
     showToast('증빙 유형이 삭제되었습니다.', 'success')

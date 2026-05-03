@@ -70,10 +70,13 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const emit = defineEmits<{
-  // ─── view 모드 emits (5-14g 보존) ───
+  // ─── view 모드 emits (5-14g 보존, v15.6 명명 정리) ───
+  // v15.6: param 명 controlId → nodeId 정리. emit 호출은 positional argument 라
+  // template 측 / 호출자 (ControlsView 의 onZipDownload / goToEvidenceTypeDetail) 의
+  // 변경은 시그니처 param 명만 (실 동작 동일).
   'toggle-expand': [nodeId: number, nodeType: 'category' | 'control']
-  'go-evidence-type': [evidenceTypeId: number, controlId: number]
-  'zip-download': [controlId: number, controlCode: string]
+  'go-evidence-type': [evidenceTypeId: number, nodeId: number]
+  'zip-download': [nodeId: number, controlCode: string]
   'delete-evidence-type': [evidenceTypeId: number, evidenceTypeName: string]
 
   // ─── dialog 모드 emits (5-14h 신규) ───

@@ -27,7 +27,7 @@ import {
   type InjectionKey,
   type Ref,
 } from 'vue'
-import { treeApi, type AxiosErrorLike } from '@/services/evidenceApi'
+import { treeApi, controlNodesApi, type AxiosErrorLike } from '@/services/evidenceApi'
 import type {
   ImpactSummary,
   TreeFrameworkSummary,
@@ -1067,8 +1067,12 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
   }
 
   // ─────────────────────── 5-14h 코드 변경 영향 ───────────────────────
-  async function fetchImpactSummary(controlId: number): Promise<ImpactSummary> {
-    const response = await treeApi.getImpactSummary(controlId)
+  // v15.6: param 명 controlId → nodeId 정리 + path 이전 (treeApi → controlNodesApi).
+  // 옛 path /controls/{id}/impact-summary 폐기 (Q1=A — BC layer 0).
+  // 외부 호출자 (UnifiedControlsDialog 등) 는 positional argument 라 param 명 변경
+  // 영향 0. 시그니처는 (number) → Promise<ImpactSummary> 그대로.
+  async function fetchImpactSummary(nodeId: number): Promise<ImpactSummary> {
+    const response = await controlNodesApi.getImpactSummary(nodeId)
     const body = response.data
     if (!body.success) {
       throw new Error(body.message ?? 'impact-summary 호출 실패')
