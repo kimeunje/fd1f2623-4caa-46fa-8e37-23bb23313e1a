@@ -13,9 +13,7 @@
  *   <li>AddControlDialog / EditControlDialog 사용처 0 — Phase 5-14h 진입 결정 (Q2=A)
  *       으로 본 phase 에서 파일도 함께 삭제됨. 신규 분류/통제 추가는 모두 다이얼로그
  *       편집 모드에서 PATCH /tree 로 처리</li>
- *   <li>controlsApi.create / update / delete 메서드 삭제 (5-14f 백엔드 410 Gone 동기화).
- *       controlsApi.addEvidenceType 만 보존 — 본 view 의 [+ 증빙 유형] 흐름이 410 Gone
- *       toast 로 안내 (후속 phase 에서 leaf 패널에 통합 예정)</li>
+ *   <li>controlsApi.create / update / delete 메서드 삭제 (5-14f 백엔드 410 Gone 동기화)</li>
  * </ul>
  *
  * <h3>5-14g 동작 보존</h3>
@@ -23,7 +21,7 @@
  *   <li>leaf 행 클릭 → 인라인 펼침으로 evidence 카드 목록 (v12 5-12b)</li>
  *   <li>증빙 유형 카드 클릭 → EvidenceTypeDetailView 별도 페이지 이동 (goToEvidenceTypeDetail)</li>
  *   <li>증빙 유형 우측 🗑 → controlsApi.deleteEvidenceType (5-14f 보존 endpoint)</li>
- *   <li>[+ 증빙 유형] / [ZIP 다운로드] 버튼 (펼친 leaf 안)</li>
+ *   <li>[ZIP 다운로드] 버튼 (펼친 leaf 안). 증빙 유형 추가는 [통제 관리] 다이얼로그로 통합 (v15.5)</li>
  *   <li>pending 행 배경 강조 (Phase 5-9)</li>
  *   <li>본문 헤더의 Framework 이름 + 카운트 서브텍스트 (Phase 5-13f)</li>
  *   <li>useControlTree(selectedFrameworkIdRef) 시그니처 + tree.load() / tree.reload() /
@@ -102,6 +100,13 @@ async function toggleLeaf(controlId: number) {
     if (data.success) controlDetail.value = data.data
   } catch (e) {
     console.error(e)
+    // v15.5.1 워크어라운드 — v15.3 ControlController 삭제로 GET /api/v1/controls/{id}
+    // endpoint 폐기됨 (FE 호출 잔존지 미정리). v15.6 통합 phase 에서 control_nodes
+    // 기반 신규 endpoint 신설 + FE 명명 정리 (controlsApi → controlNodesApi) 예정.
+    // 사용자 안내 후 펼침 상태 롤백 (시각적 펼침 안 됨, 트리 정합).
+    expandedLeafId.value = null
+    controlDetail.value = null
+    showToast('증빙 유형 조회는 점검 중입니다. v15.6 업데이트에서 정상화 예정.', 'error')
   } finally {
     detailLoading.value = false
   }
@@ -114,6 +119,9 @@ async function refreshDetail() {
     if (data.success) controlDetail.value = data.data
   } catch (e) {
     console.error(e)
+    // v15.5.1 워크어라운드 — toggleLeaf 와 동일 사유. 기존 controlDetail 그대로
+    // 보존 (fallback) — 갱신 실패가 화면을 비우지 않도록.
+    showToast('증빙 유형 갱신은 점검 중입니다. v15.6 업데이트에서 정상화 예정.', 'error')
   }
 }
 
@@ -126,11 +134,6 @@ const showImportDialog = ref(false)
 const importFile = ref<File | null>(null)
 const importLoading = ref(false)
 const importResult = ref<ExcelImportResult | null>(null)
-
-// 증빙 유형 추가 다이얼로그 (leaf 펼침 안의 [+ 증빙 유형] 클릭)
-const showAddEtDialog = ref(false)
-const newEtName = ref('')
-const newEtTargetControlId = ref<number | null>(null)
 
 // ZIP 다운로드 (leaf 펼침 안)
 const zipDownloading = ref(false)
@@ -359,33 +362,6 @@ async function handleImport() {
 // ========================================
 // leaf 펼침 안의 액션
 // ========================================
-function onAddEvidenceTypeClick(controlId: number) {
-  newEtTargetControlId.value = controlId
-  newEtName.value = ''
-  showAddEtDialog.value = true
-}
-
-async function handleAddEvidenceType() {
-  if (!newEtTargetControlId.value || !newEtName.value.trim()) return
-  try {
-    await controlsApi.addEvidenceType(newEtTargetControlId.value, {
-      name: newEtName.value.trim(),
-    })
-    newEtName.value = ''
-    showAddEtDialog.value = false
-    await refreshDetail()
-    await tree.reload()
-    showToast('증빙 유형이 추가되었습니다.', 'success')
-  } catch (e: any) {
-    // 5-14f 후 백엔드 410 Gone — 사용자에게 안내
-    const msg =
-      e?.response?.status === 410
-        ? '직접 추가는 차단되어 있습니다. 추후 업데이트에서 [통제 관리] 다이얼로그로 통합 예정입니다.'
-        : e?.response?.data?.message ?? '증빙 유형 추가에 실패했습니다.'
-    showToast(msg, 'error')
-  }
-}
-
 async function onZipDownload(controlId: number, controlCode: string) {
   if (zipDownloading.value) return
   zipDownloading.value = true
@@ -684,7 +660,6 @@ watch(
           :search-active="tree.filterActive.value"
           @toggle-expand="onTreeToggle"
           @go-evidence-type="goToEvidenceTypeDetail"
-          @add-evidence-type="onAddEvidenceTypeClick"
           @zip-download="onZipDownload"
           @delete-evidence-type="onDeleteEvidenceType"
         />
@@ -751,42 +726,6 @@ watch(
             :disabled="importLoading || !importFile"
             class="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">
             {{ importLoading ? '업로드 중...' : 'Import 실행' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ────────────────────────────── 다이얼로그: 증빙 유형 추가 ────────────────────────────── -->
-    <div
-      v-if="showAddEtDialog"
-      class="fixed inset-0 bg-black/40 flex items-center justify-center z-[60]"
-      @click.self="showAddEtDialog = false">
-      <div class="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-bold text-gray-900">증빙 유형 추가</h3>
-          <button
-            @click="showAddEtDialog = false"
-            class="p-1 text-gray-400 hover:text-gray-600">
-            <i class="pi pi-times"></i>
-          </button>
-        </div>
-        <input
-          v-model="newEtName"
-          class="w-full px-3 py-2 border rounded-lg text-sm mb-4 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-          placeholder="증빙 유형 이름"
-          @keyup.enter="handleAddEvidenceType"
-        />
-        <div class="flex justify-end gap-2">
-          <button
-            @click="showAddEtDialog = false"
-            class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
-            취소
-          </button>
-          <button
-            @click="handleAddEvidenceType"
-            :disabled="!newEtName.trim()"
-            class="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">
-            추가
           </button>
         </div>
       </div>

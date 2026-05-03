@@ -164,14 +164,6 @@ export interface SaveError {
 export type SaveResult = SaveSuccess | SaveConflict | SaveValidation | SaveError
 
 // ============================================================================
-// 5-14h — Tab 변환 결과
-// ============================================================================
-
-export type ConvertResult =
-  | { ok: true; childDraft: DraftNode }
-  | { ok: false; reason: 'requires_save_first' | 'depth_exceeded' }
-
-// ============================================================================
 // composable
 // ============================================================================
 
@@ -1074,26 +1066,6 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     bumpDirty()
   }
 
-  // ─────────────────────── 5-14h Tab → v15.1 의미 단순화 ───────────────
-  /**
-   * v15.1 5-15a 후속-2 — hybrid 모델 후 변환 개념 무의미.
-   * BC: 시그니처 보존, "자식 통제 draft 추가" 로 의미 단순화.
-   * 호출처 (`dialogHandleTabKey`) 는 직접 `createChildControl` 호출 권장.
-   *
-   * @deprecated v15.1 — 본 함수는 호환 layer. 신규 코드는 `createChildControl` 사용.
-   */
-  function convertNodeType(node: UnifiedNode): ConvertResult {
-    if (node.depth >= 10) {
-      return { ok: false, reason: 'depth_exceeded' }
-    }
-    try {
-      const childDraft = createChildControl(node)
-      return { ok: true, childDraft }
-    } catch (_err) {
-      return { ok: false, reason: 'depth_exceeded' }
-    }
-  }
-
   // ─────────────────────── 5-14h 코드 변경 영향 ───────────────────────
   async function fetchImpactSummary(controlId: number): Promise<ImpactSummary> {
     const response = await treeApi.getImpactSummary(controlId)
@@ -1307,7 +1279,6 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     countDescendants,
     getMoveTargets,
     moveNode,
-    convertNodeType,
     discardAllDirty,
     fetchImpactSummary,
     saveTree,

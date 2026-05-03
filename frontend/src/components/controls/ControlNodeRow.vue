@@ -4,7 +4,7 @@
  *
  * 두 모드 지원:
  *   - mode='view'   : 5-14g 동작 보존 — props 통과, leaf 펼침 시 evidence 카드 표시,
- *                     5-14g emits (toggle-expand / go-evidence-type / add-evidence-type /
+ *                     5-14g emits (toggle-expand / go-evidence-type /
  *                     zip-download / delete-evidence-type) 모두 그대로
  *   - mode='dialog' : 5-14h 신규 — 인라인 input (코드/이름) + 카테고리/leaf hover 액션 +
  *                     키보드 단축키. tree composable 은 inject 로 받음
@@ -73,7 +73,6 @@ const emit = defineEmits<{
   // ─── view 모드 emits (5-14g 보존) ───
   'toggle-expand': [nodeId: number, nodeType: 'category' | 'control']
   'go-evidence-type': [evidenceTypeId: number, controlId: number]
-  'add-evidence-type': [controlId: number]
   'zip-download': [controlId: number, controlCode: string]
   'delete-evidence-type': [evidenceTypeId: number, evidenceTypeName: string]
 
@@ -81,7 +80,6 @@ const emit = defineEmits<{
   'leaf-code-blur': [
     payload: { node: UnifiedNode; oldCode: string; newCode: string }
   ]
-  'tab-on-existing': [node: UnifiedNode]
   'request-move': [node: UnifiedNode]
   'request-delete': [node: UnifiedNode]
 }>()
@@ -237,10 +235,6 @@ function viewOnGoEt(et: EvidenceTypeResponse): void {
   emit('go-evidence-type', et.id, props.node.id)
 }
 
-function viewOnAddEt(): void {
-  emit('add-evidence-type', props.node.id)
-}
-
 function viewOnZipDownload(): void {
   emit('zip-download', props.node.id, props.node.code)
 }
@@ -255,9 +249,6 @@ function forwardToggle(id: number, nt: 'category' | 'control'): void {
 }
 function forwardGoEt(etId: number, ctrlId: number): void {
   emit('go-evidence-type', etId, ctrlId)
-}
-function forwardAddEt(ctrlId: number): void {
-  emit('add-evidence-type', ctrlId)
 }
 function forwardZip(ctrlId: number, ctrlCode: string): void {
   emit('zip-download', ctrlId, ctrlCode)
@@ -350,10 +341,7 @@ async function dialogHandleEnterKey(): Promise<void> {
 async function dialogHandleTabKey(e: KeyboardEvent): Promise<void> {
   if (!tree || !dialogNode.value) return
   e.preventDefault()
-  // v15.1 5-15a 후속-2 — hybrid Tab 의미 변경:
-  // existing/draft + leaf/category 구분 없이 "자식 통제 draft 추가".
-  // 변환 개념 폐기 (convertNodeType 은 BC layer 로만 보존, @deprecated).
-  // tab-on-existing emit 폐기 (UnifiedControlsDialog 의 핸들러는 noop).
+  // hybrid Tab — existing/draft + leaf/category 구분 없이 자식 통제 draft 추가.
   try {
     const childDraft = tree.createChildControl(dialogNode.value)
     await nextTick()
@@ -446,9 +434,6 @@ const dialogShowDirtyDot = computed<boolean>(() => {
 // dialog 재귀 forwarding
 function forwardLeafCodeBlur(p: { node: UnifiedNode; oldCode: string; newCode: string }): void {
   emit('leaf-code-blur', p)
-}
-function forwardTabOnExisting(n: UnifiedNode): void {
-  emit('tab-on-existing', n)
 }
 function forwardRequestMove(n: UnifiedNode): void {
   emit('request-move', n)
@@ -625,13 +610,6 @@ function forwardRequestDelete(n: UnifiedNode): void {
         <div class="flex items-center gap-2 py-2 pr-4">
           <button
             type="button"
-            class="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
-            @click.stop="viewOnAddEt">
-            <i class="pi pi-plus text-[10px]"></i> 증빙 유형
-          </button>
-          <span class="text-gray-300">·</span>
-          <button
-            type="button"
             class="text-xs text-gray-600 hover:text-gray-900 flex items-center gap-1"
             @click.stop="viewOnZipDownload">
             <i class="pi pi-download text-[10px]"></i> ZIP 다운로드
@@ -661,7 +639,6 @@ function forwardRequestDelete(n: UnifiedNode): void {
         :search-active="searchActive"
         @toggle-expand="forwardToggle"
         @go-evidence-type="forwardGoEt"
-        @add-evidence-type="forwardAddEt"
         @zip-download="forwardZip"
         @delete-evidence-type="forwardDeleteEt"
       />
@@ -684,7 +661,6 @@ function forwardRequestDelete(n: UnifiedNode): void {
         :search-active="searchActive"
         @toggle-expand="forwardToggle"
         @go-evidence-type="forwardGoEt"
-        @add-evidence-type="forwardAddEt"
         @zip-download="forwardZip"
         @delete-evidence-type="forwardDeleteEt"
       />
@@ -880,7 +856,6 @@ function forwardRequestDelete(n: UnifiedNode): void {
         :node="child"
         mode="dialog"
         @leaf-code-blur="forwardLeafCodeBlur"
-        @tab-on-existing="forwardTabOnExisting"
         @request-move="forwardRequestMove"
         @request-delete="forwardRequestDelete"
       />

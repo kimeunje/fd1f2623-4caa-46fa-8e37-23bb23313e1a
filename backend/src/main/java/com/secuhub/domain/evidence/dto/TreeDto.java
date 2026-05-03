@@ -1,7 +1,5 @@
 package com.secuhub.domain.evidence.dto;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.secuhub.domain.evidence.entity.ControlNode;
 import com.secuhub.domain.evidence.entity.Framework;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -127,44 +125,5 @@ public class TreeDto {
          * 노출 (Q1=A own only). 검토 대기 N 배지용.
          */
         private Long pendingReviewCount;
-
-        /**
-         * @deprecated v15.2 5-15a 후속-1 — mutex 모델 가정 (category 카운트 omit).
-         *             hybrid 후 모든 노드에 카운트 노출. {@code TreeService.toNodeSummary}
-         *             가 직접 빌드 (본 헬퍼 미사용). 5-15b 또는 v15.x 일괄 정리 검토.
-         */
-        @Deprecated(since = "v15.2 Phase 5-15a")
-        public static NodeSummary fromCategory(ControlNode cn) {
-            return baseBuilder(cn).build();
-        }
-
-        /**
-         * @deprecated v15.2 5-15a 후속-1 — mutex 모델 가정 (leaf 한정 카운트).
-         *             hybrid 후 모든 노드에 own 카운트 노출. {@code TreeService.toNodeSummary}
-         *             가 직접 빌드 (본 헬퍼 미사용). 5-15b 또는 v15.x 일괄 정리 검토.
-         */
-        @Deprecated(since = "v15.2 Phase 5-15a")
-        public static NodeSummary fromLeaf(ControlNode cn,
-                                           int evidenceTypeCount,
-                                           int collectedCount,
-                                           long pendingReviewCount) {
-            return baseBuilder(cn)
-                    .evidenceTypeCount(evidenceTypeCount)
-                    .collectedCount(collectedCount)
-                    .pendingReviewCount(pendingReviewCount)
-                    .build();
-        }
-
-        private static NodeSummaryBuilder baseBuilder(ControlNode cn) {
-            return NodeSummary.builder()
-                    .id(cn.getId())
-                    .parentId(cn.getParent() != null ? cn.getParent().getId() : null)
-                    .nodeType(cn.getNodeType().name())
-                    .code(cn.getCode())
-                    .name(cn.getName())
-                    .description(cn.getDescription())
-                    .displayOrder(cn.getDisplayOrder())
-                    .depth(cn.getDepth());
-        }
     }
 }

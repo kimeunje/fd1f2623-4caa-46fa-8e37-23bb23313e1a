@@ -241,16 +241,6 @@ function handleRequestDelete(node: UnifiedNode): void {
 }
 
 // ============================================================================
-// Tab on existing — v15.1 5-15a 후속-2:
-// Tab 이 자식 통제 draft 추가로 의미 변경. ControlNodeRow 가 직접 처리하므로
-// 부모는 noop. emit 시그니처 + binding 은 BC 보존 (5-15b 또는 v15.x 일괄 정리).
-// tabToast / setTimeout / template 의 toast div 폐기.
-// ============================================================================
-function handleTabOnExisting(_node: UnifiedNode): void {
-  // noop. v15.0 의 toast 안내 (변환 v2 예정) 는 hybrid 채택으로 obsolete.
-}
-
-// ============================================================================
 // 새 대분류 추가
 // ============================================================================
 async function handleAddRootCategory(): Promise<void> {
@@ -405,7 +395,6 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
               :node="root"
               mode="dialog"
               @leaf-code-blur="handleLeafCodeBlur"
-              @tab-on-existing="handleTabOnExisting"
               @request-move="handleRequestMove"
               @request-delete="handleRequestDelete"
             />

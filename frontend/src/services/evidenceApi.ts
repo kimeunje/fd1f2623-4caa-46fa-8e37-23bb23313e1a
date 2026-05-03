@@ -6,8 +6,6 @@ import type {
   FrameworkInheritPayload,
   ControlItem,
   ControlDetail,
-  EvidenceTypePayload,
-  EvidenceTypeResponse,
   EvidenceFileItem,
   EvidenceFileStats,
   ApproveRequest,
@@ -90,15 +88,6 @@ export const controlsApi = {
   },
   getDetail(id: number) {
     return api.get<ApiResponse<ControlDetail>>(`/controls/${id}`)
-  },
-  /**
-   * v14 Phase 5-14h 보존 — 백엔드 410 Gone (5-14f 부터). ControlsView 의 leaf 펼침
-   * 패널 [+ 증빙 유형] 흐름에서 호출되며, 410 응답 시 사용자 안내 toast 가
-   * "[통제 관리] 다이얼로그로 통합 예정" 메시지를 표시한다 (ControlsView.handleAddEvidenceType
-   * 의 410 분기). 후속 phase 에서 leaf 패널 안 evidence-type 추가 흐름이 통합되면 제거.
-   */
-  addEvidenceType(controlId: number, data: EvidenceTypePayload) {
-    return api.post<ApiResponse<EvidenceTypeResponse>>(`/controls/${controlId}/evidence-types`, data)
   },
   /** v14 Phase 5-14f 보존 — leaf 의 evidence_type 단건 삭제는 그대로 유효. */
   deleteEvidenceType(evidenceTypeId: number) {
