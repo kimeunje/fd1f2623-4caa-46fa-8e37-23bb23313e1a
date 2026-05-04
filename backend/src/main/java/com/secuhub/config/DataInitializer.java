@@ -35,7 +35,6 @@ public class DataInitializer implements CommandLineRunner {
                 .team("보안팀")
                 .role(UserRole.admin)
                 .permissionEvidence(true)
-                .permissionVuln(true)
                 .build());
 
         userRepository.save(User.builder()
@@ -45,7 +44,6 @@ public class DataInitializer implements CommandLineRunner {
                 .team("백엔드팀")
                 .role(UserRole.approver)
                 .permissionEvidence(false)
-                .permissionVuln(true)
                 .build());
 
         userRepository.save(User.builder()
@@ -55,7 +53,6 @@ public class DataInitializer implements CommandLineRunner {
                 .team("백엔드팀")
                 .role(UserRole.developer)
                 .permissionEvidence(false)
-                .permissionVuln(true)
                 .build());
 
         userRepository.save(User.builder()
@@ -65,7 +62,6 @@ public class DataInitializer implements CommandLineRunner {
                 .team("프론트엔드팀")
                 .role(UserRole.developer)
                 .permissionEvidence(false)
-                .permissionVuln(true)
                 .build());
 
         userRepository.save(User.builder()
@@ -75,7 +71,6 @@ public class DataInitializer implements CommandLineRunner {
                 .team("백엔드팀")
                 .role(UserRole.developer)
                 .permissionEvidence(false)
-                .permissionVuln(true)
                 .build());
 
         log.info("데모 계정 초기화 완료 (5명)");

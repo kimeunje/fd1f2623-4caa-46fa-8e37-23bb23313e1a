@@ -43,9 +43,10 @@ public class User extends BaseEntity {
     @Builder.Default
     private Boolean permissionEvidence = false;
 
-    @Column(name = "permission_vuln", nullable = false)
-    @Builder.Default
-    private Boolean permissionVuln = true;
+    // Phase 3 cleanup (2026-05-04): permissionVuln 필드 + permission_vuln 컬럼 제거.
+    // Phase 3 (취약점 관리) 프로젝트 외 결정 → 권한 plane 단순화.
+    // Flyway forward migration `V_p3_cleanup__drop_phase3_artifacts.sql` 에서 컬럼
+    // DROP. dev/test 환경 (H2 ddl-auto:create) 은 entity 수정만으로 자동 정합.
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -68,9 +69,14 @@ public class User extends BaseEntity {
         this.role = role;
     }
 
-    public void updatePermissions(Boolean permissionEvidence, Boolean permissionVuln) {
+    /**
+     * 권한 갱신 — null 이면 미변경.
+     *
+     * <p>Phase 3 cleanup (2026-05-04): {@code permissionVuln} 파라미터 제거.
+     * 단일 권한 plane 만 유지.</p>
+     */
+    public void updatePermissions(Boolean permissionEvidence) {
         if (permissionEvidence != null) this.permissionEvidence = permissionEvidence;
-        if (permissionVuln != null) this.permissionVuln = permissionVuln;
     }
 
     public void updateStatus(UserStatus status) {

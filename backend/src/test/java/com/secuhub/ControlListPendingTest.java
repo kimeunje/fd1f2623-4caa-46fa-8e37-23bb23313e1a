@@ -78,7 +78,7 @@ class ControlListPendingTest {
         User admin = userRepository.save(User.builder()
                 .email("ctrlpending-admin@test.com").name("관리자")
                 .hashedPassword(passwordEncoder.encode("pw"))
-                .role(UserRole.admin).permissionEvidence(true).permissionVuln(true)
+                .role(UserRole.admin).permissionEvidence(true)
                 .build());
 
         adminToken = jwtTokenProvider.createToken(admin.getId(), admin.getEmail(), "admin");

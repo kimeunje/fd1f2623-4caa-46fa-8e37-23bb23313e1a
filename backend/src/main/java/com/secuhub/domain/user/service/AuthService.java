@@ -63,7 +63,9 @@ public class AuthService {
     }
 
     /**
-     * 현재 로그인된 사용자 정보 조회
+     * 현재 로그인된 사용자 정보 조회.
+     *
+     * <p>Phase 3 cleanup (2026-05-04): permissionVuln 매핑 제거.</p>
      */
     @Transactional(readOnly = true)
     public LoginResponse.UserInfo getMyInfo(Long userId) {
@@ -77,7 +79,6 @@ public class AuthService {
                 .team(user.getTeam())
                 .role(user.getRole().name())
                 .permissionEvidence(user.getPermissionEvidence())
-                .permissionVuln(user.getPermissionVuln())
                 .build();
     }
 }

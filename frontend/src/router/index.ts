@@ -39,9 +39,6 @@ const routes: RouteRecordRaw[] = [
   // :frameworkId, :nodeId, :evidenceTypeId 는 정규식 (\\d+) 으로 숫자만 매칭하도록 강제.
   //
   // v15 Phase 5-15c (v15.7): route param `:controlId` → `:nodeId` (Q3=B 정합).
-  //                          props mapping 도 controlId → nodeId 로 동기 변경.
-  //                          ControlsView.goToEvidenceTypeDetail 의 router.push params,
-  //                          EvidenceTypeDetailView 의 props 정의도 함께 변경.
   // ========================================
   {
     path: '/controls',
@@ -63,8 +60,6 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: 'Framework 상세' },
   },
   {
-    // v11 Phase 5-12: 증빙 유형 상세 페이지
-    // v15.7: param :controlId → :nodeId (Q3=B 정합)
     path: '/controls/:frameworkId(\\d+)/:nodeId(\\d+)/evidence-types/:evidenceTypeId(\\d+)',
     name: 'evidence-type-detail',
     component: () => import('@/views/admin/EvidenceTypeDetailView.vue'),
@@ -88,7 +83,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/admin/FilesView.vue'),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '증빙 파일' },
   },
-  // Phase 3 cleanup (2026-05-04): /vulns 라우트 제거 — 취약점 관리 프로젝트 외 결정
+  // Phase 3 cleanup (2026-05-04): /vulns 라우트 제거
   {
     path: '/accounts',
     name: 'accounts',
@@ -105,14 +100,9 @@ const routes: RouteRecordRaw[] = [
   // ========================================
   // 개발자 / 결재자
   //
-  // Phase 3 cleanup (2026-05-04): 다음 라우트 제거 — 취약점 관리 의존:
-  // - /dev/my-vulns (나의 현황)
-  // - /dev/vulns (취약점 목록)
-  // - /dev/approvals (결재 관리)
-  // - /dev/history (조치 이력)
-  //
-  // 보존: /dev/dashboard (전체 현황) — Phase 4 (시스템 관리) 또는 증빙 운영용으로
-  // 잠재 활용. 현재 PlaceholderView, 향후 단계 결정.
+  // Phase 3 cleanup (2026-05-04): vuln 관련 4 라우트 제거
+  // (/dev/my-vulns / /dev/vulns / /dev/approvals / /dev/history).
+  // /dev/dashboard 보존 (PlaceholderView, 향후 활용).
   // ========================================
   {
     path: '/dev/dashboard',

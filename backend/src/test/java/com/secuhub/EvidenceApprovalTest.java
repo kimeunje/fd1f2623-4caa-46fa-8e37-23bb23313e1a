@@ -70,14 +70,14 @@ class EvidenceApprovalTest {
         admin = userRepository.save(User.builder()
                 .email("approval-admin@test.com").name("관리자")
                 .hashedPassword(passwordEncoder.encode("pw"))
-                .role(UserRole.admin).permissionEvidence(true).permissionVuln(true)
+                .role(UserRole.admin).permissionEvidence(true)
                 .build());
 
         owner = userRepository.save(User.builder()
                 .email("approval-owner@test.com").name("인사팀 담당자")
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .team("인사팀").role(UserRole.developer)
-                .permissionEvidence(true).permissionVuln(true)
+                .permissionEvidence(true)
                 .build());
 
         Framework fw = frameworkRepository.save(Framework.builder()

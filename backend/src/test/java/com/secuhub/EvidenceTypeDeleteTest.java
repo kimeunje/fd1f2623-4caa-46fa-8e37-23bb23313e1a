@@ -94,7 +94,7 @@ class EvidenceTypeDeleteTest {
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .role(UserRole.admin)
                 .permissionEvidence(true)
-                .permissionVuln(true)
+                
                 .build());
         adminToken = jwtTokenProvider.createToken(
                 admin.getId(), admin.getEmail(), admin.getRole().name());

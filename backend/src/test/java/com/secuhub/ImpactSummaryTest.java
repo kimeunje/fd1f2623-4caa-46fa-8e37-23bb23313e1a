@@ -75,7 +75,7 @@ class ImpactSummaryTest {
                 .email("impact-admin@test.com").name("관리자")
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .role(UserRole.admin)
-                .permissionEvidence(true).permissionVuln(true)
+                .permissionEvidence(true)
                 .build());
         reviewerUser = admin;
         adminToken = jwtTokenProvider.createToken(admin.getId(), admin.getEmail(), "admin");

@@ -36,8 +36,7 @@ function isActive(routeName: string) {
   return route.name === routeName
 }
 
-// Phase 3 cleanup (2026-05-04): '취약점 관리' 그룹 통째 제거 (취약점 관리 프로젝트 외 결정).
-// assessments 메뉴 항목도 동시 제거 (라우트 자체가 router 에서 미정의 상태였음 = dead link).
+// Phase 3 cleanup (2026-05-04): '취약점 관리' 그룹 통째 제거.
 const menuGroups = [
   {
     id: 'main',

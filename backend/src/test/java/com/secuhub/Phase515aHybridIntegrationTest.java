@@ -127,7 +127,7 @@ class Phase515aHybridIntegrationTest {
                 .hashedPassword(passwordEncoder.encode("password"))
                 .role(UserRole.admin)
                 .permissionEvidence(true)
-                .permissionVuln(true)
+                
                 .build());
         adminToken = jwtTokenProvider.createToken(
                 adminUser.getId(), adminUser.getEmail(), adminUser.getRole().name());

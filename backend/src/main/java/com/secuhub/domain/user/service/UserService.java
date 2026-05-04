@@ -23,6 +23,9 @@ import java.util.List;
  *
  * <p>도입 동기는 {@link com.secuhub.domain.user.controller.UserController} javadoc 참조.</p>
  *
+ * <p>Phase 3 cleanup (2026-05-04): permissionVuln 처리 일괄 제거 (create / update).
+ * 단일 권한 plane.</p>
+ *
  * <h3>주요 동작 요약</h3>
  * <ul>
  *   <li><b>create</b> — email 중복 체크 + 비번 hash + status=active 기본</li>
@@ -37,9 +40,9 @@ import java.util.List;
  * 팩토리에서 explicit 미매핑). entity 에 비번이 잔존해도 wire 에서 자연 차단.</p>
  *
  * <h3>delete 의 soft 선택</h3>
- * <p>hard delete 시 FK cascade 영향 (evidence_files.uploaded_by / reviewed_by /
- * approval_requests.requester / vulnerabilities.assignee 등 참조 지점 다수). soft
- * delete 로 ID 보존 + status=inactive 표시 → 운영 안전. 본 프로젝트 기존 패턴 정합.</p>
+ * <p>hard delete 시 FK cascade 영향 (evidence_files.uploaded_by / reviewed_by 등
+ * 참조 지점 다수). soft delete 로 ID 보존 + status=inactive 표시 → 운영 안전. 본
+ * 프로젝트 기존 패턴 정합.</p>
  */
 @Slf4j
 @Service
@@ -79,7 +82,6 @@ public class UserService {
                 .team(request.getTeam())
                 .role(request.getRole())
                 .permissionEvidence(Boolean.TRUE.equals(request.getPermissionEvidence()))
-                .permissionVuln(Boolean.TRUE.equals(request.getPermissionVuln()))
                 .status(UserStatus.active)
                 .build();
         User saved = userRepository.save(user);
@@ -97,8 +99,8 @@ public class UserService {
         if (request.getRole() != null) {
             user.updateRole(request.getRole());
         }
-        if (request.getPermissionEvidence() != null || request.getPermissionVuln() != null) {
-            user.updatePermissions(request.getPermissionEvidence(), request.getPermissionVuln());
+        if (request.getPermissionEvidence() != null) {
+            user.updatePermissions(request.getPermissionEvidence());
         }
         if (request.getStatus() != null) {
             user.updateStatus(request.getStatus());

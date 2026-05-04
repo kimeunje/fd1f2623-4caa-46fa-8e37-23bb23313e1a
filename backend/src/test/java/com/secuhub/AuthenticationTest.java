@@ -90,7 +90,6 @@ class AuthenticationTest {
                 .team("보안팀")
                 .role(UserRole.admin)
                 .permissionEvidence(true)
-                .permissionVuln(true)
                 .build());
 
         LoginRequest request = new LoginRequest("login@test.com", "password123");
@@ -224,7 +223,6 @@ class AuthenticationTest {
                 .team("백엔드팀")
                 .role(UserRole.developer)
                 .permissionEvidence(false)
-                .permissionVuln(true)
                 .build());
 
         String token = jwtTokenProvider.createToken(user.getId(), user.getEmail(), user.getRole().name());
@@ -237,8 +235,7 @@ class AuthenticationTest {
                 .andExpect(jsonPath("$.data.name").value("나자신"))
                 .andExpect(jsonPath("$.data.team").value("백엔드팀"))
                 .andExpect(jsonPath("$.data.role").value("developer"))
-                .andExpect(jsonPath("$.data.permissionEvidence").value(false))
-                .andExpect(jsonPath("$.data.permissionVuln").value(true));
+                .andExpect(jsonPath("$.data.permissionEvidence").value(false));
 
         System.out.println("✅ [Auth] 토큰으로 내 정보 조회 정상");
     }

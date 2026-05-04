@@ -25,16 +25,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * JPA 엔티티 스키마 검증 테스트 (v11)
  *
- * <p><b>Phase 3 cleanup (2026-05-04)</b>: vulnerability 도메인 제거에 따라 본 테스트의
- * vuln/approval/vulnAction 케이스 3건 (Order=4/5/6) 제거 + Order=7 의 vuln repository
- * null check 3건 제거 + import / autowired / cleanLeftover 의 vuln 부분 정리.
- * {@link User#getPermissionVuln} 필드 자체는 BE entity 차원 보존 (DB 컬럼 호환).</p>
+ * <p><b>Phase 3 cleanup (2026-05-04)</b>: vulnerability 도메인 + permission_vuln
+ * 컬럼 일괄 제거에 따라 다음 정리:</p>
+ * <ul>
+ *   <li>vuln/approval/vulnAction 케이스 3건 (Order=4/5/6) 제거</li>
+ *   <li>Order=7 의 vuln repository null check 3건 제거</li>
+ *   <li>import / autowired / cleanLeftover 의 vuln 부분 제거</li>
+ *   <li>testUserCrud 의 {@code .permissionVuln(true)} + {@code getPermissionVuln} assert 제거</li>
+ * </ul>
  *
  * 실행: ./gradlew test
  *
  * 검증 항목:
- * - 7개 테이블 정상 생성 (Phase 3 제거 후 — vulnerabilities / vuln_action_logs /
- *   approval_requests 3 테이블 entity 차원 제거됨)
+ * - 7개 테이블 정상 생성 (Phase 3 제거 후)
  * - evidence_types.file_type 제거 확인
  * - job_executions.log_file_path 제거 확인
  * - [v11 신규] Framework 자기참조 상속 + status
@@ -60,9 +63,6 @@ class SchemaValidationTest {
     private EntityManager entityManager;
 
     // ============= v14 fix-3: 테스트 클래스 간 leftover 격리 =============
-    // 다른 테스트 클래스(@Transactional 없는 mockMvc 테스트들)가
-    // commit 한 사용자/프레임워크/통제 데이터가 SchemaValidationTest 시작 시
-    // 잔존할 수 있음. testUserCrud 의 count() 검증을 위해 명시적 cleanup.
     @BeforeEach
     void cleanLeftoverFromOtherTestClasses() {
         notificationPreferenceRepository.deleteAllInBatch();
@@ -88,7 +88,7 @@ class SchemaValidationTest {
         User admin = userRepository.save(User.builder()
                 .email("admin@test.com").name("관리자").hashedPassword("pw")
                 .team("보안팀").role(UserRole.admin)
-                .permissionEvidence(true).permissionVuln(true)
+                .permissionEvidence(true)
                 .build());
 
         User dev = userRepository.save(User.builder()
@@ -106,9 +106,8 @@ class SchemaValidationTest {
         assertThat(userRepository.findByRole(UserRole.developer)).hasSize(1);
         assertThat(userRepository.findByRoleAndStatus(UserRole.admin, UserStatus.active)).hasSize(1);
 
-        // 기본값 검증 (User.permissionVuln 은 BE entity 차원 보존, default true)
+        // 기본값 검증
         assertThat(dev.getPermissionEvidence()).isFalse();
-        assertThat(dev.getPermissionVuln()).isTrue();
         assertThat(dev.getStatus()).isEqualTo(UserStatus.active);
         assertThat(dev.getCreatedAt()).isNotNull();
 
@@ -512,15 +511,6 @@ class SchemaValidationTest {
         // ======================================================================
         // CASCADE 검증 — JPA 영속성 컨텍스트 개입을 완전히 배제하고 DB 레벨로 검증
         // ======================================================================
-        // JPA 매니지드 엔티티가 남아있으면 flush 순서 재배치·1차 캐시 등
-        // 예측하기 힘든 요소가 끼어들 수 있어, native SQL 로 테스트함.
-        //
-        // 기대 동작:
-        //   - @OnDelete(CASCADE) 가 DDL에 반영되어 FK가 ON DELETE CASCADE 를 가짐
-        //   - Native DELETE FROM users 시 DB가 notification_preferences 행을 CASCADE 삭제
-        //
-        // 만약 @OnDelete 가 DDL 생성에 실패했다면 DELETE 단계에서
-        // FK 제약 위반 예외가 즉시 발생해 원인이 명확히 드러남.
 
         // 1) 메모리 상태를 DB에 확정 + 1차 캐시 비우기
         entityManager.flush();

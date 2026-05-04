@@ -23,7 +23,7 @@ public class LoginResponse {
         private String team;
         private String role;
         private Boolean permissionEvidence;
-        private Boolean permissionVuln;
+        // Phase 3 cleanup (2026-05-04): permissionVuln 필드 제거.
     }
 
     public static LoginResponse of(String token, User user) {
@@ -36,7 +36,6 @@ public class LoginResponse {
                         .team(user.getTeam())
                         .role(user.getRole().name())
                         .permissionEvidence(user.getPermissionEvidence())
-                        .permissionVuln(user.getPermissionVuln())
                         .build())
                 .build();
     }

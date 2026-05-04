@@ -94,7 +94,7 @@ class Phase514fIntegrationTest {
                 .email("phase-5-14f-admin@test.com").name("관리자")
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .role(UserRole.admin)
-                .permissionEvidence(true).permissionVuln(true)
+                .permissionEvidence(true)
                 .build());
         adminToken = jwtTokenProvider.createToken(adminUser.getId(), adminUser.getEmail(), "admin");
     }

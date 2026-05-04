@@ -91,7 +91,7 @@ class MyTasksTest {
                 .email("mt-owner@test.com").name("담당자 홍길동")
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .team("인사팀").role(UserRole.developer)
-                .permissionEvidence(true).permissionVuln(true).build());
+                .permissionEvidence(true).build());
 
         ownerWithoutPerm = userRepository.save(User.builder()
                 .email("mt-noev@test.com").name("권한없는담당자")
@@ -108,7 +108,7 @@ class MyTasksTest {
         admin = userRepository.save(User.builder()
                 .email("mt-admin@test.com").name("관리자")
                 .hashedPassword(passwordEncoder.encode("pw"))
-                .role(UserRole.admin).permissionEvidence(true).permissionVuln(true).build());
+                .role(UserRole.admin).permissionEvidence(true).build());
 
         nonOwnerDeveloper = userRepository.save(User.builder()
                 .email("mt-nonowner@test.com").name("담당배정안된개발자")

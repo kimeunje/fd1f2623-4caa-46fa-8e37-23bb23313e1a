@@ -88,14 +88,14 @@ class EvidencePermissionTest {
         admin = userRepository.save(User.builder()
                 .email("perm-admin@test.com").name("관리자")
                 .hashedPassword(passwordEncoder.encode("pw"))
-                .role(UserRole.admin).permissionEvidence(true).permissionVuln(true)
+                .role(UserRole.admin).permissionEvidence(true)
                 .build());
 
         ownerWithPerm = userRepository.save(User.builder()
                 .email("perm-owner@test.com").name("인사팀 홍길동")
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .team("인사팀").role(UserRole.developer)
-                .permissionEvidence(true).permissionVuln(true)
+                .permissionEvidence(true)
                 .build());
 
         ownerWithoutPerm = userRepository.save(User.builder()
@@ -103,14 +103,14 @@ class EvidencePermissionTest {
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .team("인사팀").role(UserRole.developer)
                 .permissionEvidence(false)   // ❌ 증빙 수집 권한 없음
-                .permissionVuln(true)
+                
                 .build());
 
         outsider = userRepository.save(User.builder()
                 .email("perm-outsider@test.com").name("타팀 담당자")
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .team("법무팀").role(UserRole.developer)
-                .permissionEvidence(true).permissionVuln(true)
+                .permissionEvidence(true)
                 .build());
 
         // Framework → ControlNode (leaf) → EvidenceType (owner = ownerWithPerm)

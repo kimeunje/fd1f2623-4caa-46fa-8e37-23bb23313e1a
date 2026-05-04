@@ -21,10 +21,12 @@ function isActive(routeName: string) {
  * - `roles`: 있으면 해당 역할만 볼 수 있음 (기존 패턴).
  * - `requirePermissionEvidence`: v11 Phase 5-5 추가. true 면 permission_evidence=true
  *   또는 admin 역할일 때만 노출. "내 할 일" 메뉴를 담당자에게만 보이게 하는 용도.
+ *
+ * Phase 3 cleanup (2026-05-04): vuln 관련 4 메뉴 제거 (dev-my-vulns / dev-vulns /
+ * dev-approvals / dev-history). dev-dashboard 보존 (PlaceholderView, 향후 활용).
  */
 const menuItems = [
   { routeName: 'dev-dashboard', icon: 'pi-home', label: '전체 현황' },
-  { routeName: 'dev-my-vulns', icon: 'pi-user', label: '나의 현황' },
 
   // v11 Phase 5-5: "내 할 일" — permission_evidence=true 인 담당자에게만 노출
   {
@@ -33,10 +35,6 @@ const menuItems = [
     label: '내 할 일',
     requirePermissionEvidence: true,
   },
-
-  { routeName: 'dev-vulns', icon: 'pi-exclamation-circle', label: '취약점 목록' },
-  { routeName: 'dev-approvals', icon: 'pi-check-square', label: '결재 관리', roles: ['approver'] },
-  { routeName: 'dev-history', icon: 'pi-clock', label: '조치 이력' },
 ]
 
 /**
@@ -48,8 +46,8 @@ const visibleMenuItems = computed(() => {
   const hasEvidence = authStore.hasEvidenceAccess || authStore.isAdmin
 
   return menuItems.filter(item => {
-    if (item.roles && !item.roles.includes(role)) return false
-    if (item.requirePermissionEvidence && !hasEvidence) return false
+    if ((item as any).roles && !(item as any).roles.includes(role)) return false
+    if ((item as any).requirePermissionEvidence && !hasEvidence) return false
     return true
   })
 })

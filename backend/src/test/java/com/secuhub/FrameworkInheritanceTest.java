@@ -75,7 +75,7 @@ class FrameworkInheritanceTest {
         User admin = userRepository.save(User.builder()
                 .email("inherit-admin@test.com").name("관리자")
                 .hashedPassword(passwordEncoder.encode("pw"))
-                .role(UserRole.admin).permissionEvidence(true).permissionVuln(true).build());
+                .role(UserRole.admin).permissionEvidence(true).build());
         adminToken = jwtTokenProvider.createToken(admin.getId(), admin.getEmail(), "admin");
 
         User developer = userRepository.save(User.builder()

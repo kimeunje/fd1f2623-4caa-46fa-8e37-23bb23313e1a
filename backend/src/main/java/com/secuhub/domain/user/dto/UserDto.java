@@ -23,6 +23,9 @@ import java.util.List;
  * {@code UserListResponse} / {@code UserCreatePayload} / {@code UserUpdatePayload}
  * shape 정합. Q5=A 결정 (BE 자체 정합 + FE shape 은 wire 검증으로 일치 강제).</p>
  *
+ * <p>Phase 3 cleanup (2026-05-04): {@code permissionVuln} 필드 일괄 제거 (DetailResponse
+ * + CreateRequest + UpdateRequest). 단일 권한 plane.</p>
+ *
  * <h3>비밀번호 비노출</h3>
  * <p>{@link DetailResponse} / {@link BriefResponse} 모두 {@code hashedPassword} 미포함.
  * {@link User} entity 의 {@code @Getter} 가 자동 생성한 {@code getHashedPassword()} 가
@@ -38,8 +41,7 @@ public final class UserDto {
 
     /**
      * 단건 상세 응답. FE {@code User} interface 정합 (id / email / name / team /
-     * role / permissionEvidence / permissionVuln / status / lastLoginAt /
-     * createdAt / updatedAt).
+     * role / permissionEvidence / status / lastLoginAt / createdAt / updatedAt).
      */
     @Getter
     @Builder
@@ -51,7 +53,6 @@ public final class UserDto {
         private final String team;
         private final UserRole role;
         private final Boolean permissionEvidence;
-        private final Boolean permissionVuln;
         private final UserStatus status;
         private final LocalDateTime lastLoginAt;
         private final LocalDateTime createdAt;
@@ -65,7 +66,6 @@ public final class UserDto {
                     .team(u.getTeam())
                     .role(u.getRole())
                     .permissionEvidence(u.getPermissionEvidence())
-                    .permissionVuln(u.getPermissionVuln())
                     .status(u.getStatus())
                     .lastLoginAt(u.getLastLoginAt())
                     .createdAt(u.getCreatedAt())
@@ -147,9 +147,6 @@ public final class UserDto {
 
         @NotNull
         private Boolean permissionEvidence;
-
-        @NotNull
-        private Boolean permissionVuln;
     }
 
     /**
@@ -172,7 +169,6 @@ public final class UserDto {
 
         private UserRole role;
         private Boolean permissionEvidence;
-        private Boolean permissionVuln;
         private UserStatus status;
     }
 
