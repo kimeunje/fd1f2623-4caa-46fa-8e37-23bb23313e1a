@@ -7,7 +7,7 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
-const expandedMenus = ref<string[]>(['evidence', 'vuln'])
+const expandedMenus = ref<string[]>(['evidence'])
 
 function toggleMenu(menuId: string) {
   const idx = expandedMenus.value.indexOf(menuId)
@@ -36,6 +36,8 @@ function isActive(routeName: string) {
   return route.name === routeName
 }
 
+// Phase 3 cleanup (2026-05-04): '취약점 관리' 그룹 통째 제거 (취약점 관리 프로젝트 외 결정).
+// assessments 메뉴 항목도 동시 제거 (라우트 자체가 router 에서 미정의 상태였음 = dead link).
 const menuGroups = [
   {
     id: 'main',
@@ -51,13 +53,6 @@ const menuGroups = [
       { routeName: 'framework-list', icon: 'pi-list', label: '통제 항목' },
       { routeName: 'jobs', icon: 'pi-play', label: '수집 작업' },
       { routeName: 'files', icon: 'pi-folder', label: '증빙 파일' },
-    ],
-  },
-  {
-    id: 'vuln',
-    label: '취약점 관리',
-    items: [
-      { routeName: 'assessments', icon: 'pi-list-check', label: '점검 관리' },
     ],
   },
   {

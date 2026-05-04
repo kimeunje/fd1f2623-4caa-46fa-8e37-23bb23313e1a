@@ -96,9 +96,9 @@ onMounted(loadUsers)
               </span>
             </td>
             <td class="px-4 py-3">
+              <!-- Phase 3 cleanup (2026-05-04): '취약점' 라벨 제거. -->
               <div class="flex gap-1">
                 <span v-if="user.permissionEvidence" class="px-1.5 py-0.5 bg-purple-50 text-purple-600 text-xs rounded">증빙</span>
-                <span v-if="user.permissionVuln" class="px-1.5 py-0.5 bg-orange-50 text-orange-600 text-xs rounded">취약점</span>
               </div>
             </td>
             <td class="px-4 py-3 text-sm text-gray-500">

@@ -8,8 +8,6 @@ import com.secuhub.domain.user.entity.UserRole;
 import com.secuhub.domain.user.entity.UserStatus;
 import com.secuhub.domain.user.repository.NotificationPreferenceRepository;
 import com.secuhub.domain.user.repository.UserRepository;
-import com.secuhub.domain.vulnerability.entity.*;
-import com.secuhub.domain.vulnerability.repository.*;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.*;
@@ -27,15 +25,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * JPA 엔티티 스키마 검증 테스트 (v11)
  *
+ * <p><b>Phase 3 cleanup (2026-05-04)</b>: vulnerability 도메인 제거에 따라 본 테스트의
+ * vuln/approval/vulnAction 케이스 3건 (Order=4/5/6) 제거 + Order=7 의 vuln repository
+ * null check 3건 제거 + import / autowired / cleanLeftover 의 vuln 부분 정리.
+ * {@link User#getPermissionVuln} 필드 자체는 BE entity 차원 보존 (DB 컬럼 호환).</p>
+ *
  * 실행: ./gradlew test
  *
  * 검증 항목:
- * - 10개 테이블 정상 생성 (notification_preferences 추가)
+ * - 7개 테이블 정상 생성 (Phase 3 제거 후 — vulnerabilities / vuln_action_logs /
+ *   approval_requests 3 테이블 entity 차원 제거됨)
  * - evidence_types.file_type 제거 확인
  * - job_executions.log_file_path 제거 확인
- * - vulnerabilities 13컬럼 재설계 확인
- * - 4단계 상태 흐름 (unassigned → pending_approval → in_progress → done)
- * - 반려 시 unassigned 초기화
  * - [v11 신규] Framework 자기참조 상속 + status
  * - [v11 신규] EvidenceType 담당자(owner_user_id) + 마감일(due_date)
  * - [v11 신규] EvidenceFile 승인 플로우 (review_status, reviewed_by, review_note, reviewed_at, uploaded_by, submit_note)
@@ -53,9 +54,6 @@ class SchemaValidationTest {
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
     @Autowired private JobExecutionRepository jobExecutionRepository;
-    @Autowired private VulnerabilityRepository vulnerabilityRepository;
-    @Autowired private VulnActionLogRepository vulnActionLogRepository;
-    @Autowired private ApprovalRequestRepository approvalRequestRepository;
     @Autowired private NotificationPreferenceRepository notificationPreferenceRepository;
 
     @PersistenceContext
@@ -74,9 +72,6 @@ class SchemaValidationTest {
         evidenceTypeRepository.deleteAllInBatch();
         controlNodeRepository.deleteAllInBatch();   // v14 Phase 5-14f
         frameworkRepository.deleteAllInBatch();
-        vulnActionLogRepository.deleteAllInBatch();
-        approvalRequestRepository.deleteAllInBatch();
-        vulnerabilityRepository.deleteAllInBatch();
         userRepository.deleteAllInBatch();
     }
     // ====================================================================
@@ -111,7 +106,7 @@ class SchemaValidationTest {
         assertThat(userRepository.findByRole(UserRole.developer)).hasSize(1);
         assertThat(userRepository.findByRoleAndStatus(UserRole.admin, UserStatus.active)).hasSize(1);
 
-        // 기본값 검증
+        // 기본값 검증 (User.permissionVuln 은 BE entity 차원 보존, default true)
         assertThat(dev.getPermissionEvidence()).isFalse();
         assertThat(dev.getPermissionVuln()).isTrue();
         assertThat(dev.getStatus()).isEqualTo(UserStatus.active);
@@ -251,160 +246,12 @@ class SchemaValidationTest {
     }
 
     // ========================================
-    // 3. 취약점 관리 도메인 (전면 재설계)
-    // ========================================
-
-    @Test
-    @Order(4)
-    @DisplayName("[Vuln] 취약점 4단계 상태 흐름 (unassigned → done)")
-    @Transactional
-    void testVulnerabilityLifecycle() {
-        User dev = userRepository.save(User.builder()
-                .email("dev2@test.com").name("개발자").hashedPassword("pw")
-                .team("백엔드팀").role(UserRole.developer).build());
-        User approverUser = userRepository.save(User.builder()
-                .email("approver2@test.com").name("결재자").hashedPassword("pw")
-                .team("백엔드팀").role(UserRole.approver).build());
-
-        // 취약점 생성 — 재설계된 필드
-        Vulnerability vuln = vulnerabilityRepository.save(Vulnerability.builder()
-                .category("웹 취약점")
-                .deviceType("웹서버")
-                .hostname("web-server-01")
-                .checkCode("WEB-001")
-                .problem("사용자 입력값에 대한 SQL 인젝션 취약점 발견")
-                .content("파라미터 바인딩 미적용으로 인한 SQL Injection 가능")
-                .build());
-
-        // 초기 상태: unassigned
-        assertThat(vuln.getStatus()).isEqualTo(VulnStatus.unassigned);
-        assertThat(vuln.getAssignee()).isNull();
-
-        // Step 1: 담당자 + 계획일 + 결재자 입력 → pending_approval
-        vuln.requestApproval(dev, LocalDate.of(2025, 4, 15), approverUser);
-        vulnerabilityRepository.save(vuln);
-        assertThat(vuln.getStatus()).isEqualTo(VulnStatus.pending_approval);
-        assertThat(vuln.getAssignee().getName()).isEqualTo("개발자");
-        assertThat(vuln.getPlanDate()).isEqualTo(LocalDate.of(2025, 4, 15));
-        assertThat(vuln.getApprover().getName()).isEqualTo("결재자");
-
-        // Step 2: 결재 승인 → in_progress
-        vuln.approve();
-        vulnerabilityRepository.save(vuln);
-        assertThat(vuln.getStatus()).isEqualTo(VulnStatus.in_progress);
-
-        // Step 3: 조치 완료 → done
-        vuln.complete();
-        vulnerabilityRepository.save(vuln);
-        assertThat(vuln.getStatus()).isEqualTo(VulnStatus.done);
-
-        // Repository 쿼리 검증
-        assertThat(vulnerabilityRepository.countByStatus(VulnStatus.done)).isEqualTo(1);
-        assertThat(vulnerabilityRepository.findByAssigneeId(dev.getId())).hasSize(1);
-
-        System.out.println("✅ [Vuln] 4단계 상태 흐름 (unassigned → pending_approval → in_progress → done) 정상");
-    }
-
-    @Test
-    @Order(5)
-    @DisplayName("[Vuln] 결재 반려 → unassigned 초기화")
-    @Transactional
-    void testApprovalRejection() {
-        User dev = userRepository.save(User.builder()
-                .email("dev3@test.com").name("개발자3").hashedPassword("pw")
-                .role(UserRole.developer).build());
-        User appr = userRepository.save(User.builder()
-                .email("appr3@test.com").name("결재자3").hashedPassword("pw")
-                .role(UserRole.approver).build());
-
-        Vulnerability vuln = vulnerabilityRepository.save(Vulnerability.builder()
-                .category("인프라")
-                .deviceType("방화벽")
-                .hostname("fw-01")
-                .checkCode("INFRA-005")
-                .problem("불필요 포트 오픈")
-                .content("TCP 8080 포트가 외부에 노출됨")
-                .build());
-
-        // 결재 요청
-        vuln.requestApproval(dev, LocalDate.of(2025, 5, 1), appr);
-        vulnerabilityRepository.save(vuln);
-
-        // approval_requests 생성
-        ApprovalRequest request = approvalRequestRepository.save(ApprovalRequest.builder()
-                .vulnerability(vuln)
-                .requester(dev)
-                .approver(appr)
-                .category("조치 일정 결재")
-                .content("TCP 8080 포트 차단 예정")
-                .build());
-
-        assertThat(request.getStatus()).isEqualTo(ApprovalStatus.pending);
-        assertThat(approvalRequestRepository.countByApproverIdAndStatus(
-                appr.getId(), ApprovalStatus.pending)).isEqualTo(1);
-
-        // 반려
-        request.reject();
-        approvalRequestRepository.save(request);
-        vuln.reject();
-        vulnerabilityRepository.save(vuln);
-
-        // 검증: unassigned 초기화
-        assertThat(request.getStatus()).isEqualTo(ApprovalStatus.rejected);
-        assertThat(vuln.getStatus()).isEqualTo(VulnStatus.unassigned);
-        assertThat(vuln.getAssignee()).isNull();
-        assertThat(vuln.getPlanDate()).isNull();
-        assertThat(vuln.getApprover()).isNull();
-
-        System.out.println("✅ [Vuln] 결재 반려 → unassigned 초기화 정상");
-    }
-
-    @Test
-    @Order(6)
-    @DisplayName("[Vuln] VulnActionLog 이력 기록 (자유 입력)")
-    @Transactional
-    void testVulnActionLog() {
-        User dev = userRepository.save(User.builder()
-                .email("dev4@test.com").name("개발자4").hashedPassword("pw")
-                .role(UserRole.developer).build());
-
-        Vulnerability vuln = vulnerabilityRepository.save(Vulnerability.builder()
-                .category("웹 취약점")
-                .checkCode("WEB-003")
-                .problem("CSRF 토큰 미적용")
-                .content("CSRF 공격에 취약")
-                .build());
-
-        vulnActionLogRepository.saveAll(List.of(
-                VulnActionLog.builder()
-                        .vulnerability(vuln).user(dev)
-                        .category("담당자 배정").content("본인 배정")
-                        .build(),
-                VulnActionLog.builder()
-                        .vulnerability(vuln).user(dev)
-                        .category("결재 요청").content("2025-04-30까지 조치 예정")
-                        .build(),
-                VulnActionLog.builder()
-                        .vulnerability(vuln).user(dev)
-                        .category("조치 완료").content("CSRF 토큰 적용 완료")
-                        .build()
-        ));
-
-        List<VulnActionLog> logs = vulnActionLogRepository
-                .findByVulnerabilityIdOrderByCreatedAtDesc(vuln.getId());
-        assertThat(logs).hasSize(3);
-        assertThat(logs.get(0).getCategory()).isNotNull();
-
-        System.out.println("✅ [Vuln] VulnActionLog 이력 기록 정상 (자유 입력)");
-    }
-
-    // ========================================
-    // 4. 통합
+    // 3. 통합 (Phase 3 cleanup 후 — Repository 8개)
     // ========================================
 
     @Test
     @Order(7)
-    @DisplayName("[통합] 전체 10개 테이블 생성 확인 — 11개 Repository 주입 성공")
+    @DisplayName("[통합] 8개 Repository 주입 성공 — vulnerability 도메인 제거 후")
     void testAllRepositoriesInjected() {
         assertThat(userRepository).isNotNull();
         assertThat(frameworkRepository).isNotNull();
@@ -412,16 +259,13 @@ class SchemaValidationTest {
         assertThat(evidenceFileRepository).isNotNull();
         assertThat(collectionJobRepository).isNotNull();
         assertThat(jobExecutionRepository).isNotNull();
-        assertThat(vulnerabilityRepository).isNotNull();
-        assertThat(vulnActionLogRepository).isNotNull();
-        assertThat(approvalRequestRepository).isNotNull();
         assertThat(notificationPreferenceRepository).isNotNull();
 
-        System.out.println("✅ [통합] 11개 Repository 모두 정상 주입 — 10개 테이블 생성 완료");
+        System.out.println("✅ [통합] 8개 Repository 모두 정상 주입 — vulnerability 도메인 제거 후 정합");
     }
 
     // ========================================
-    // 5. v11 신규 — Phase 5-1 스키마 검증
+    // 4. v11 신규 — Phase 5-1 스키마 검증
     // ========================================
 
     @Test

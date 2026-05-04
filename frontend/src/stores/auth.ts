@@ -17,7 +17,8 @@ export const useAuthStore = defineStore('auth', () => {
   const isApprover = computed(() => user.value?.role === 'approver')
   const isDeveloper = computed(() => user.value?.role === 'developer')
   const hasEvidenceAccess = computed(() => user.value?.permissionEvidence ?? false)
-  const hasVulnAccess = computed(() => user.value?.permissionVuln ?? false)
+  // Phase 3 cleanup (2026-05-04): hasVulnAccess getter 제거.
+  // BE User entity 의 permission_vuln 컬럼은 보존 (DB 호환성), FE 차원 비노출.
 
   // ========================================
   // Actions
@@ -134,7 +135,6 @@ export const useAuthStore = defineStore('auth', () => {
     isApprover,
     isDeveloper,
     hasEvidenceAccess,
-    hasVulnAccess,
     // Actions
     initialize,
     login,

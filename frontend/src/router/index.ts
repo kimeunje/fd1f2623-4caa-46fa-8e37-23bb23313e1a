@@ -88,12 +88,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/admin/FilesView.vue'),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '증빙 파일' },
   },
-  {
-    path: '/vulns',
-    name: 'vulns',
-    component: () => import('@/views/admin/PlaceholderView.vue'),
-    meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '취약점 목록' },
-  },
+  // Phase 3 cleanup (2026-05-04): /vulns 라우트 제거 — 취약점 관리 프로젝트 외 결정
   {
     path: '/accounts',
     name: 'accounts',
@@ -109,36 +104,21 @@ const routes: RouteRecordRaw[] = [
 
   // ========================================
   // 개발자 / 결재자
+  //
+  // Phase 3 cleanup (2026-05-04): 다음 라우트 제거 — 취약점 관리 의존:
+  // - /dev/my-vulns (나의 현황)
+  // - /dev/vulns (취약점 목록)
+  // - /dev/approvals (결재 관리)
+  // - /dev/history (조치 이력)
+  //
+  // 보존: /dev/dashboard (전체 현황) — Phase 4 (시스템 관리) 또는 증빙 운영용으로
+  // 잠재 활용. 현재 PlaceholderView, 향후 단계 결정.
   // ========================================
   {
     path: '/dev/dashboard',
     name: 'dev-dashboard',
     component: () => import('@/views/dev/PlaceholderView.vue'),
     meta: { requiresAuth: true, roles: ['developer', 'approver'], layout: 'dev', title: '전체 현황' },
-  },
-  {
-    path: '/dev/my-vulns',
-    name: 'dev-my-vulns',
-    component: () => import('@/views/dev/PlaceholderView.vue'),
-    meta: { requiresAuth: true, roles: ['developer', 'approver'], layout: 'dev', title: '나의 현황' },
-  },
-  {
-    path: '/dev/vulns',
-    name: 'dev-vulns',
-    component: () => import('@/views/dev/PlaceholderView.vue'),
-    meta: { requiresAuth: true, roles: ['developer', 'approver'], layout: 'dev', title: '취약점 목록' },
-  },
-  {
-    path: '/dev/approvals',
-    name: 'dev-approvals',
-    component: () => import('@/views/dev/PlaceholderView.vue'),
-    meta: { requiresAuth: true, roles: ['approver'], layout: 'dev', title: '결재 관리' },
-  },
-  {
-    path: '/dev/history',
-    name: 'dev-history',
-    component: () => import('@/views/dev/PlaceholderView.vue'),
-    meta: { requiresAuth: true, roles: ['developer', 'approver'], layout: 'dev', title: '조치 이력' },
   },
 
   // ========================================
