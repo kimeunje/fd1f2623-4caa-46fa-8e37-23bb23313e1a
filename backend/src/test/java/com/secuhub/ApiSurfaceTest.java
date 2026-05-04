@@ -99,39 +99,38 @@ class ApiSurfaceTest {
     /**
      * Set 1 — 본 phase ({@code v15.8}) 시점에 검출된 *진짜* BE/FE 갭 whitelist.
      *
-     * <p><b>본 whitelist 는 일시적</b> — 각 entry 는 차기 phase 에서 fix 후 삭제. 신규
-     * 위반은 본 whitelist 통과 안 함 → 자연 fail (회귀 차단 정상 동작).</p>
+     * <p><b>v15.13 (5-15i) 시점 = whitelist <i>empty</i></b> — v15.8 도입 이래 첫
+     * 0 entry 도달. 신규 갭 발견 시 본 Set 에 entry 추가하되 동시에 차기 phase
+     * 후보 등재 (entry 영속화 회피, staged closure 사이클 보존).</p>
      *
-     * <h3>등재 항목 (1 건, 차기 phase 후보) — v15.12 갱신</h3>
+     * <h3>staged closure 이력 (v15.8 도입 → v15.13 empty 도달, 6 phase)</h3>
      * <ul>
-     *   <li><b>{@code POST /frameworks/{*}/import}</b> — v15.3 (5-15b R1) 에서 BE
-     *       {@code FrameworkController.importControls} + {@code ExcelImportService} 통째
-     *       제거. FE {@code frameworksApi.importControls} 잔존 dead code. <b>차기 phase</b>:
-     *       FE caller 수 0 검증 후 method 삭제.</li>
+     *   <li><b>v15.8 (5-15d, 도입)</b> — ApiSurfaceTest 신설. SET_1_KNOWN_GAPS 에
+     *       v15.7 까지 누적된 진짜 갭 10 entries 등재 (users 8 + frameworks/import 1
+     *       + evidence-types 1).</li>
+     *   <li><b>v15.9 (5-15e)</b> — UserController 신설 + 8 endpoint 매핑 (BE wire
+     *       정상화). 단 SET cleanup 누락 → 8 entries dead whitelist 잔존 (v15.12 에서
+     *       정리).</li>
+     *   <li><b>v15.10 / v15.11 base</b> — SET 변경 0 (v15.10 마감 시점 10 entries 그대로).</li>
+     *   <li><b>v15.11 (5-15g)</b> — {@code DELETE /evidence-types/{*}} entry 제거.
+     *       EvidenceTypeController 신설 + DELETE 매핑 회수 (broken feature 패턴, v15.5.1
+     *       leaf 클릭 회귀와 동형). 10 → 9 entries.</li>
+     *   <li><b>v15.12 (5-15h)</b> — {@code /users/*} 8 entries 일괄 제거. v15.9 의 BE
+     *       신설 후 SET cleanup 누락분 정리 (dead whitelist 패턴). 9 → 1 entry.</li>
+     *   <li><b>v15.13 (5-15i, 본 phase)</b> — {@code POST /frameworks/{*}/import}
+     *       entry 제거. v15.3 (5-15b R1) BE FrameworkController.importControls +
+     *       ExcelImportService 통째 제거 시점에 FE frameworksApi.importControls method
+     *       도 정리됐으나 ApiSurfaceTest SET entry 만 잔존 (3 phase 동안 dead whitelist).
+     *       1 → <b>0 (empty)</b>. <b>L23 마감 선언</b> — endpoint 삭제 시 FE caller
+     *       잔존 패턴 회귀의 자동 차단 사이클 완성.</li>
      * </ul>
      *
-     * <h3>v15.11 (5-15g) 갱신 이력</h3>
-     * <p>{@code DELETE /evidence-types/{*}} entry 제거 — v15.11 phase 에서
-     * {@code EvidenceTypeController} 신설 + {@code DELETE /api/v1/evidence-types/{id}}
-     * 매핑 회수 (broken feature 패턴, v15.5.1 leaf 클릭 회귀와 동형). 9 entries 잔존.</p>
-     *
-     * <h3>v15.12 (5-15h) 갱신 이력</h3>
-     * <p>{@code /users/*} 8 entries 일괄 제거 — v15.9 (5-15e) 에서 이미
-     * {@code UserController} 신설 + 8 endpoint 매핑 (FE {@code usersApi} 8 메서드
-     * 정합) 으로 BE wire 정상화됐으나, 본 SET 의 entry cleanup 은 누락된 채로 잔존
-     * (v15.9 / v15.10 / v15.11 3 phase 동안 dead whitelist). v15.12 에서 dead
-     * entries 정리. 신규 코드 / 테스트 0 — 단순 정리 phase. <b>1 entry 잔존</b>
-     * ({@code POST /frameworks/{*}/import} dead code, 차기 v15.13 후보).</p>
+     * <h3>운영 의무 (entry 영속화 회피)</h3>
+     * <p>본 SET 에 entry 추가 시 <b>동시에 차기 phase 등재 의무</b>. v15.9 의 SET
+     * cleanup 누락 (dead whitelist 3 phase 잔존) 같은 패턴 재발 방지. 신규 entry =
+     * 단기 임시 표식, 장기 잔존 0.</p>
      */
-    private static final Set<Endpoint> SET_1_KNOWN_GAPS = new HashSet<>(Arrays.asList(
-            // /frameworks/{*}/import — FE dead code (v15.3 BE 제거 잔여)
-            new Endpoint("POST", "/api/v1/frameworks/{*}/import")
-            // v15.11 (5-15g): DELETE /evidence-types/{*} entry 제거됨
-            // — EvidenceTypeController 신설로 매핑 회수
-            // v15.12 (5-15h): /users/{*} 8 entries 일괄 제거됨
-            // — v15.9 (5-15e) UserController 신설 시점에 BE 매핑은 이미 정상,
-            //   본 SET 의 dead whitelist cleanup 만 본 phase 에서 진행
-    ));
+    private static final Set<Endpoint> SET_1_KNOWN_GAPS = Collections.emptySet();
 
     // ====================================================================
     // Set 1 — FE path literal × BE controller mapping

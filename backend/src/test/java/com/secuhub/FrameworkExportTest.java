@@ -19,7 +19,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,32 +29,31 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * Phase 5-14e — Framework export (트리 → 엑셀) API 검증.
+ * Phase 5-14e (생성) /
+ * v15 Phase 5-15a 후속-3 (v15.14, hybrid 행 보강) —
+ * Framework export (트리 → 엑셀) API 검증.
  *
  * <h3>검증 항목</h3>
  * <ul>
  *   <li>{@code GET /api/v1/frameworks/{id}/export} 정상 다운로드 (xlsx Content-Type)</li>
  *   <li>헤더 6 컬럼 — 코드 / 영역 / 항목명 / 설명 / 필요 증빙 / 계층 경로</li>
- *   <li>leaf ({@code node_type='control'}) 만 행으로 — category 행 미포함</li>
+ *   <li><b>v14 동작 보존 (case 1)</b>: leaf ({@code node_type='control'}) 가 행. evidence 0 인 leaf
+ *       도 행 포함 (통제 항목 목록 의미)</li>
  *   <li>5단 mixed-depth 트리에서 depth=N leaf 가 한 행</li>
  *   <li>계층 경로 = 모든 ancestors[].code + leaf.code 를 {@code " > "} 로 연결</li>
  *   <li>영역 = depth=1 ancestor 의 name. depth=1 leaf 는 빈 문자열</li>
  *   <li>빈 트리 (leaf 없음) 도 헤더만 있는 시트 정상 export (Import 템플릿 용도)</li>
+ *   <li><b>v15.14 신규 (case 2)</b>: hybrid category ({@code node_type='category'} + evidence 1+)
+ *       도 행으로 포함. evidence 0 인 순수 category 는 미포함 (자손의 ancestor 로만 녹음)</li>
  * </ul>
  *
- * <p>spec §3.3.1.4 / §6.4 정합. v14.5 신규 (Phase 5-14e).</p>
- *
- * <p>{@link com.secuhub.domain.evidence.service.FrameworkExportService} 가 leaf 의 evidence_types
- * 매칭을 시도 ({@code evidenceTypeRepository.findByControlNodeId(leaf.getId())}). 본 테스트는
- * dev/test 환경 (V6 미실행) 이라 ControlNode.id 와 Control.id 가 별개 sequence — 매칭 안 됨,
- * "필요 증빙" 컬럼은 빈 문자열 자연 (5-14e impact-summary 와 같은 패턴, 5-14f 매핑 이주 후 정상).
- * 본 테스트는 leaf 의 코드 / 영역 / 계층 경로 검증이 핵심.</p>
+ * <p>spec §3.3.1.4 / §6.4 정합. v14.5 신규 (Phase 5-14e), v15.14 hybrid 보강 (Phase 5-15a 후속-3).</p>
  */
 @SpringBootTest
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-@DisplayName("Phase 5-14e — Framework export API")
+@DisplayName("Phase 5-14e / 5-15a 후속-3 — Framework export API")
 class FrameworkExportTest {
 
     @Autowired private MockMvc mockMvc;
@@ -87,7 +88,8 @@ class FrameworkExportTest {
     }
 
     // ==================================================================
-    // 1. 5단 mixed-depth 트리 export + 빈 트리 export 통합 검증
+    // 1. 5단 mixed-depth 트리 export + 빈 트리 export 통합 검증 (v14.5)
+    //    v15.14: leaf 동작 보존 (evidence 0 leaf 도 행 포함).
     // ==================================================================
 
     /**
@@ -184,6 +186,7 @@ class FrameworkExportTest {
             assertThat(header.getCell(5).getStringCellValue()).isEqualTo("계층 경로");
 
             // leaf 5개 (코드 ASC) — 1.1.1, 1.1.2.1.1, 1.1.3, 1.2, 2
+            // v15.14 정합: leaf 는 evidence 무관 행 포함 (이전 동작 보존)
             assertThat(sheet.getLastRowNum()).isEqualTo(5);  // 0 헤더 + 5 leaf
 
             // 행별 검증 — code → expected (영역, 항목명, 계층 경로)
@@ -223,5 +226,123 @@ class FrameworkExportTest {
             assertThat(sheet.getLastRowNum()).isEqualTo(0);  // 헤더만, leaf 0행
         }
         System.out.println("✅ [Export] 빈 트리 → 헤더만 있는 시트 정상 다운로드");
+    }
+
+    // ==================================================================
+    // 2. v15.14 (Phase 5-15a 후속-3) — hybrid 노드 + evidence 0 category 검증
+    //    hybrid (category + evidence) 는 행 포함, evidence 0 category 는 행 미포함.
+    // ==================================================================
+
+    /**
+     * hybrid 트리 (v15 hybrid 모델 정합):
+     * <pre>
+     * "1" (depth=1, category, "hybrid 분류 + 증빙")  ★HYBRID (evidence 2)
+     *  └── "1.1" (depth=2, control, "자식 leaf")  ★LEAF (evidence 1)
+     * "2" (depth=1, category, "evidence 0 카테고리")  ←  미포함 (evidence 0 category)
+     * </pre>
+     *
+     * 기대 export 행 = 2 (코드 ASC):
+     *   1   — hybrid root (evidence 2 컬럼 채움)
+     *   1.1 — leaf (evidence 1 컬럼 채움)
+     * 코드 "2" 미포함.
+     *
+     * <p>v14 동작 (leaf only filter) 이었으면 행 수 = 1 (코드 "1.1" 만). 본 phase 의 신
+     * filter (leaf 모두 + hybrid category 1+) 로 행 수 = 2 보장. silent data loss 갭의
+     * 회귀 차단.</p>
+     */
+    @Test
+    @Order(2)
+    @DisplayName("[Export 5-15a 후속-3] hybrid (category + evidence) 행 포함, evidence 0 category 제외")
+    void testExportHybridNode() throws Exception {
+        Framework fw = frameworkRepository.save(Framework.builder()
+                .name("FW-Hybrid").build());
+
+        // depth=1 hybrid (category + evidence 보유) — code "1"
+        ControlNode hybridRoot = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.category)
+                .code("1").name("hybrid 분류 + 증빙")
+                .description("자식 + 증빙 동시 보유 (hybrid)")
+                .displayOrder(0).depth(1).build());
+
+        // 자식 leaf (evidence 보유) — code "1.1"
+        ControlNode leaf = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(hybridRoot).nodeType(NodeType.control)
+                .code("1.1").name("자식 leaf")
+                .description("hybrid 부모를 가진 leaf")
+                .displayOrder(0).depth(2).build());
+
+        // 별개 — depth=1 evidence 0 category — code "2" (배제 검증)
+        ControlNode catOnly = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.category)
+                .code("2").name("evidence 0 카테고리")
+                .displayOrder(1).depth(1).build());
+
+        // hybrid root 의 직접 evidence (2개)
+        evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(hybridRoot).name("hybrid 증빙 A").build());
+        evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(hybridRoot).name("hybrid 증빙 B").build());
+
+        // 자식 leaf 의 evidence (1개)
+        evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(leaf).name("leaf 증빙").build());
+
+        // ── 다운로드
+        MvcResult result = mockMvc.perform(get("/api/v1/frameworks/{id}/export", fw.getId())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        byte[] xlsxBytes = result.getResponse().getContentAsByteArray();
+        assertThat(xlsxBytes).isNotEmpty();
+
+        // ── XLSX 파싱
+        try (Workbook wb = new XSSFWorkbook(new ByteArrayInputStream(xlsxBytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+
+            // 행 = 2 (hybrid root + leaf). evidence 0 category (코드 "2") 미포함.
+            assertThat(sheet.getLastRowNum())
+                    .as("hybrid + leaf 만 행 (evidence 0 category 제외)")
+                    .isEqualTo(2);
+
+            // 모든 코드 수집
+            List<String> codes = new ArrayList<>();
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                codes.add(sheet.getRow(i).getCell(0).getStringCellValue());
+            }
+            assertThat(codes).as("코드 ASC: '1', '1.1'").containsExactly("1", "1.1");
+            assertThat(codes).as("evidence 0 category '2' 는 미포함").doesNotContain("2");
+
+            // 행 1 (코드 "1") — hybrid root
+            Row row1 = sheet.getRow(1);
+            assertThat(row1.getCell(0).getStringCellValue()).isEqualTo("1");
+            assertThat(row1.getCell(1).getStringCellValue())
+                    .as("depth=1 노드 자체 → 영역 빈 문자열")
+                    .isEqualTo("");
+            assertThat(row1.getCell(2).getStringCellValue()).isEqualTo("hybrid 분류 + 증빙");
+            // 필요 증빙 = "hybrid 증빙 A, hybrid 증빙 B" (insertion order)
+            String etCol1 = row1.getCell(4).getStringCellValue();
+            assertThat(etCol1)
+                    .as("hybrid root 의 evidence 2개 모두 컬럼에 표시")
+                    .contains("hybrid 증빙 A")
+                    .contains("hybrid 증빙 B");
+            assertThat(row1.getCell(5).getStringCellValue())
+                    .as("depth=1 → 자기 자신만")
+                    .isEqualTo("1");
+
+            // 행 2 (코드 "1.1") — leaf
+            Row row2 = sheet.getRow(2);
+            assertThat(row2.getCell(0).getStringCellValue()).isEqualTo("1.1");
+            assertThat(row2.getCell(1).getStringCellValue())
+                    .as("depth=1 ancestor 의 name = hybrid root.name")
+                    .isEqualTo("hybrid 분류 + 증빙");
+            assertThat(row2.getCell(2).getStringCellValue()).isEqualTo("자식 leaf");
+            assertThat(row2.getCell(4).getStringCellValue()).isEqualTo("leaf 증빙");
+            assertThat(row2.getCell(5).getStringCellValue())
+                    .as("계층 경로: 1 > 1.1")
+                    .isEqualTo("1 > 1.1");
+        }
+
+        System.out.println("✅ [Export 5-15a 후속-3] hybrid (category + evidence) 행 포함, evidence 0 category 제외");
     }
 }
