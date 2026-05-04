@@ -102,7 +102,7 @@ class ApiSurfaceTest {
      * <p><b>본 whitelist 는 일시적</b> — 각 entry 는 차기 phase 에서 fix 후 삭제. 신규
      * 위반은 본 whitelist 통과 안 함 → 자연 fail (회귀 차단 정상 동작).</p>
      *
-     * <h3>등재 항목 (10 건, 차기 phase 후보)</h3>
+     * <h3>등재 항목 (9 건, 차기 phase 후보) — v15.11 갱신</h3>
      * <ul>
      *   <li><b>{@code /users/*} 8 path</b> — UserController 매핑 부재 / 위치 미발견.
      *       {@code domain/user/controller/} ls 에 {@code AuthController} 1 파일만 노출.
@@ -113,11 +113,12 @@ class ApiSurfaceTest {
      *       {@code FrameworkController.importControls} + {@code ExcelImportService} 통째
      *       제거. FE {@code frameworksApi.importControls} 잔존 dead code. <b>차기 phase</b>:
      *       FE caller 수 0 검증 후 method 삭제.</li>
-     *   <li><b>{@code DELETE /evidence-types/{*}}</b> — v15.6 에서 {@code evidenceTypesApi.delete}
-     *       신설 (옛 {@code controlsApi.deleteEvidenceType} 의 namespace 일치 이전).
-     *       BE 측 controller 매핑 위치 미확인 — {@code EvidenceFileController} /
-     *       {@code ControlNodeController} 후보. <b>차기 phase</b>: BE 매핑 검증 또는 신설.</li>
      * </ul>
+     *
+     * <h3>v15.11 (5-15g) 갱신 이력</h3>
+     * <p>{@code DELETE /evidence-types/{*}} entry 제거 — v15.11 phase 에서
+     * {@code EvidenceTypeController} 신설 + {@code DELETE /api/v1/evidence-types/{id}}
+     * 매핑 회수 (broken feature 패턴, v15.5.1 leaf 클릭 회귀와 동형). 9 entries 잔존.</p>
      */
     private static final Set<Endpoint> SET_1_KNOWN_GAPS = new HashSet<>(Arrays.asList(
             // /users/* — UserController 부재
@@ -130,9 +131,9 @@ class ApiSurfaceTest {
             new Endpoint("GET",    "/api/v1/users/developers"),
             new Endpoint("PATCH", "/api/v1/users/me/password"),
             // /frameworks/{*}/import — FE dead code (v15.3 BE 제거 잔여)
-            new Endpoint("POST", "/api/v1/frameworks/{*}/import"),
-            // /evidence-types/{*} DELETE — BE 매핑 위치 미확인
-            new Endpoint("DELETE", "/api/v1/evidence-types/{*}")
+            new Endpoint("POST", "/api/v1/frameworks/{*}/import")
+            // v15.11 (5-15g): DELETE /evidence-types/{*} entry 제거됨
+            // — EvidenceTypeController 신설로 매핑 회수
     ));
 
     // ====================================================================
