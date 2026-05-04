@@ -102,13 +102,8 @@ class ApiSurfaceTest {
      * <p><b>본 whitelist 는 일시적</b> — 각 entry 는 차기 phase 에서 fix 후 삭제. 신규
      * 위반은 본 whitelist 통과 안 함 → 자연 fail (회귀 차단 정상 동작).</p>
      *
-     * <h3>등재 항목 (9 건, 차기 phase 후보) — v15.11 갱신</h3>
+     * <h3>등재 항목 (1 건, 차기 phase 후보) — v15.12 갱신</h3>
      * <ul>
-     *   <li><b>{@code /users/*} 8 path</b> — UserController 매핑 부재 / 위치 미발견.
-     *       {@code domain/user/controller/} ls 에 {@code AuthController} 1 파일만 노출.
-     *       {@code RequestMappingHandlerMapping} 에 등록되지 않음 → 운영 시 admin
-     *       UI ({@code usersApi}) 호출 모두 404 가능. <b>차기 phase</b>: UserController
-     *       전수 검색 (다른 도메인/패키지 가능) → (있으면) 매핑 검증 / (없으면) 신설.</li>
      *   <li><b>{@code POST /frameworks/{*}/import}</b> — v15.3 (5-15b R1) 에서 BE
      *       {@code FrameworkController.importControls} + {@code ExcelImportService} 통째
      *       제거. FE {@code frameworksApi.importControls} 잔존 dead code. <b>차기 phase</b>:
@@ -119,21 +114,23 @@ class ApiSurfaceTest {
      * <p>{@code DELETE /evidence-types/{*}} entry 제거 — v15.11 phase 에서
      * {@code EvidenceTypeController} 신설 + {@code DELETE /api/v1/evidence-types/{id}}
      * 매핑 회수 (broken feature 패턴, v15.5.1 leaf 클릭 회귀와 동형). 9 entries 잔존.</p>
+     *
+     * <h3>v15.12 (5-15h) 갱신 이력</h3>
+     * <p>{@code /users/*} 8 entries 일괄 제거 — v15.9 (5-15e) 에서 이미
+     * {@code UserController} 신설 + 8 endpoint 매핑 (FE {@code usersApi} 8 메서드
+     * 정합) 으로 BE wire 정상화됐으나, 본 SET 의 entry cleanup 은 누락된 채로 잔존
+     * (v15.9 / v15.10 / v15.11 3 phase 동안 dead whitelist). v15.12 에서 dead
+     * entries 정리. 신규 코드 / 테스트 0 — 단순 정리 phase. <b>1 entry 잔존</b>
+     * ({@code POST /frameworks/{*}/import} dead code, 차기 v15.13 후보).</p>
      */
     private static final Set<Endpoint> SET_1_KNOWN_GAPS = new HashSet<>(Arrays.asList(
-            // /users/* — UserController 부재
-            new Endpoint("GET",    "/api/v1/users"),
-            new Endpoint("POST",   "/api/v1/users"),
-            new Endpoint("GET",    "/api/v1/users/{*}"),
-            new Endpoint("PATCH",  "/api/v1/users/{*}"),
-            new Endpoint("DELETE", "/api/v1/users/{*}"),
-            new Endpoint("GET",    "/api/v1/users/approvers"),
-            new Endpoint("GET",    "/api/v1/users/developers"),
-            new Endpoint("PATCH", "/api/v1/users/me/password"),
             // /frameworks/{*}/import — FE dead code (v15.3 BE 제거 잔여)
             new Endpoint("POST", "/api/v1/frameworks/{*}/import")
             // v15.11 (5-15g): DELETE /evidence-types/{*} entry 제거됨
             // — EvidenceTypeController 신설로 매핑 회수
+            // v15.12 (5-15h): /users/{*} 8 entries 일괄 제거됨
+            // — v15.9 (5-15e) UserController 신설 시점에 BE 매핑은 이미 정상,
+            //   본 SET 의 dead whitelist cleanup 만 본 phase 에서 진행
     ));
 
     // ====================================================================
