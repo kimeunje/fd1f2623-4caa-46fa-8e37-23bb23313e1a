@@ -4,7 +4,7 @@
  *
  * 5-14g 인터페이스 보존:
  *   - props: open (v-model), treeState, frameworkName
- *   - emits: update:open, request-import
+ *   - emits: update:open
  *
  * 5-14h 추가:
  *   - 인라인 편집 (코드/이름 input — ControlNodeRow 가 처리)
@@ -45,7 +45,6 @@ const props = defineProps<Props>()
 
 const emit = defineEmits<{
   'update:open': [v: boolean]
-  'request-import': []
   /** 5-14h 신규 — 저장 성공 (createdCount = tempId 매핑 수, 부모가 toast 등) */
   saved: [payload: { newVersion: number; createdCount: number }]
 }>()
@@ -62,12 +61,8 @@ function handleDialogSearchInput(e: Event): void {
 }
 
 // ============================================================================
-// Import / Export / Close
+// Export / Close
 // ============================================================================
-function handleRequestImport(): void {
-  emit('request-import')
-}
-
 const isExporting = ref(false)
 async function handleExport(): Promise<void> {
   if (!props.treeState.framework.value) return
@@ -336,10 +331,6 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
             <p class="dialog-subtitle">{{ headerSubtitle }}</p>
           </div>
           <div class="header-actions">
-            <button type="button" class="header-iconbtn" title="엑셀 Import"
-              @click="handleRequestImport">
-              <i class="pi pi-arrow-up"></i>
-            </button>
             <button type="button" class="header-iconbtn" title="엑셀 Export"
               :disabled="isExporting || isEmpty" @click="handleExport">
               <i :class="['pi', isExporting ? 'pi-spinner pi-spin' : 'pi-arrow-down']"></i>
@@ -386,9 +377,6 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
             <div class="empty-actions">
               <button class="btn-primary" type="button" @click="handleAddRootCategory">
                 <i class="pi pi-plus"></i> 첫 분류 추가
-              </button>
-              <button class="btn-secondary" type="button" @click="handleRequestImport">
-                <i class="pi pi-arrow-up"></i> 엑셀 Import
               </button>
             </div>
           </div>

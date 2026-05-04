@@ -15,7 +15,6 @@ import type {
   CollectionJobCreatePayload,
   CollectionJobUpdatePayload,
   ExecutionSummary,
-  ExcelImportResult,
   MyTasksResponse,
   MyTaskDetail,
   // v14 Phase 5-14g — 통제 트리
@@ -69,13 +68,6 @@ export const frameworksApi = {
   },
   delete(id: number) {
     return api.delete(`/frameworks/${id}`)
-  },
-  importControls(id: number, file: File) {
-    const formData = new FormData()
-    formData.append('file', file)
-    return api.post<ApiResponse<ExcelImportResult>>(`/frameworks/${id}/import`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
   },
 }
 

@@ -211,16 +211,6 @@ export interface ExecutionSummary {
 }
 
 // ========================================
-// 엑셀 Import
-// ========================================
-export interface ExcelImportResult {
-  totalRows: number
-  successCount: number
-  failCount: number
-  errors: string[]
-}
-
-// ========================================
 // v14 Phase 5-14g — 통제 트리 (control_nodes 자기참조)
 //
 // spec §3.3.1.4 의 응답 페이로드 정합. nodes 는 평탄화된 배열, parentId 로 클라이언트

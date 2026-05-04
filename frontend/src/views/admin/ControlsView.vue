@@ -36,9 +36,7 @@
  * <h3>유지되는 외부 컴포넌트</h3>
  * <ul>
  *   <li>UnifiedControlsDialog — v-model:open / :tree-state / :framework-name /
- *       @request-import 인터페이스 보존, 5-14h 에서 @saved emit 추가</li>
- *   <li>ImportControlsDialog — UnifiedControlsDialog 의 [↑ Import] 아이콘 클릭 → 본 페이지가
- *       기존 ImportControlsDialog 를 띄움 (다이얼로그가 다이얼로그를 띄우는 stacking 구조)</li>
+ *       5-14h 에서 @saved emit 추가</li>
  * </ul>
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
@@ -55,7 +53,6 @@ import UnifiedControlsDialog from '@/components/controls/UnifiedControlsDialog.v
 import type {
   Framework,
   ControlDetail,
-  ExcelImportResult,
 } from '@/types/evidence'
 
 // ========================================
@@ -129,13 +126,8 @@ async function refreshDetail() {
 
 // ========================================
 // 다이얼로그 — UnifiedControlsDialog (5-14g 신규)
-//             ImportControlsDialog (기존, [↑ Import] 호출 재사용)
 // ========================================
 const showUnifiedDialog = ref(false)
-const showImportDialog = ref(false)
-const importFile = ref<File | null>(null)
-const importLoading = ref(false)
-const importResult = ref<ExcelImportResult | null>(null)
 
 // ZIP 다운로드 (leaf 펼침 안)
 const zipDownloading = ref(false)
@@ -264,14 +256,6 @@ async function retryLoadTree() {
   await tree.load()
 }
 
-function openImportDirectly() {
-  // empty Framework 상태에서 [엑셀 Import] CTA 직접 호출.
-  // UnifiedControlsDialog 를 거치지 않고 ImportControlsDialog 를 바로 띄움.
-  importResult.value = null
-  importFile.value = null
-  showImportDialog.value = true
-}
-
 function clearSearchAndFilter() {
   tree.searchText.value = ''
   tree.statusFilter.value = '전체'
@@ -319,19 +303,6 @@ function setupSearchHook() {
   })
 }
 
-function onRequestImport() {
-  // 다이얼로그 안에서 [↑ Import] 클릭 → 본 view 가 ImportControlsDialog 띄움
-  // (다이얼로그 stacking — UnifiedControlsDialog 닫지 않고 위에 ImportControlsDialog 띄움)
-  importResult.value = null
-  importFile.value = null
-  showImportDialog.value = true
-}
-
-function closeImportDialog() {
-  showImportDialog.value = false
-  importResult.value = null
-}
-
 // ─── Phase 5-14h 신규 — UnifiedControlsDialog 저장 성공 핸들러 ───
 //
 // 다이얼로그가 PATCH /tree 호출 후 200 응답을 받으면 emit('saved', payload) 발화.
@@ -343,27 +314,6 @@ function onUnifiedSaved(payload: { newVersion: number; createdCount: number }) {
     ? `저장되었습니다. (신규 ${payload.createdCount}개, v${payload.newVersion})`
     : `저장되었습니다. (v${payload.newVersion})`
   showToast(msg, 'success')
-}
-
-async function handleImport() {
-  if (!importFile.value || !selectedFrameworkId.value) return
-  importLoading.value = true
-  try {
-    const { data } = await frameworksApi.importControls(
-      selectedFrameworkId.value,
-      importFile.value,
-    )
-    if (data.success) {
-      importResult.value = data.data
-      await tree.reload()
-      showToast(`Import 완료: ${data.data.successCount}건 성공`, 'success')
-    }
-  } catch (e: any) {
-    showToast(e?.response?.data?.message ?? 'Import 에 실패했습니다.', 'error')
-    console.error(e)
-  } finally {
-    importLoading.value = false
-  }
 }
 
 // ========================================
@@ -623,12 +573,6 @@ watch(
             @click="openUnifiedDialog">
             <i class="pi pi-cog text-[10px] mr-1.5"></i> 통제 관리
           </button>
-          <button
-            type="button"
-            class="state-btn-secondary"
-            @click="openImportDirectly">
-            <i class="pi pi-upload text-[10px] mr-1.5"></i> 엑셀 Import
-          </button>
         </div>
       </div>
 
@@ -679,64 +623,9 @@ watch(
       v-model:open="showUnifiedDialog"
       :tree-state="tree"
       :framework-name="currentFramework.name"
-      @request-import="onRequestImport"
       @saved="onUnifiedSaved"
     />
 
-    <!-- ────────────────────────────── 다이얼로그: 엑셀 Import ────────────────────────────── -->
-    <!-- UnifiedControlsDialog 의 [↑ Import] 가 본 다이얼로그를 띄움. -->
-    <div
-      v-if="showImportDialog"
-      class="fixed inset-0 bg-black/40 flex items-center justify-center z-[60]"
-      @click.self="closeImportDialog">
-      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-bold text-gray-900">통제항목 엑셀 Import</h3>
-          <button
-            @click="closeImportDialog"
-            class="p-1 text-gray-400 hover:text-gray-600">
-            <i class="pi pi-times"></i>
-          </button>
-        </div>
-        <p class="text-sm text-gray-500 mb-4">
-          엑셀 파일 컬럼: 코드 | 영역 | 항목명 | 설명 | 필요 증빙 (쉼표 구분)
-        </p>
-        <input
-          type="file"
-          accept=".xlsx,.xls"
-          @change="(e: any) => (importFile = e.target.files?.[0])"
-          class="w-full text-sm mb-4"
-        />
-
-        <div v-if="importResult" class="mb-4 p-3 bg-gray-50 rounded-lg text-sm">
-          <p>
-            전체 {{ importResult.totalRows }}행 / 성공
-            <strong class="text-green-600">{{ importResult.successCount }}</strong> /
-            실패
-            <strong class="text-red-600">{{ importResult.failCount }}</strong>
-          </p>
-          <ul
-            v-if="importResult.errors.length > 0"
-            class="mt-2 text-xs text-red-500 space-y-0.5">
-            <li v-for="(err, i) in importResult.errors" :key="i">{{ err }}</li>
-          </ul>
-        </div>
-
-        <div class="flex justify-end gap-2">
-          <button
-            @click="closeImportDialog"
-            class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
-            취소
-          </button>
-          <button
-            @click="handleImport"
-            :disabled="importLoading || !importFile"
-            class="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">
-            {{ importLoading ? '업로드 중...' : 'Import 실행' }}
-          </button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
