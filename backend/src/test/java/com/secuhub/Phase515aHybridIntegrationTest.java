@@ -324,7 +324,7 @@ class Phase515aHybridIntegrationTest {
     //      parent (category, 자체 ET 2개 + 각 file 1개 = own 2 file)
     //        └─ child (leaf, ET 1개 + file 1개 = desc 1 file)
     //
-    //    GET /api/v1/controls/{parent.id}/impact-summary
+    //    GET /api/v1/control-nodes/{parent.id}/impact-summary
     //    응답: ownEvidenceFileCount=2, descendantEvidenceFileCount=1
     //          evidenceFileCount=2 (legacy = own, BC 보존)
     //          reviewCount=0 (file 모두 auto_approved → reviewedAt NULL)
@@ -375,7 +375,7 @@ class Phase515aHybridIntegrationTest {
                 .build());
 
         // parent 의 impact-summary
-        mockMvc.perform(get("/api/v1/controls/{id}/impact-summary", parent.getId())
+        mockMvc.perform(get("/api/v1/control-nodes/{id}/impact-summary", parent.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
@@ -386,8 +386,8 @@ class Phase515aHybridIntegrationTest {
                 .andExpect(jsonPath("$.data.descendantEvidenceFileCount").value(1))
                 .andExpect(jsonPath("$.data.descendantReviewCount").value(1))   // child file 명시 검토됨
                 // legacy alias = own (5-14h FE BC)
-                .andExpect(jsonPath("$.data.evidenceFileCount").value(2))
-                .andExpect(jsonPath("$.data.reviewCount").value(0));
+                .andExpect(jsonPath("$.data.ownEvidenceFileCount").value(2))
+                .andExpect(jsonPath("$.data.ownReviewCount").value(0));
 
         System.out.println("✅ [ImpactSummary hybrid] own=2/desc=1 분리, legacy=own (BC 보존)");
     }
@@ -417,7 +417,7 @@ class Phase515aHybridIntegrationTest {
                 .reviewStatus(ReviewStatus.auto_approved)
                 .build());
 
-        mockMvc.perform(get("/api/v1/controls/{id}/impact-summary", leaf.getId())
+        mockMvc.perform(get("/api/v1/control-nodes/{id}/impact-summary", leaf.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
@@ -430,9 +430,9 @@ class Phase515aHybridIntegrationTest {
                 .andExpect(jsonPath("$.data.descendantJobCount").value(0))
                 .andExpect(jsonPath("$.data.descendantReviewCount").value(0))
                 // legacy alias = own
-                .andExpect(jsonPath("$.data.evidenceFileCount").value(1))
-                .andExpect(jsonPath("$.data.jobCount").value(0))
-                .andExpect(jsonPath("$.data.reviewCount").value(0));
+                .andExpect(jsonPath("$.data.ownEvidenceFileCount").value(1))
+                .andExpect(jsonPath("$.data.ownJobCount").value(0))
+                .andExpect(jsonPath("$.data.ownReviewCount").value(0));
 
         System.out.println("✅ [ImpactSummary 단일] 자손 0, descendant 모두 0, legacy = own 일치");
     }

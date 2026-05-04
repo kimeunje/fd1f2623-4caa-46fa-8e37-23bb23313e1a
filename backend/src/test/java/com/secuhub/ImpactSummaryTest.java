@@ -30,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * <h3>검증 항목</h3>
  * <ul>
- *   <li>{@code GET /api/v1/controls/{id}/impact-summary} 응답 shape — { evidenceFileCount, jobCount, reviewCount }</li>
+ *   <li>{@code GET /api/v1/control-nodes/{id}/impact-summary} 응답 shape — { evidenceFileCount, jobCount, reviewCount }</li>
  *   <li>{@code evidenceFileCount} — 모든 review_status 의 file 카운트 (version 무관)</li>
  *   <li>{@code jobCount} — 통제 산하 EvidenceType 에 바인딩된 CollectionJob 수</li>
  *   <li>{@code reviewCount} — {@code reviewed_at IS NOT NULL} 카운트 (Q4 결정)</li>
@@ -147,13 +147,13 @@ class ImpactSummaryTest {
                 .scriptPath("/scripts/x.py").evidenceType(etOther).build());
 
         // ── 검증
-        mockMvc.perform(get("/api/v1/controls/{id}/impact-summary", ctrl.getId())
+        mockMvc.perform(get("/api/v1/control-nodes/{id}/impact-summary", ctrl.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.evidenceFileCount").value(3))
-                .andExpect(jsonPath("$.data.jobCount").value(2))
-                .andExpect(jsonPath("$.data.reviewCount").value(1));
+                .andExpect(jsonPath("$.data.ownEvidenceFileCount").value(3))
+                .andExpect(jsonPath("$.data.ownJobCount").value(2))
+                .andExpect(jsonPath("$.data.ownReviewCount").value(1));
 
         System.out.println("✅ [Counts] file 3 / job 2 / review 1 정확히 집계 (다른 통제 분리됨)");
     }
@@ -170,22 +170,22 @@ class ImpactSummaryTest {
         ControlNode ctrl = createLeaf(fw, "2.1.1", "빈 통제", 0);
 
         // 데이터 0개 — 모두 0 자연
-        mockMvc.perform(get("/api/v1/controls/{id}/impact-summary", ctrl.getId())
+        mockMvc.perform(get("/api/v1/control-nodes/{id}/impact-summary", ctrl.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.evidenceFileCount").value(0))
-                .andExpect(jsonPath("$.data.jobCount").value(0))
-                .andExpect(jsonPath("$.data.reviewCount").value(0));
+                .andExpect(jsonPath("$.data.ownEvidenceFileCount").value(0))
+                .andExpect(jsonPath("$.data.ownJobCount").value(0))
+                .andExpect(jsonPath("$.data.ownReviewCount").value(0));
 
         // 존재하지 않는 controlId 도 모두 0 (404 아님 — Q2 결정 단순함)
-        mockMvc.perform(get("/api/v1/controls/{id}/impact-summary", 99999L)
+        mockMvc.perform(get("/api/v1/control-nodes/{id}/impact-summary", 99999L)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.evidenceFileCount").value(0))
-                .andExpect(jsonPath("$.data.jobCount").value(0))
-                .andExpect(jsonPath("$.data.reviewCount").value(0));
+                .andExpect(jsonPath("$.data.ownEvidenceFileCount").value(0))
+                .andExpect(jsonPath("$.data.ownJobCount").value(0))
+                .andExpect(jsonPath("$.data.ownReviewCount").value(0));
 
         System.out.println("✅ [Empty] 빈 통제 + 미존재 id 모두 0 0 0 (Q2-A 정합)");
     }

@@ -43,7 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *       {@code pendingReviewCount} 가 본격 집계됨 (5-14c 의 0 고정 → 양수)</li>
  *   <li>{@code POST /api/v1/frameworks/inherit} 의 source 가 5단 mixed-depth 트리일 때
  *       target 도 같은 5단 트리 + evidence_types 의 owner/dueDate 보존</li>
- *   <li>5-14e 의 {@code GET /api/v1/controls/{id}/impact-summary} 가 5-14f 후 자연
+ *   <li>5-14e 의 {@code GET /api/v1/control-nodes/{id}/impact-summary} 가 5-14f 후 자연
  *       정상 카운트 (dev/test 환경에서 ControlNode.id 직접 매칭)</li>
  * </ul>
  *
@@ -344,12 +344,12 @@ class Phase514fIntegrationTest {
                 .build());
 
         // GET /controls/{id}/impact-summary — 5-14f 후 dev/test 자연 정상화
-        mockMvc.perform(get("/api/v1/controls/{id}/impact-summary", leaf.getId())
+        mockMvc.perform(get("/api/v1/control-nodes/{id}/impact-summary", leaf.getId())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.evidenceFileCount").value(2))    // pending 1 + approved 1
-                .andExpect(jsonPath("$.data.reviewCount").value(1));         // approved 만 reviewedAt 있음
+                .andExpect(jsonPath("$.data.ownEvidenceFileCount").value(2))    // pending 1 + approved 1
+                .andExpect(jsonPath("$.data.ownReviewCount").value(1));         // approved 만 reviewedAt 있음
 
         System.out.println("✅ [ImpactSummary 자연화] 5-14e endpoint 가 5-14f 후 dev/test 정상 카운트");
     }
