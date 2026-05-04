@@ -379,7 +379,7 @@ class MyTasksTest {
 
     private EvidenceType saveType(String name, User owner, LocalDate dueDate) {
         return evidenceTypeRepository.save(EvidenceType.builder()
-                .control(control)
+                .controlNode(control)
                 .name(name)
                 .ownerUser(owner)
                 .dueDate(dueDate)

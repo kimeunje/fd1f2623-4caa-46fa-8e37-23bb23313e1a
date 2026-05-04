@@ -35,6 +35,21 @@ import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+/**
+ * 증빙 파일 서비스.
+ *
+ * <h3>v15 Phase 5-15c (v15.7) 변경</h3>
+ * <ul>
+ *   <li>{@code evidenceType.getControlNode().getCode()} (line ~166, upload 시 storage path
+ *       빌드) + {@code f.getEvidenceType().getControlNode().getId()} (line ~329, getStats
+ *       의 coverage 계산) → {@code getControlNode().*} (Q1=B FORCED)</li>
+ *   <li>{@link #downloadZip(Long, OutputStream)} 시그니처 {@code Long controlId} →
+ *       {@code Long nodeId} (Q3=B URL path variable rename + Q6=A service param 정합).
+ *       메서드 본문의 변수 사용 5 곳도 일괄 갱신.</li>
+ *   <li>{@code evidenceTypeRepository.findByControlId} → {@code findByControlNodeId}
+ *       (Q5=A)</li>
+ * </ul>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -151,6 +166,9 @@ public class EvidenceFileService {
      *   <li>admin → auto_approved (관리자 직접 업로드는 검토 생략)</li>
      *   <li>담당자 → pending (관리자 검토 대기)</li>
      * </ul>
+     *
+     * <p>v15.7: storage path 빌드 시 {@code evidenceType.getControlNode().getCode()} →
+     * {@code getControlNode().getCode()} (Q1=B).</p>
      */
     @Transactional
     public EvidenceFileDto.Response upload(Long evidenceTypeId,
@@ -163,7 +181,8 @@ public class EvidenceFileService {
         int nextVersion = evidenceFileRepository.findMaxVersionByEvidenceTypeId(evidenceTypeId)
                 .orElse(0) + 1;
 
-        String savedPath = saveFile(file, evidenceType.getControl().getCode(), evidenceTypeId);
+        // v15.7 Q1=B: getControl() → getControlNode()
+        String savedPath = saveFile(file, evidenceType.getControlNode().getCode(), evidenceTypeId);
 
         User uploaderEntity = userRepository.findById(uploader.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("사용자", uploader.getUserId()));
@@ -247,17 +266,30 @@ public class EvidenceFileService {
         }
     }
 
+    /**
+     * leaf (또는 hybrid 노드) 산하 증빙 파일 ZIP 다운로드.
+     *
+     * <p>v15.3 5-15b — ControlRepository → ControlNodeRepository 위임. {@code nodeId}
+     * 는 leaf control_node.id (5-14e Q1=A 정의). leaf 가 아니면 IllegalState — 자식
+     * 이슈가 아닌 호출 측 잘못.</p>
+     *
+     * <p>v15.7: 시그니처 {@code Long controlId} → {@code Long nodeId} (Q3=B URL path
+     * variable rename 정합 + Q6=A service param). 본문의 변수 사용 5 곳 + 에러 메시지
+     * "nodeId=" 표기와 자연 정합. {@code findByControlId} → {@code findByControlNodeId}
+     * (Q5=A).</p>
+     */
     @Transactional(readOnly = true)
-    public String downloadZip(Long controlId, OutputStream outputStream) {
-        // v15.3 5-15b — ControlRepository → ControlNodeRepository 위임. controlId 는 leaf control_node.id
+    public String downloadZip(Long nodeId, OutputStream outputStream) {
+        // v15.3 5-15b — ControlRepository → ControlNodeRepository 위임. nodeId 는 leaf control_node.id
         // (5-14e Q1=A 정의). leaf 가 아니면 IllegalState — 자식 이슈가 아닌 호출 측 잘못.
-        ControlNode leaf = controlNodeRepository.findById(controlId)
-                .orElseThrow(() -> new ResourceNotFoundException("통제항목", controlId));
+        ControlNode leaf = controlNodeRepository.findById(nodeId)
+                .orElseThrow(() -> new ResourceNotFoundException("통제항목", nodeId));
         if (leaf.getNodeType() != NodeType.control) {
-            throw new BusinessException("통제(leaf) 만 ZIP 다운로드 가능합니다. nodeId=" + controlId);
+            throw new BusinessException("통제(leaf) 만 ZIP 다운로드 가능합니다. nodeId=" + nodeId);
         }
 
-        List<EvidenceType> evidenceTypes = evidenceTypeRepository.findByControlId(controlId);
+        // v15.7 Q5=A: findByControlId → findByControlNodeId
+        List<EvidenceType> evidenceTypes = evidenceTypeRepository.findByControlNodeId(nodeId);
 
         try (ZipOutputStream zos = new ZipOutputStream(outputStream)) {
             int fileCount = 0;
@@ -325,8 +357,9 @@ public class EvidenceFileService {
         // v15.3 5-15b — controlRepository.count() → ControlNode leaf 한정 카운트.
         // ControlNodeRepository.countByNodeType(NodeType) Spring Data JPA derived query.
         long totalControls = controlNodeRepository.countByNodeType(NodeType.control);
+        // v15.7 Q1=B: getControl() → getControlNode()
         long coveredControls = evidenceFileRepository.findAll().stream()
-                .map(f -> f.getEvidenceType().getControl().getId())
+                .map(f -> f.getEvidenceType().getControlNode().getId())
                 .distinct()
                 .count();
         int coverage = totalControls > 0 ?

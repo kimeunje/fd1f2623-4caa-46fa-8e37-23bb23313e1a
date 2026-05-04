@@ -171,7 +171,11 @@ async function handleLeafCodeBlur(payload: {
   if (payload.oldCode === payload.newCode) return
   try {
     const impact = await props.treeState.fetchImpactSummary(payload.node.id)
-    const sum = impact.evidenceFileCount + impact.jobCount + impact.reviewCount
+    // v15.7 Q2=A: legacy alias 3 필드 제거. own + descendant 합산 (spec §3.3.1.5).
+    //             hybrid 모델에서 leaf 코드 변경의 자손 영향까지 포함한 임계값 판정.
+    const sum = impact.ownEvidenceFileCount + impact.descendantEvidenceFileCount
+              + impact.ownJobCount         + impact.descendantJobCount
+              + impact.ownReviewCount      + impact.descendantReviewCount
     if (sum > 0) {
       codeWarning.value = { ...payload, impact }
     }

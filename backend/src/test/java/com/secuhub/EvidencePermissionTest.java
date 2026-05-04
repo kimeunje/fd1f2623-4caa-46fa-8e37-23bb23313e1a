@@ -122,7 +122,7 @@ class EvidencePermissionTest {
                 .code("2.2.1").name("임직원 교육")
                 .displayOrder(0).depth(1).build());
         ownedType = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("보안 교육 수료증")
+                .controlNode(ctrl).name("보안 교육 수료증")
                 .ownerUser(ownerWithPerm)     // 👉 소유자
                 .build());
 

@@ -354,25 +354,38 @@ export interface TreePatchErrorResponse {
 // v14 Phase 5-14e — 통제 코드 변경 영향 카운트
 //
 // 5-14h 의 인라인 코드 편집 시 사전 호출하여 합산 > 0 이면 경고 다이얼로그.
+//
+// v15 Phase 5-15a — Hybrid 분리 카운트 (own + descendant 6 필드)
+// v15 Phase 5-15c (v15.7) — legacy alias 3 필드 (evidenceFileCount / jobCount /
+//                           reviewCount) BE 측 일괄 제거 (Q2=A). FE type 도 정합.
+//                           호출 측 (5-14h FE) 은 own + descendant 합으로 임계값 판정.
 // ========================================
 
 export interface ImpactSummary {
-  evidenceFileCount: number
-  jobCount: number
-  reviewCount: number
+  ownEvidenceFileCount: number
+  ownJobCount: number
+  ownReviewCount: number
+  descendantEvidenceFileCount: number
+  descendantJobCount: number
+  descendantReviewCount: number
 }
 
 // ========================================
 // v11 Phase 5-5 — 담당자 "내 할 일"
+//
+// v15 Phase 5-15c (v15.7) — controlId / controlCode / controlName →
+//                           nodeId / nodeCode / nodeName (Q4 + Q7-narrow).
+//                           BE MyTasksDto.Item / DetailResponse 정합. 외부 통합 0 가정.
 // ========================================
 
 export interface MyTaskItem {
   evidenceTypeId: number
   evidenceTypeName: string
 
-  controlId?: number
-  controlCode?: string
-  controlName?: string
+  // v15.7: controlId/Code/Name → nodeId/Code/Name (Q4 + Q7-narrow)
+  nodeId?: number
+  nodeCode?: string
+  nodeName?: string
   frameworkId?: number
   frameworkName?: string
 
@@ -416,9 +429,10 @@ export interface MyTaskDetail {
   evidenceTypeName: string
   description?: string
 
-  controlId?: number
-  controlCode?: string
-  controlName?: string
+  // v15.7: controlId/Code/Name → nodeId/Code/Name (Item 정합)
+  nodeId?: number
+  nodeCode?: string
+  nodeName?: string
   frameworkId?: number
   frameworkName?: string
 

@@ -101,7 +101,7 @@ class Phase514fIntegrationTest {
 
     // ====================================================================
     // 1. EvidenceType.control 의 타입이 ControlNode 자연 매칭
-    //    @Transactional — reloaded.getControl().getNodeType() lazy hydrate 보장
+    //    @Transactional — reloaded.getControlNode().getNodeType() lazy hydrate 보장
     //    (mockMvc 안 쓰므로 outer TX rollback issue 없음)
     // ====================================================================
 
@@ -120,19 +120,19 @@ class Phase514fIntegrationTest {
                 .code("1.1").name("leaf 통제").displayOrder(0).depth(2).build());
 
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(leaf)            // 5-14f: ControlNode 직접 전달
+                .controlNode(leaf)            // 5-14f: ControlNode 직접 전달
                 .name("정책 문서")
                 .build());
 
         // EvidenceType.control 의 타입이 ControlNode 매핑 자연 작동
         // @Transactional 의 TX 안에서 lazy proxy hydrate (.getNodeType()) 가능
         EvidenceType reloaded = evidenceTypeRepository.findById(et.getId()).orElseThrow();
-        assertThat(reloaded.getControl()).isInstanceOf(ControlNode.class);
-        assertThat(reloaded.getControl().getId()).isEqualTo(leaf.getId());
-        assertThat(reloaded.getControl().getNodeType()).isEqualTo(NodeType.control);
+        assertThat(reloaded.getControlNode()).isInstanceOf(ControlNode.class);
+        assertThat(reloaded.getControlNode().getId()).isEqualTo(leaf.getId());
+        assertThat(reloaded.getControlNode().getNodeType()).isEqualTo(NodeType.control);
 
         // EvidenceTypeRepository.findByControlId 의 의미가 자연 변경됨 — ControlNode.id 매칭
-        List<EvidenceType> byLeaf = evidenceTypeRepository.findByControlId(leaf.getId());
+        List<EvidenceType> byLeaf = evidenceTypeRepository.findByControlNodeId(leaf.getId());
         assertThat(byLeaf).hasSize(1);
         assertThat(byLeaf.get(0).getId()).isEqualTo(et.getId());
 
@@ -172,9 +172,9 @@ class Phase514fIntegrationTest {
 
         // leafA: evidence_types 3개 + pending file 2개
         EvidenceType etA1 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(leafA).name("증빙 A1").build());
-        evidenceTypeRepository.save(EvidenceType.builder().control(leafA).name("증빙 A2").build());
-        evidenceTypeRepository.save(EvidenceType.builder().control(leafA).name("증빙 A3").build());
+                .controlNode(leafA).name("증빙 A1").build());
+        evidenceTypeRepository.save(EvidenceType.builder().controlNode(leafA).name("증빙 A2").build());
+        evidenceTypeRepository.save(EvidenceType.builder().controlNode(leafA).name("증빙 A3").build());
         evidenceFileRepository.save(EvidenceFile.builder()
                 .evidenceType(etA1).fileName("a1.pdf").filePath("/p/a1.pdf").fileSize(1L)
                 .version(1).collectionMethod(CollectionMethod.manual)
@@ -196,7 +196,7 @@ class Phase514fIntegrationTest {
                 .build());
 
         // leafB: evidence_types 1개 + 0 pending
-        evidenceTypeRepository.save(EvidenceType.builder().control(leafB).name("증빙 B").build());
+        evidenceTypeRepository.save(EvidenceType.builder().controlNode(leafB).name("증빙 B").build());
 
         // GET /tree
         var result = mockMvc.perform(get("/api/v1/frameworks/{id}/tree", fw.getId())
@@ -256,7 +256,7 @@ class Phase514fIntegrationTest {
                 .hashedPassword(passwordEncoder.encode("pw"))
                 .role(UserRole.developer).permissionEvidence(true).build());
         evidenceTypeRepository.save(EvidenceType.builder()
-                .control(leaf_3_1).name("정책 문서")
+                .controlNode(leaf_3_1).name("정책 문서")
                 .ownerUser(owner)
                 .dueDate(java.time.LocalDate.of(2026, 6, 30))
                 .build());
@@ -294,7 +294,7 @@ class Phase514fIntegrationTest {
         // evidence_type: target 의 leaf_3_1 (코드 "1.1.1") 에 매달려 있어야 함, owner/due 보존
         ControlNode target3Leaf = targetNodes.stream()
                 .filter(n -> "1.1.1".equals(n.getCode())).findFirst().orElseThrow();
-        List<EvidenceType> targetEts = evidenceTypeRepository.findByControlId(target3Leaf.getId());
+        List<EvidenceType> targetEts = evidenceTypeRepository.findByControlNodeId(target3Leaf.getId());
         assertThat(targetEts).hasSize(1);
         assertThat(targetEts.get(0).getName()).isEqualTo("정책 문서");
         // owner 의 .getId() 만 호출 — proxy id 는 lazy 안 함 (FK 그대로)
@@ -303,11 +303,11 @@ class Phase514fIntegrationTest {
 
         // source 의 evidence_type 은 그대로 (isolation) — id 비교로 lazy chain 회피
         // 의미: source 와 target 의 EvidenceType 이 별도 객체 (target 이 새로 복제됨)
-        List<EvidenceType> sourceEts = evidenceTypeRepository.findByControlId(leaf_3_1.getId());
+        List<EvidenceType> sourceEts = evidenceTypeRepository.findByControlNodeId(leaf_3_1.getId());
         assertThat(sourceEts).hasSize(1);
         assertThat(sourceEts.get(0).getId()).isNotEqualTo(targetEts.get(0).getId());
         // source ET 의 control id 는 leaf_3_1.id 자연 매칭 (proxy id, lazy 안 함)
-        assertThat(sourceEts.get(0).getControl().getId()).isEqualTo(leaf_3_1.getId());
+        assertThat(sourceEts.get(0).getControlNode().getId()).isEqualTo(leaf_3_1.getId());
 
         System.out.println("✅ [Inherit] 5단 mixed-depth 트리 재귀 복제 + evidence 보존");
     }
@@ -327,8 +327,8 @@ class Phase514fIntegrationTest {
 
         // evidence_types 2개 + pending file 1개 + reviewed file 1개
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(leaf).name("ET1").build());
-        evidenceTypeRepository.save(EvidenceType.builder().control(leaf).name("ET2").build());
+                .controlNode(leaf).name("ET1").build());
+        evidenceTypeRepository.save(EvidenceType.builder().controlNode(leaf).name("ET2").build());
         evidenceFileRepository.save(EvidenceFile.builder()
                 .evidenceType(et).fileName("p.pdf").filePath("/p/p.pdf").fileSize(1L)
                 .version(1).collectionMethod(CollectionMethod.manual)

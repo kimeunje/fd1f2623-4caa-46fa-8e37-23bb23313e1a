@@ -27,9 +27,11 @@ import java.util.List;
  * (hybrid). {@code node_type} enum 은 v15 5-15a 시점에 보존 (의미 약화) — v15 5-15b
  * 또는 그 이후에 일괄 제거 검토.</p>
  *
- * <p><b>5-14a 범위 주의</b>: 본 phase 에서는 트리 구조만 도입한다.
- * leaf 노드의 {@code evidenceTypes OneToMany} 매핑은 5-14f 에서
- * {@code EvidenceType.control_id} 가 leaf control_node id 를 가리키도록 이주할 때 함께 추가된다.</p>
+ * <h3>v15 Phase 5-15c (v15.7) — EvidenceType.controlNode 정합 갱신</h3>
+ * <p>{@link #evidenceTypes} 의 {@code @OneToMany(mappedBy="control")} → {@code mappedBy="controlNode"}
+ * (EvidenceType 의 자바 필드명 변경 정합 — Q1=B). 누락 시 startup 시
+ * {@code MappingException}. {@link #addEvidenceType} 안의 양방향 동기화도
+ * {@code setControlNode} 로 정합.</p>
  *
  * <p><b>제약 표현 (dev/test ddl-auto vs prod Flyway 의미 일치):</b></p>
  * <ul>
@@ -114,17 +116,16 @@ public class ControlNode extends BaseEntity {
      *
      * <p>v14 5-14f 시점: leaf ({@code node_type='control'}) 일 때만 의미 있음.
      * v15 5-15a 시점 (hybrid 모델 채택 후): 모든 노드가 evidence_types 보유 가능
-     * (category 노드도 자체 증빙 + 자식 동시 보유). {@link EvidenceType#control}
+     * (category 노드도 자체 증빙 + 자식 동시 보유). {@link EvidenceType#getControlNode()}
      * 의 mappedBy 대상.</p>
      *
-     * <p>spec §3.3.1.3 + §3.3.1.9 정합. 5-14c 의 GET /tree 응답에서 leaf 의
-     * {@code evidenceTypeCount} 본격 집계 시 활용 (v15 후속 phase 에서 모든 노드로
-     * 확장 검토).</p>
+     * <p>v15 Phase 5-15c (v15.7): {@code mappedBy = "control"} → {@code mappedBy = "controlNode"}
+     * (EvidenceType 의 자바 필드명 정합).</p>
      *
      * <p>cascade ALL + orphanRemoval — 노드 삭제 시 매달린 evidence_types 도 함께
      * 삭제. DB 레벨 ON DELETE CASCADE 와 정합 (V6 Step 3c).</p>
      */
-    @jakarta.persistence.OneToMany(mappedBy = "control",
+    @jakarta.persistence.OneToMany(mappedBy = "controlNode",
             cascade = jakarta.persistence.CascadeType.ALL,
             orphanRemoval = true)
     @lombok.Builder.Default
@@ -241,13 +242,13 @@ public class ControlNode extends BaseEntity {
      * TreeUpdateService 측의 별도 변경 (parent_must_be_category 제거) 과 함께
      * 5-15a B 단계에서 처리.</p>
      *
-     * <p>{@link Control#addEvidenceType} (5-14f 에서 제거됨) 의 대체. 호출 측은
-     * {@link Framework} → {@link ControlNode} (모든 노드) → addEvidenceType 흐름.</p>
+     * <p>v15 Phase 5-15c (v15.7): {@code evidenceType.setControl(this)} →
+     * {@code evidenceType.setControlNode(this)} (EvidenceType 의 setter 명 변경 정합).</p>
      */
     public void addEvidenceType(EvidenceType evidenceType) {
         // v15 Phase 5-15a — hybrid 모델: leaf-only 가드 제거.
         // spec §3.3.1.9: 모든 노드가 evidence + 자식 동시 보유 가능.
         this.evidenceTypes.add(evidenceType);
-        evidenceType.setControl(this);   // 5-14f 그대로
+        evidenceType.setControlNode(this);   // v15.7: setControl → setControlNode
     }
 }

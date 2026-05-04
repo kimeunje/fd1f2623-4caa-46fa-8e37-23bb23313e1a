@@ -211,13 +211,16 @@ public class MyTasksService {
                 .evidenceTypeId(et.getId())
                 .evidenceTypeName(et.getName())
                 .description(et.getDescription())
-                .controlId(et.getControl() != null ? et.getControl().getId() : null)
-                .controlCode(et.getControl() != null ? et.getControl().getCode() : null)
-                .controlName(et.getControl() != null ? et.getControl().getName() : null)
-                .frameworkId(et.getControl() != null && et.getControl().getFramework() != null
-                        ? et.getControl().getFramework().getId() : null)
-                .frameworkName(et.getControl() != null && et.getControl().getFramework() != null
-                        ? et.getControl().getFramework().getName() : null)
+                // v15.7 Q1=B: getControl() → getControlNode() (EvidenceType 자바 필드 rename)
+                // v15.7 Q4 + Q7-narrow: builder 메서드명 controlId/Code/Name → nodeId/Code/Name
+                //                       (MyTasksDto.DetailResponse 정합)
+                .nodeId(et.getControlNode() != null ? et.getControlNode().getId() : null)
+                .nodeCode(et.getControlNode() != null ? et.getControlNode().getCode() : null)
+                .nodeName(et.getControlNode() != null ? et.getControlNode().getName() : null)
+                .frameworkId(et.getControlNode() != null && et.getControlNode().getFramework() != null
+                        ? et.getControlNode().getFramework().getId() : null)
+                .frameworkName(et.getControlNode() != null && et.getControlNode().getFramework() != null
+                        ? et.getControlNode().getFramework().getName() : null)
                 .dueDate(dueStr)
                 .daysUntilDue(daysUntilDue != null ? daysUntilDue.intValue() : null)
                 .currentStatus(currentStatus)

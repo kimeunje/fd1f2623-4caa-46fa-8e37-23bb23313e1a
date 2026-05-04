@@ -116,9 +116,9 @@ class FrameworkListTest {
         ControlNode c2 = createLeaf(fw, "A-2", "통제 2", 1);
 
         // 증빙 유형 3개 (c1 에 2, c2 에 1)
-        EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder().control(c1).name("증빙 A").build());
-        EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder().control(c1).name("증빙 B").build());
-        EvidenceType et3 = evidenceTypeRepository.save(EvidenceType.builder().control(c2).name("증빙 C").build());
+        EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder().controlNode(c1).name("증빙 A").build());
+        EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder().controlNode(c1).name("증빙 B").build());
+        EvidenceType et3 = evidenceTypeRepository.save(EvidenceType.builder().controlNode(c2).name("증빙 C").build());
 
         // 수집 작업 1개 (et1 연결)
         collectionJobRepository.save(CollectionJob.builder()
@@ -206,7 +206,7 @@ class FrameworkListTest {
     void testPendingOnly() throws Exception {
         Framework fw = frameworkRepository.save(Framework.builder().name("Mixed FW").build());
         ControlNode c = createLeaf(fw, "B-1", "통제", 0);
-        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder().control(c).name("증빙").build());
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder().controlNode(c).name("증빙").build());
 
         // 4가지 상태 파일 각 1건
         evidenceFileRepository.save(EvidenceFile.builder()

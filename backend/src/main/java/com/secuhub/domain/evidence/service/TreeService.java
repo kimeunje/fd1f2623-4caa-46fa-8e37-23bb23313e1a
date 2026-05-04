@@ -48,6 +48,11 @@ import java.util.Map;
  *       에 own 카운트 (Q1=A own only) 채움. Repository 쿼리 변경 0 (5-14f/5-14g 의
  *       explicit JOIN 패턴이 leaf/category 구분 없이 own 카운트 자연 집계).
  *       Q2=A: Map miss 시 0 명시 (NULL 없음).</li>
+ *   <li><b>v15.7 (5-15c) Repository 호출 명명 갱신</b> — Q5=A 정합.
+ *       {@code countGroupByControlIdInFramework} → {@code countGroupByControlNodeIdInFramework},
+ *       {@code countPendingGroupByControlIdInFramework} → {@code countPendingGroupByControlNodeIdInFramework},
+ *       {@code countCollectedGroupByControlIdInFramework} → {@code countCollectedGroupByControlNodeIdInFramework}.
+ *       JPQL 자체는 Repository 안에서 {@code et.controlNode} 로 정합 (Q1=B).</li>
  * </ul>
  */
 @Service
@@ -85,14 +90,16 @@ public class TreeService {
 
         // ─── v14 Phase 5-14f — leaf 두 카운트 본격 집계 (5-14c 의 0 고정 변경) ───
         // Framework 단위 1회 쿼리 후 Map 빌드 (N+1 회피, explicit JOIN 으로 Hibernate 6 안전)
+        // v15.7: Repository 메서드명 갱신 (Q5=A) — countGroupByControlNodeIdInFramework
         Map<Long, Long> evidenceTypeCounts = new HashMap<>();
-        for (Object[] row : evidenceTypeRepository.countGroupByControlIdInFramework(frameworkId)) {
+        for (Object[] row : evidenceTypeRepository.countGroupByControlNodeIdInFramework(frameworkId)) {
             evidenceTypeCounts.put((Long) row[0], (Long) row[1]);
         }
         Map<Long, Long> pendingReviewCounts = new HashMap<>();
         // 5-14f 안전: ReviewStatus.pending 을 parameter 로 전달 (fully-qualified enum literal 의
         //            Hibernate 6 SQM path 오인 회피)
-        for (Object[] row : evidenceFileRepository.countPendingGroupByControlIdInFramework(
+        // v15.7: 메서드명 countPendingGroupByControlNodeIdInFramework
+        for (Object[] row : evidenceFileRepository.countPendingGroupByControlNodeIdInFramework(
                 frameworkId, ReviewStatus.pending)) {
             pendingReviewCounts.put((Long) row[0], (Long) row[1]);
         }
@@ -100,8 +107,9 @@ public class TreeService {
         // ─── v14 Phase 5-14g (β) — leaf collectedCount 본격 집계 (진행바 N/M 의 N) ───
         // 정의: leaf 에 매달린 evidence_types 중 evidence_files 가 1개 이상 있는 type 의
         //      distinct 수. ControlsView §3.3 의 6컬럼 진행바 + "완료/진행중" 상태 derive 용.
+        // v15.7: 메서드명 countCollectedGroupByControlNodeIdInFramework
         Map<Long, Long> collectedCounts = new HashMap<>();
-        for (Object[] row : evidenceTypeRepository.countCollectedGroupByControlIdInFramework(frameworkId)) {
+        for (Object[] row : evidenceTypeRepository.countCollectedGroupByControlNodeIdInFramework(frameworkId)) {
             collectedCounts.put((Long) row[0], (Long) row[1]);
         }
         // ────────────────────────────────────────────────────────────────────
@@ -132,7 +140,7 @@ public class TreeService {
                                               Map<Long, Long> collectedCounts,
                                               Map<Long, Long> pendingReviewCounts) {
         // v15.2 5-15a 후속-1 — Map 에서 카운트 lookup (없으면 0 default).
-        // Repository 의 explicit JOIN (et.control cn) 이 leaf/category 구분 없이
+        // Repository 의 explicit JOIN (et.controlNode cn) 이 leaf/category 구분 없이
         // own evidence_types 자연 집계. nodeType 분기 폐기.
         long etCount = evidenceTypeCounts.getOrDefault(node.getId(), 0L);
         long ccCount = collectedCounts.getOrDefault(node.getId(), 0L);

@@ -43,7 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>spec §3.3.1.4 / §6.4 정합. v14.5 신규 (Phase 5-14e).</p>
  *
  * <p>{@link com.secuhub.domain.evidence.service.FrameworkExportService} 가 leaf 의 evidence_types
- * 매칭을 시도 ({@code evidenceTypeRepository.findByControlId(leaf.getId())}). 본 테스트는
+ * 매칭을 시도 ({@code evidenceTypeRepository.findByControlNodeId(leaf.getId())}). 본 테스트는
  * dev/test 환경 (V6 미실행) 이라 ControlNode.id 와 Control.id 가 별개 sequence — 매칭 안 됨,
  * "필요 증빙" 컬럼은 빈 문자열 자연 (5-14e impact-summary 와 같은 패턴, 5-14f 매핑 이주 후 정상).
  * 본 테스트는 leaf 의 코드 / 영역 / 계층 경로 검증이 핵심.</p>

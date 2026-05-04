@@ -81,6 +81,7 @@ export const frameworksApi = {
 
 // ========================================
 // v15 Phase 5-15b Round 3 (v15.6) — Control Nodes API
+// v15 Phase 5-15c (v15.7) — wire shape 코멘트 회수만 (downloadZip 위, evidenceFilesApi 안)
 //
 // v15.3 폐기된 controlsApi (3 메서드: listByFramework / getDetail / deleteEvidenceType)
 // 의 후속. 옛 controlsApi 의 처리:
@@ -281,8 +282,11 @@ export const evidenceFilesApi = {
   },
 
   /**
-   * v15.6: param 명 controlId → nodeId rename (FE 측). URL path variable 자체는
-   * BE wire shape 보존 (Q3=B — `/evidence-files/zip/{controlId}` 는 별도 phase).
+   * v15.6: param 명 controlId → nodeId rename (FE 측).
+   * v15.7 Q3=B: BE wire shape 도 동기 변경 — `/evidence-files/zip/{controlId}` →
+   *             `/zip/{nodeId}` (BC 0). client-side 의 path 보간은 ID 값만 들어가므로
+   *             URL 문자열 자체에 영향 없음. controller @PathVariable 이 nodeId 이름으로
+   *             매칭됨.
    */
   async downloadZip(nodeId: number, controlCode: string) {
     const response = await api.get(`/evidence-files/zip/${nodeId}`, {

@@ -15,6 +15,8 @@
  *       편집 모드에서 PATCH /tree 로 처리</li>
  *   <li>v15.6: controlsApi 통째 제거 — controlNodesApi (detail/evidence-types/impact-summary)
  *       + evidenceTypesApi (delete) 로 분리 (Q1=A / Q2=B / Q4=A 결정 정합)</li>
+ *   <li>v15.7: router param `:controlId` → `:nodeId` (Q3=B). goToEvidenceTypeDetail
+ *       의 router.push params 도 동기 변경 (router/index.ts 정의와 정합)</li>
  * </ul>
  *
  * <h3>5-14g 동작 보존</h3>
@@ -193,9 +195,9 @@ function onTreeToggle(nodeId: number, nodeType: 'category' | 'control') {
 }
 
 /**
- * v15.6: param 명 controlId → nodeId 정리. router params 의 `controlId` 키는
- * router/index.ts 의 path 정의 (/evidence-types/:controlId) wire shape 보존
- * (BE 명명 변경은 별도 phase — Q3=B 정합).
+ * v15.6: param 명 controlId → nodeId 정리 (FE 인자).
+ * v15.7 Q3=B: router/index.ts 의 path 정의도 동기 변경 (`:controlId` → `:nodeId`).
+ *             router.push 의 params key 도 nodeId 로 통일.
  */
 function goToEvidenceTypeDetail(evidenceTypeId: number, nodeId: number) {
   if (selectedFrameworkId.value == null) return
@@ -203,7 +205,7 @@ function goToEvidenceTypeDetail(evidenceTypeId: number, nodeId: number) {
     name: 'evidence-type-detail',
     params: {
       frameworkId: selectedFrameworkId.value,
-      controlId: nodeId,   // ← router 정의 wire shape 보존
+      nodeId,                  // v15.7: router 정의 정합 (Q3=B)
       evidenceTypeId,
     },
   })

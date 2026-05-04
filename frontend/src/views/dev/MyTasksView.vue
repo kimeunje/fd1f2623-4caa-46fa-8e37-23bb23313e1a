@@ -240,7 +240,7 @@ function scrollToSection(key: MyTaskSectionKey) {
                   <span class="text-sm font-semibold text-gray-900">{{ item.evidenceTypeName }}</span>
                 </div>
                 <div class="text-xs text-gray-500 mt-0.5">
-                  {{ item.frameworkName }} · {{ item.controlCode }} {{ item.controlName }}
+                  {{ item.frameworkName }} · {{ item.nodeCode }} {{ item.nodeName }}
                 </div>
                 <!-- 반려 사유 (빨간 박스) -->
                 <div class="mt-2 p-2.5 bg-red-50 border border-red-100 rounded-md">
@@ -284,7 +284,7 @@ function scrollToSection(key: MyTaskSectionKey) {
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium text-gray-900">{{ item.evidenceTypeName }}</div>
               <div class="text-xs text-gray-500 mt-0.5">
-                {{ item.frameworkName }} · {{ item.controlCode }} {{ item.controlName }}
+                {{ item.frameworkName }} · {{ item.nodeCode }} {{ item.nodeName }}
                 · 마감 {{ formatDate(item.dueDate) }}
               </div>
             </div>
@@ -311,7 +311,7 @@ function scrollToSection(key: MyTaskSectionKey) {
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium text-gray-900">{{ item.evidenceTypeName }}</div>
               <div class="text-xs text-gray-500 mt-0.5">
-                {{ item.frameworkName }} · {{ item.controlCode }} {{ item.controlName }}
+                {{ item.frameworkName }} · {{ item.nodeCode }} {{ item.nodeName }}
                 <template v-if="item.dueDate">
                   · 마감 {{ formatDate(item.dueDate) }}
                 </template>
@@ -346,7 +346,7 @@ function scrollToSection(key: MyTaskSectionKey) {
                 <span v-if="item.latestVersion" class="text-xs text-gray-400 font-mono">v{{ item.latestVersion }}</span>
               </div>
               <div class="text-xs text-gray-500 mt-0.5">
-                {{ item.frameworkName }} · {{ item.controlCode }} {{ item.controlName }}
+                {{ item.frameworkName }} · {{ item.nodeCode }} {{ item.nodeName }}
                 · {{ formatDateTime(item.submittedAt) }} 제출
               </div>
             </div>
@@ -388,7 +388,7 @@ function scrollToSection(key: MyTaskSectionKey) {
                 <span v-if="item.latestVersion" class="text-xs text-gray-400 font-mono">v{{ item.latestVersion }}</span>
               </div>
               <div class="text-xs text-gray-500 mt-0.5">
-                {{ item.frameworkName }} · {{ item.controlCode }}
+                {{ item.frameworkName }} · {{ item.nodeCode }}
                 <template v-if="item.approvedByName">· {{ item.approvedByName }} 승인</template>
                 <template v-if="item.reviewedAt">· {{ formatDateTime(item.reviewedAt) }}</template>
               </div>

@@ -29,12 +29,18 @@
  *   - frameworkId 변경       → frameworksApi.get(id)  (현재 FW 이름)
  *   - framework-detail /
  *     evidence-type-detail   → frameworksApi.list()  (Switcher 목록, 1회 캐시)
- *   - evidence-type-detail   → controlsApi.getDetail(ctrlId)  (통제 코드·이름 + ET 이름)
+ *   - evidence-type-detail   → controlNodesApi.getDetail(nodeId)  (통제 코드·이름 + ET 이름)
+ *
+ * v15 Phase 5-15c (v15.7) 변경:
+ *   - controlsApi.getDetail (v15.6 에서 evidenceApi.ts 에서 제거됨) →
+ *     controlNodesApi.getDetail (정상화). 미적용 시 모듈 로드 fail → 앱 전체 빈 페이지.
+ *   - route.params.controlId → route.params.nodeId (router/index.ts 의 :nodeId 정의 정합)
+ *   - 로컬 변수명 controlId → nodeId (FE 일관성)
  */
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { controlsApi, frameworksApi } from '@/services/evidenceApi'
+import { controlNodesApi, frameworksApi } from '@/services/evidenceApi'
 import type { Framework } from '@/types/evidence'
 
 // ControlDetail 응답 shape — 전역 타입 의존성을 피하기 위해 필요한 최소 필드만 로컬로 선언
@@ -62,7 +68,8 @@ const router = useRouter()
 // ============================================================
 
 const frameworkId = computed<number | null>(() => toNum(route.params.frameworkId))
-const controlId = computed<number | null>(() => toNum(route.params.controlId))
+// v15.7 Q3=B: route.params.controlId → nodeId (router/index.ts 정합)
+const nodeId = computed<number | null>(() => toNum(route.params.nodeId))
 const evidenceTypeId = computed<number | null>(() => toNum(route.params.evidenceTypeId))
 
 function toNum(raw: unknown): number | null {
@@ -122,18 +129,20 @@ watch(
 )
 
 // 3) 통제 상세 + ET 이름 조회 — evidence-type-detail 한정
+//    v15.7: controlsApi.getDetail (제거됨) → controlNodesApi.getDetail (정상화).
+//           controlId → nodeId 변수명 정합 (FE 일관성).
 watch(
-  [controlId, evidenceTypeId, () => route.name],
-  async ([cId, etId, name]) => {
-    if (name !== 'evidence-type-detail' || !cId || !etId) {
+  [nodeId, evidenceTypeId, () => route.name],
+  async ([nId, etId, name]) => {
+    if (name !== 'evidence-type-detail' || !nId || !etId) {
       currentControl.value = null
       currentEvidenceTypeName.value = ''
       return
     }
-    // 통제 상세: 같은 controlId 로 이미 로드되어 있으면 재사용
-    if (!currentControl.value || currentControl.value.id !== cId) {
+    // 통제 상세: 같은 nodeId 로 이미 로드되어 있으면 재사용
+    if (!currentControl.value || currentControl.value.id !== nId) {
       try {
-        const { data } = await controlsApi.getDetail(cId)
+        const { data } = await controlNodesApi.getDetail(nId)
         if (data.success) currentControl.value = data.data
         else currentControl.value = null
       } catch (e) {

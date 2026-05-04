@@ -33,10 +33,15 @@ const routes: RouteRecordRaw[] = [
   //   /controls                                                           → framework-list (Framework 목록)
   //   /controls/new                                                       → framework-create-wizard
   //   /controls/:frameworkId                                              → framework-detail (통제 항목 목록)
-  //   /controls/:frameworkId/:controlId/evidence-types/:evidenceTypeId    → evidence-type-detail (증빙 유형 상세)
+  //   /controls/:frameworkId/:nodeId/evidence-types/:evidenceTypeId       → evidence-type-detail (증빙 유형 상세)
   //
   // 라우트 정의 순서 주의: /controls/new 는 /controls/:frameworkId 보다 먼저.
-  // :frameworkId, :controlId, :evidenceTypeId 는 정규식 (\\d+) 으로 숫자만 매칭하도록 강제.
+  // :frameworkId, :nodeId, :evidenceTypeId 는 정규식 (\\d+) 으로 숫자만 매칭하도록 강제.
+  //
+  // v15 Phase 5-15c (v15.7): route param `:controlId` → `:nodeId` (Q3=B 정합).
+  //                          props mapping 도 controlId → nodeId 로 동기 변경.
+  //                          ControlsView.goToEvidenceTypeDetail 의 router.push params,
+  //                          EvidenceTypeDetailView 의 props 정의도 함께 변경.
   // ========================================
   {
     path: '/controls',
@@ -59,12 +64,13 @@ const routes: RouteRecordRaw[] = [
   },
   {
     // v11 Phase 5-12: 증빙 유형 상세 페이지
-    path: '/controls/:frameworkId(\\d+)/:controlId(\\d+)/evidence-types/:evidenceTypeId(\\d+)',
+    // v15.7: param :controlId → :nodeId (Q3=B 정합)
+    path: '/controls/:frameworkId(\\d+)/:nodeId(\\d+)/evidence-types/:evidenceTypeId(\\d+)',
     name: 'evidence-type-detail',
     component: () => import('@/views/admin/EvidenceTypeDetailView.vue'),
     props: (route) => ({
       frameworkId: Number(route.params.frameworkId),
-      controlId: Number(route.params.controlId),
+      nodeId: Number(route.params.nodeId),
       evidenceTypeId: Number(route.params.evidenceTypeId),
     }),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '증빙 유형 상세' },

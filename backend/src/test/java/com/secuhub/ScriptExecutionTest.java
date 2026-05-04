@@ -65,7 +65,7 @@ class ScriptExecutionTest {
                 .code("SC-01").name("스크립트 테스트 항목")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("스크립트 증빙").build());
+                .controlNode(ctrl).name("스크립트 증빙").build());
 
         CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
                 .name("경로 미설정 작업")
@@ -104,7 +104,7 @@ class ScriptExecutionTest {
                 .code("SC-02").name("스크립트 테스트 항목2")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("스크립트 증빙2").build());
+                .controlNode(ctrl).name("스크립트 증빙2").build());
 
         CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
                 .name("없는 스크립트 작업")
@@ -168,7 +168,7 @@ class ScriptExecutionTest {
                 .code("SC-03").name("성공 스크립트 항목")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("서버 점검 결과").build());
+                .controlNode(ctrl).name("서버 점검 결과").build());
 
         CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
                 .name("서버 점검 수집")
@@ -307,7 +307,7 @@ class ScriptExecutionTest {
                 .code("DL-01").name("다운로드 테스트 항목")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("다운로드 증빙").build());
+                .controlNode(ctrl).name("다운로드 증빙").build());
 
         EvidenceFile dbFile = evidenceFileRepository.save(EvidenceFile.builder()
                 .evidenceType(et)
@@ -361,7 +361,7 @@ class ScriptExecutionTest {
                 .code("DL-02").name("미싱 테스트 항목")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("미싱 증빙").build());
+                .controlNode(ctrl).name("미싱 증빙").build());
 
         EvidenceFile dbFile = evidenceFileRepository.save(EvidenceFile.builder()
                 .evidenceType(et)
@@ -393,7 +393,7 @@ class ScriptExecutionTest {
                 .code("CT-01").name("CT 항목")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("CT 증빙").build());
+                .controlNode(ctrl).name("CT 증빙").build());
 
         Path fileDir = Paths.get(storagePath, "evidence", "CT-01", "test");
         Files.createDirectories(fileDir);

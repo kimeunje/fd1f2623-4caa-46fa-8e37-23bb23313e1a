@@ -24,6 +24,19 @@ import java.util.List;
  * </ul>
  *
  * <p>한 증빙 유형은 정확히 한 섹션에만 속한다 (이동 규칙은 서비스에서 결정).</p>
+ *
+ * <h3>v15 Phase 5-15c (v15.7) — wire shape rename</h3>
+ * <p>{@link Item} / {@link DetailResponse} 의 JSON 필드 {@code controlId} /
+ * {@code controlCode} / {@code controlName} → {@code nodeId} / {@code nodeCode} /
+ * {@code nodeName} (Q4 + Q7-narrow). FE {@code MyTaskItem} / {@code MyTaskDetail}
+ * type 도 동기 갱신 (types/evidence.ts).</p>
+ *
+ * <p>외부 통합 0 가정 — 본 응답은 FE MyTasksView / MyEvidenceDetailView 만 소비.
+ * 외부 시스템 (예: 보고서 SDK / 외부 API) 의 본 필드 의존이 발견되면 BC 도입 검토 (단,
+ * 본 phase 진입 시점에 미발견 → 즉시 변경).</p>
+ *
+ * <p>내부 자바 cascade: {@code et.getControlNode()} × 6 → {@code et.getControlNode()}
+ * (Q1=B). EvidenceType 의 자바 필드 rename 정합.</p>
  */
 public class MyTasksDto {
 
@@ -56,6 +69,10 @@ public class MyTasksDto {
      *
      * <p>섹션에 따라 일부 필드가 비어있을 수 있다 — 예: notSubmitted 섹션은
      * latestFile* 필드가 모두 null, rejected 섹션은 {@code rejectReason} 가 항상 존재.</p>
+     *
+     * <p>v15.7: 노드 식별/표기 필드 {@code controlId} / {@code controlCode} / {@code controlName}
+     * → {@code nodeId} / {@code nodeCode} / {@code nodeName} 로 wire shape rename
+     * (Q4 + Q7-narrow). FE 측 {@code MyTaskItem} type 동기 갱신.</p>
      */
     @Getter
     @Builder
@@ -65,9 +82,10 @@ public class MyTasksDto {
         private String evidenceTypeName;
 
         // 경로 정보 (담당자가 어느 통제의 어느 Framework 인지 볼 수 있게)
-        private Long controlId;
-        private String controlCode;
-        private String controlName;
+        // v15.7: controlId/Code/Name → nodeId/Code/Name (Q4 + Q7-narrow)
+        private Long nodeId;
+        private String nodeCode;
+        private String nodeName;
         private Long frameworkId;
         private String frameworkName;
 
@@ -95,6 +113,9 @@ public class MyTasksDto {
         /**
          * 공통 필드 (경로/마감) 로 빌더 초기화.
          * 호출측에서 섹션에 맞는 추가 필드를 이어서 세팅한다.
+         *
+         * <p>v15.7 cascade: {@code et.getControlNode()} × 6 → {@code et.getControlNode()}
+         * (EvidenceType 자바 필드 rename 정합, Q1=B).</p>
          */
         public static ItemBuilder baseBuilder(EvidenceType et, LocalDate today) {
             Long dueMinusToday = null;
@@ -107,13 +128,14 @@ public class MyTasksDto {
             return Item.builder()
                     .evidenceTypeId(et.getId())
                     .evidenceTypeName(et.getName())
-                    .controlId(et.getControl() != null ? et.getControl().getId() : null)
-                    .controlCode(et.getControl() != null ? et.getControl().getCode() : null)
-                    .controlName(et.getControl() != null ? et.getControl().getName() : null)
-                    .frameworkId(et.getControl() != null && et.getControl().getFramework() != null
-                            ? et.getControl().getFramework().getId() : null)
-                    .frameworkName(et.getControl() != null && et.getControl().getFramework() != null
-                            ? et.getControl().getFramework().getName() : null)
+                    // v15.7 Q1=B: getControl() → getControlNode() / Q4+Q7: 빌더 setter 명도 nodeId/Code/Name
+                    .nodeId(et.getControlNode() != null ? et.getControlNode().getId() : null)
+                    .nodeCode(et.getControlNode() != null ? et.getControlNode().getCode() : null)
+                    .nodeName(et.getControlNode() != null ? et.getControlNode().getName() : null)
+                    .frameworkId(et.getControlNode() != null && et.getControlNode().getFramework() != null
+                            ? et.getControlNode().getFramework().getId() : null)
+                    .frameworkName(et.getControlNode() != null && et.getControlNode().getFramework() != null
+                            ? et.getControlNode().getFramework().getName() : null)
                     .dueDate(dueStr)
                     .daysUntilDue(dueMinusToday != null ? dueMinusToday.intValue() : null);
         }
@@ -144,6 +166,9 @@ public class MyTasksDto {
     /**
      * 증빙 재제출 페이지 (MyEvidenceDetailView) 상세 응답.
      * 단일 증빙 유형 + 파일 이력 + 최신 반려 사유.
+     *
+     * <p>v15.7: {@code controlId} / {@code controlCode} / {@code controlName} →
+     * {@code nodeId} / {@code nodeCode} / {@code nodeName} (Item 정합).</p>
      */
     @Getter
     @Builder
@@ -151,9 +176,10 @@ public class MyTasksDto {
         private Long evidenceTypeId;
         private String evidenceTypeName;
         private String description;
-        private Long controlId;
-        private String controlCode;
-        private String controlName;
+        // v15.7: nodeId/Code/Name (Item 정합)
+        private Long nodeId;
+        private String nodeCode;
+        private String nodeName;
         private Long frameworkId;
         private String frameworkName;
         private String dueDate;

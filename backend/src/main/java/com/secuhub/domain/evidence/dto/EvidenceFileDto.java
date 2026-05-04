@@ -38,6 +38,16 @@ public class EvidenceFileDto {
         private String reviewNote;
     }
 
+    /**
+     * v11 Phase 5-2 + 5-4 — 증빙 파일 응답 DTO.
+     *
+     * <h3>v15 Phase 5-15c (v15.7) — Q7-narrow 결정 적용 비대상</h3>
+     * <p>JSON 필드 {@code controlCode} / {@code controlName} 은 v15.7 Q7-narrow
+     * 결정에 의해 보존 (HANDOFF v15.7 §E 의 명시 범위 = MyTaskItem 만). 향후 wire shape
+     * 일관성 확장 시 별도 phase 에서 {@code nodeCode} / {@code nodeName} 으로 rename
+     * 검토. 단 {@link #from(EvidenceFile)} 안의 자바 측 {@code getControl()} 호출은
+     * Q1=B 정합으로 {@code getControlNode()} 로 일괄 변경됨.</p>
+     */
     @Getter
     @Builder
     @AllArgsConstructor
@@ -73,8 +83,9 @@ public class EvidenceFileDto {
                     .id(entity.getId())
                     .evidenceTypeId(entity.getEvidenceType().getId())
                     .evidenceTypeName(entity.getEvidenceType().getName())
-                    .controlCode(entity.getEvidenceType().getControl().getCode())
-                    .controlName(entity.getEvidenceType().getControl().getName())
+                    // v15.7 Q1=B: getControl() → getControlNode() (자바 측 cascade)
+                    .controlCode(entity.getEvidenceType().getControlNode().getCode())
+                    .controlName(entity.getEvidenceType().getControlNode().getName())
                     .fileName(entity.getFileName())
                     .filePath(entity.getFilePath())
                     .fileSize(entity.getFileSize())

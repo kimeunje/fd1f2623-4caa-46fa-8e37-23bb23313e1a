@@ -52,6 +52,10 @@ import java.util.stream.Collectors;
  * 가 5-14c 에서 {@code LEFT JOIN FETCH cn.parent} 를 적용해 첫 단계 parent 는 즉시 load.
  * 다단계 ancestors traversal 시 parent.parent 는 lazy 일 수 있어 byId 맵으로 in-memory
  * traversal 수행. 같은 영속성 컨텍스트 안에서 같은 entity 재참조 — N+1 차단.</p>
+ *
+ * <h3>v15 Phase 5-15c (v15.7) — Q5=A 정합</h3>
+ * <p>{@code evidenceTypeRepository.findByControlId} → {@code findByControlNodeId}
+ * (1 호출). EvidenceType.controlNode 필드 path 정합.</p>
  */
 @Slf4j
 @Service
@@ -131,7 +135,8 @@ public class FrameworkExportService {
 
                 // 필요 증빙 — leaf 의 evidence_types (5-14e 시점 dev/test 빈 문자열 자연,
                 // prod V6 후 정상 매칭. 5-14f 매핑 이주 후 dev/test 도 정상)
-                List<EvidenceType> ets = evidenceTypeRepository.findByControlId(leaf.getId());
+                // v15.7 Q5=A: findByControlId → findByControlNodeId
+                List<EvidenceType> ets = evidenceTypeRepository.findByControlNodeId(leaf.getId());
                 String etNames = ets.stream()
                         .map(EvidenceType::getName)
                         .filter(Objects::nonNull)

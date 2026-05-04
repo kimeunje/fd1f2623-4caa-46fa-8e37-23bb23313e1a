@@ -4,7 +4,7 @@
  *
  * secuhub_unified_prototype.html §stage-evidence 의 3탭 구조를 도입한 페이지.
  *
- * 진입 경로: /controls/:frameworkId/:controlId/evidence-types/:evidenceTypeId
+ * 진입 경로: /controls/:frameworkId/:nodeId/evidence-types/:evidenceTypeId
  * 이동 방법: ControlsView 의 통제 항목 확장 → 증빙 유형 카드 이름 클릭
  *
  * 구성:
@@ -18,10 +18,16 @@
  *     · 파일 이력: 버전별 테이블. pending 행은 파란 배경 강조
  *     · 수동 업로드: 드래그앤드롭 + 제출 메모 + 업로드 버튼
  *     · 자동 수집: 증빙 유형에 연결된 작업 카드 + 즉시 실행 / 삭제 / 추가
+ *
+ * v15 Phase 5-15c (v15.7) 변경:
+ *  - v15.6 LSP rename 잔존 fix: 옛 `controlsApi` (v15.6 에서 evidenceApi.ts 에서 제거됨)
+ *    → `controlNodesApi.getDetail` 로 일괄 변경 — 본 phase 까지 컴파일 fail 상태였던
+ *    파일을 v15.7 에서 함께 정리 (incidental cleanup, v15.6 backlog).
+ *  - props.controlId → props.nodeId (Q3=B router param rename 정합)
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { controlsApi, evidenceFilesApi, jobsApi } from '@/services/evidenceApi'
+import { controlNodesApi, evidenceFilesApi, jobsApi } from '@/services/evidenceApi'
 import type {
   ControlDetail,
   EvidenceTypeResponse,
@@ -32,10 +38,11 @@ import type {
 
 // ========================================
 // Props — 라우트에서 전달
+// v15.7: controlId → nodeId (Q3=B 정합, router/index.ts 의 path :nodeId 와 동기)
 // ========================================
 const props = defineProps<{
   frameworkId: number
-  controlId: number
+  nodeId: number
   evidenceTypeId: number
 }>()
 
@@ -103,7 +110,9 @@ async function loadAll() {
   loading.value = true
   try {
     const [controlRes, filesRes, jobsRes] = await Promise.all([
-      controlsApi.getDetail(props.controlId),
+      // v15.7: controlsApi.getDetail (v15.6 에서 제거됨) → controlNodesApi.getDetail (정상화).
+      // props.controlId → props.nodeId (Q3=B 정합).
+      controlNodesApi.getDetail(props.nodeId),
       evidenceFilesApi.listByType(props.evidenceTypeId),
       jobsApi.list(),
     ])

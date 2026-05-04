@@ -147,13 +147,13 @@ class SchemaValidationTest {
 
         // evidence_types — file_type 필드 없이 생성
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(control)
+                .controlNode(control)
                 .name("정보보호 정책서")
                 .description("경영진 승인된 정책 문서")
                 .build());
 
         EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(control)
+                .controlNode(control)
                 .name("개인정보 처리방침")
                 .build());
 
@@ -182,7 +182,7 @@ class SchemaValidationTest {
         // v14 Phase 5-14f: legacy controls 0건 (5-14b 부터 INSERT 차단), control_nodes leaf 1건 검증
         assertThat(controlNodeRepository.findByFrameworkIdAndNodeTypeOrderByDisplayOrderAsc(
                 framework.getId(), NodeType.control)).hasSize(1);
-        assertThat(evidenceTypeRepository.findByControlId(control.getId())).hasSize(2);
+        assertThat(evidenceTypeRepository.findByControlNodeId(control.getId())).hasSize(2);
 
         List<EvidenceFile> files = evidenceFileRepository
                 .findByEvidenceTypeIdOrderByVersionDesc(et1.getId());
@@ -193,8 +193,8 @@ class SchemaValidationTest {
         assertThat(files.get(0).getReviewStatus()).isEqualTo(ReviewStatus.auto_approved);
 
         // 수집현황: et1은 파일 있음, et2는 파일 없음 → "1/2 수집됨"
-        long totalTypes = evidenceTypeRepository.findByControlId(control.getId()).size();
-        long collectedTypes = evidenceTypeRepository.findByControlId(control.getId()).stream()
+        long totalTypes = evidenceTypeRepository.findByControlNodeId(control.getId()).size();
+        long collectedTypes = evidenceTypeRepository.findByControlNodeId(control.getId()).stream()
                 .filter(et -> !evidenceFileRepository.findByEvidenceTypeIdOrderByVersionDesc(et.getId()).isEmpty())
                 .count();
         assertThat(totalTypes).isEqualTo(2);
@@ -216,7 +216,7 @@ class SchemaValidationTest {
                 .code("T-01").name("테스트 항목")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("테스트 증빙").build());
+                .controlNode(ctrl).name("테스트 증빙").build());
 
         CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
                 .name("접근권한 현황 추출")
@@ -492,7 +492,7 @@ class SchemaValidationTest {
 
         // 담당자·마감일 포함 생성
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl)
+                .controlNode(ctrl)
                 .name("보안 교육 이수 증빙")
                 .ownerUser(hrOwner)
                 .dueDate(LocalDate.of(2026, 6, 30))
@@ -548,7 +548,7 @@ class SchemaValidationTest {
                 .code("2.2.1").name("임직원 교육")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("교육 수료증").ownerUser(hrOwner)
+                .controlNode(ctrl).name("교육 수료증").ownerUser(hrOwner)
                 .build());
 
         // 1) 담당자 업로드 → 명시적으로 pending 설정

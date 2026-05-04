@@ -93,7 +93,7 @@ class Phase514gBackendTest {
 
     private EvidenceType createType(ControlNode leaf, String name) {
         return evidenceTypeRepository.save(EvidenceType.builder()
-                .control(leaf).name(name).build());
+                .controlNode(leaf).name(name).build());
     }
 
     /**

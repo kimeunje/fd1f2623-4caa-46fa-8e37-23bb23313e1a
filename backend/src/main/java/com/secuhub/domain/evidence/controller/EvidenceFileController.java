@@ -35,6 +35,12 @@ import java.util.List;
  *       <b>approve, reject, pending</b> (Phase 5-4)</li>
  *   <li>관리자 + 소유 담당자: listByType, upload, download</li>
  * </ul>
+ *
+ * <h3>v15 Phase 5-15c (v15.7) — Q3=B URL path variable rename</h3>
+ * <p>{@link #downloadZip} 의 {@code @GetMapping("/zip/{controlId}")} →
+ * {@code "/zip/{nodeId}"} + {@code @PathVariable Long controlId} →
+ * {@code Long nodeId} + 본문 변수 사용 4 곳 일괄 갱신. BC 0 — 같은 phase 안 FE 의
+ * downloadZip 호출 (evidenceApi.ts) 도 동기 변경. 외부 통합 0 가정.</p>
  */
 @RestController
 @RequestMapping("/api/v1/evidence-files")
@@ -188,13 +194,17 @@ public class EvidenceFileController {
     }
 
     /**
-     * 통제항목별 전체 증빙 파일 ZIP 다운로드 — 관리자 전용
-     * GET /api/v1/evidence-files/zip/{controlId}
+     * 통제항목별 (또는 hybrid 노드) 전체 증빙 파일 ZIP 다운로드 — 관리자 전용.
+     * GET /api/v1/evidence-files/zip/{nodeId}
+     *
+     * <p>v15 Phase 5-15c (v15.7) — Q3=B URL path variable rename. 옛 path
+     * {@code /zip/{controlId}} 폐기 (BC 0). FE evidenceApi.ts 의 downloadZip 호출도
+     * 동기 갱신 (path variable 명만 변경, 클라이언트 입장 path 의 ID 자체는 같음).</p>
      */
-    @GetMapping("/zip/{controlId}")
+    @GetMapping("/zip/{nodeId}")
     @PreAuthorize("hasRole('ADMIN')")
-    public void downloadZip(@PathVariable Long controlId, HttpServletResponse response) throws IOException {
-        String zipFileName = controlId + "_증빙자료.zip";
+    public void downloadZip(@PathVariable Long nodeId, HttpServletResponse response) throws IOException {
+        String zipFileName = nodeId + "_증빙자료.zip";
 
         String encodedFileName = URLEncoder.encode(zipFileName, StandardCharsets.UTF_8)
                 .replaceAll("\\+", "%20");
@@ -203,7 +213,7 @@ public class EvidenceFileController {
         response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
                 "attachment; filename=\"" + zipFileName + "\"; filename*=UTF-8''" + encodedFileName);
 
-        evidenceFileService.downloadZip(controlId, response.getOutputStream());
+        evidenceFileService.downloadZip(nodeId, response.getOutputStream());
     }
 
     /**

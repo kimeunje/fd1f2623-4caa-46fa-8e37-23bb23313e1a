@@ -88,7 +88,7 @@ class EvidenceApprovalTest {
                 .code("2.2.1").name("임직원 교육")
                 .displayOrder(0).depth(1).build());
         ownedType = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("보안 교육 수료증").ownerUser(owner).build());
+                .controlNode(ctrl).name("보안 교육 수료증").ownerUser(owner).build());
 
         adminToken = jwtTokenProvider.createToken(admin.getId(), admin.getEmail(), "admin");
         ownerToken = jwtTokenProvider.createToken(owner.getId(), owner.getEmail(), "developer");

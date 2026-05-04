@@ -186,7 +186,9 @@ public class EvidenceDataInitializer implements CommandLineRunner {
 
         for (String etName : evidenceTypeNames) {
             evidenceTypeRepository.save(EvidenceType.builder()
-                    .control(leaf)            // v14 Phase 5-14f: ControlNode 직접 전달
+                    // v15.7 Q1=B: Lombok @Builder method 명 control → controlNode
+                    //             (EvidenceType 자바 필드 rename 정합)
+                    .controlNode(leaf)        // 5-14f: ControlNode 직접 전달, v15.7: builder 메서드명 갱신
                     .name(etName)
                     .build());
         }
@@ -220,11 +222,13 @@ public class EvidenceDataInitializer implements CommandLineRunner {
      * leaf 의 evidence_types 중 이름 매칭으로 1개 조회.
      *
      * <p>v14 Phase 5-14f: 시그니처 {@link Control} → {@link ControlNode} 변경.
-     * {@link EvidenceTypeRepository#findByControlId} 의 시그니처는 그대로 (Long 받음) —
-     * 5-14f 후 ControlNode.id 자연 매칭.</p>
+     * v15 Phase 5-15c (v15.7): Repository 메서드명 {@code findByControlId} →
+     * {@code findByControlNodeId} (Q5=A 정합 — EvidenceType.controlNode 필드 path).
+     * {@link EvidenceTypeRepository#findByControlNodeId} 의 시그니처는 그대로
+     * (Long 받음) — ControlNode.id 자연 매칭.</p>
      */
     private EvidenceType findEvidenceType(ControlNode leaf, String name) {
-        return evidenceTypeRepository.findByControlId(leaf.getId()).stream()
+        return evidenceTypeRepository.findByControlNodeId(leaf.getId()).stream()
                 .filter(et -> et.getName().equals(name))
                 .findFirst()
                 .orElse(null);

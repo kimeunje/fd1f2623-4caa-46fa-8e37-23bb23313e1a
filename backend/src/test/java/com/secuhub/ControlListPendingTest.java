@@ -116,9 +116,9 @@ class ControlListPendingTest {
         ControlNode b = createLeaf(framework, "B-1", "통제 B");
 
         EvidenceType etA = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(a).name("증빙 A").build());
+                .controlNode(a).name("증빙 A").build());
         evidenceTypeRepository.save(EvidenceType.builder()
-                .control(b).name("증빙 B").build());
+                .controlNode(b).name("증빙 B").build());
 
         // A 에만 pending 2건
         savePending(etA, "a1.pdf", 1);
@@ -143,7 +143,7 @@ class ControlListPendingTest {
     void testOnlyPendingCounted() throws Exception {
         ControlNode c = createLeaf(framework, "C-1", "혼합 통제");
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c).name("증빙").build());
+                .controlNode(c).name("증빙").build());
 
         // 4가지 상태 각 1건, pending 만 집계되어야 함
         saveWithStatus(et, "p.pdf", 1, ReviewStatus.pending);
@@ -169,11 +169,11 @@ class ControlListPendingTest {
     void testPendingAggregatedAcrossEvidenceTypes() throws Exception {
         ControlNode c = createLeaf(framework, "D-1", "다중증빙 통제");
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c).name("증빙 1").build());
+                .controlNode(c).name("증빙 1").build());
         EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c).name("증빙 2").build());
+                .controlNode(c).name("증빙 2").build());
         EvidenceType et3 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c).name("증빙 3").build());
+                .controlNode(c).name("증빙 3").build());
 
         // 3 evidence_type 에 pending 각 1건씩 → 총 3
         savePending(et1, "1.pdf", 1);
@@ -199,14 +199,14 @@ class ControlListPendingTest {
         // 현재 framework 에 Control E, pending 1건
         ControlNode e = createLeaf(framework, "E-1", "통제 E");
         EvidenceType etE = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(e).name("증빙 E").build());
+                .controlNode(e).name("증빙 E").build());
         savePending(etE, "e.pdf", 1);
 
         // 다른 Framework 에 Control F, pending 5건 (영향 없어야 함)
         Framework otherFw = frameworkRepository.save(Framework.builder().name("Other FW").build());
         ControlNode f = createLeaf(otherFw, "F-1", "통제 F");
         EvidenceType etF = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(f).name("증빙 F").build());
+                .controlNode(f).name("증빙 F").build());
         for (int i = 1; i <= 5; i++) {
             savePending(etF, "f" + i + ".pdf", i);
         }

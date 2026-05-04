@@ -94,9 +94,9 @@ class ImpactSummaryTest {
         // 대상 통제 — v14 Phase 5-14f 패턴 A
         ControlNode ctrl = createLeaf(fw, "1.1.1", "정책 수립", 0);
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("정책 문서").build());
+                .controlNode(ctrl).name("정책 문서").build());
         EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(ctrl).name("회의록").build());
+                .controlNode(ctrl).name("회의록").build());
 
         // EvidenceFile 3개 — 그 중 1개만 reviewedAt 명시 설정 (관리자가 명시 검토)
         // Phase 5-4 EvidenceApprovalService 가 approve/reject 시 reviewedAt 채움.
@@ -133,7 +133,7 @@ class ImpactSummaryTest {
         // 다른 통제 (집계 누적 검증용 — 이쪽 카운트는 응답에 포함되면 안 됨)
         ControlNode other = createLeaf(fw, "1.1.2", "다른 통제", 1);
         EvidenceType etOther = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(other).name("다른 증빙").build());
+                .controlNode(other).name("다른 증빙").build());
         evidenceFileRepository.save(EvidenceFile.builder()
                 .evidenceType(etOther).fileName("other.pdf").filePath("/tmp/other.pdf")
                 .fileSize(1L).version(1)

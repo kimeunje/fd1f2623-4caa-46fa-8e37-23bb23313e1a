@@ -261,7 +261,7 @@ const statusSummary = computed(() => {
             <div class="text-sm text-gray-500 mt-1">
               {{ detail.frameworkName }}
               <span class="text-gray-300 mx-1">·</span>
-              {{ detail.controlCode }} {{ detail.controlName }}
+              {{ detail.nodeCode }} {{ detail.nodeName }}
               <template v-if="detail.dueDate">
                 <span class="text-gray-300 mx-1">·</span>
                 마감 {{ formatDate(detail.dueDate) }}

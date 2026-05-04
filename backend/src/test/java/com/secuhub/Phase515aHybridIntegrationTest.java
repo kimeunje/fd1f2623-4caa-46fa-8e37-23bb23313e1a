@@ -170,17 +170,17 @@ class Phase515aHybridIntegrationTest {
 
         // category 의 evidence_types 1개 + et.control 매핑 정합
         EvidenceType reloadedCat = evidenceTypeRepository.findById(etCategory.getId()).orElseThrow();
-        assertThat(reloadedCat.getControl().getId()).isEqualTo(category.getId());
-        assertThat(reloadedCat.getControl().getNodeType()).isEqualTo(NodeType.category);
+        assertThat(reloadedCat.getControlNode().getId()).isEqualTo(category.getId());
+        assertThat(reloadedCat.getControlNode().getNodeType()).isEqualTo(NodeType.category);
 
         // leaf 의 evidence_types 1개
         EvidenceType reloadedLeaf = evidenceTypeRepository.findById(etLeaf.getId()).orElseThrow();
-        assertThat(reloadedLeaf.getControl().getId()).isEqualTo(leaf.getId());
-        assertThat(reloadedLeaf.getControl().getNodeType()).isEqualTo(NodeType.control);
+        assertThat(reloadedLeaf.getControlNode().getId()).isEqualTo(leaf.getId());
+        assertThat(reloadedLeaf.getControlNode().getNodeType()).isEqualTo(NodeType.control);
 
         // findByControlId 가 두 노드 모두 자연 매칭 (FK 통한 컬럼 매칭, nodeType 무관)
-        assertThat(evidenceTypeRepository.findByControlId(category.getId())).hasSize(1);
-        assertThat(evidenceTypeRepository.findByControlId(leaf.getId())).hasSize(1);
+        assertThat(evidenceTypeRepository.findByControlNodeId(category.getId())).hasSize(1);
+        assertThat(evidenceTypeRepository.findByControlNodeId(leaf.getId())).hasSize(1);
 
         System.out.println("✅ [Hybrid 매달림] category + leaf 모두 정상 매달림, IllegalStateException 안 던짐");
     }
@@ -347,9 +347,9 @@ class Phase515aHybridIntegrationTest {
 
         // parent 자체에 evidence_types 2개 + 각 file 1개
         EvidenceType pEt1 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(parent).name("parent ET1").build());
+                .controlNode(parent).name("parent ET1").build());
         EvidenceType pEt2 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(parent).name("parent ET2").build());
+                .controlNode(parent).name("parent ET2").build());
         evidenceFileRepository.save(EvidenceFile.builder()
                 .evidenceType(pEt1).fileName("p1.pdf").filePath("/p/p1.pdf").fileSize(1L)
                 .version(1).collectionMethod(CollectionMethod.manual)
@@ -365,7 +365,7 @@ class Phase515aHybridIntegrationTest {
 
         // child 에 evidence_types 1개 + file 1개 (명시 검토됨 = reviewedAt NOT NULL)
         EvidenceType cEt = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(child).name("child ET").build());
+                .controlNode(child).name("child ET").build());
         evidenceFileRepository.save(EvidenceFile.builder()
                 .evidenceType(cEt).fileName("c.pdf").filePath("/c/c.pdf").fileSize(1L)
                 .version(1).collectionMethod(CollectionMethod.manual)
@@ -409,7 +409,7 @@ class Phase515aHybridIntegrationTest {
                 .code("1").name("자손 0 leaf").displayOrder(0).depth(1).build());
 
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(leaf).name("ET").build());
+                .controlNode(leaf).name("ET").build());
         evidenceFileRepository.save(EvidenceFile.builder()
                 .evidenceType(et).fileName("a.pdf").filePath("/p/a.pdf").fileSize(1L)
                 .version(1).collectionMethod(CollectionMethod.manual)

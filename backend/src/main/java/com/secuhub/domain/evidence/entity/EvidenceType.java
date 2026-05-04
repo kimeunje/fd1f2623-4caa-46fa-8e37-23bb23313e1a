@@ -12,22 +12,37 @@ import java.util.List;
 /**
  * 증빙 유형 (Evidence Type) 엔티티.
  *
- * <h3>v14 Phase 5-14f — control FK 의 타입 변경 (핵심)</h3>
- * <p>{@code @JoinColumn(name="control_id")} 의 타입이 {@link Control} → {@link ControlNode}
- * 로 변경됨. DB 레벨 컬럼은 그대로 ({@code control_id}). prod 환경에서는 5-14b 의 V6
- * 마이그레이션이 이미 {@code evidence_types.control_id += 1,000,000} 적용 + FK 를
- * {@code control_nodes(id)} 로 이전 완료. 본 phase 는 JPA 매핑을 그 결과에 정합화.</p>
+ * <h3>v14 Phase 5-14f — control FK 의 타입 변경 (역사 보존)</h3>
+ * <p>{@code @JoinColumn(name="control_id")} 의 타입이 v14 5-14f 에서 {@code Control}
+ * → {@link ControlNode} 로 변경됨. DB 레벨 컬럼은 그대로 ({@code control_id}). prod
+ * 환경에서는 5-14b 의 V6 마이그레이션이 이미 {@code evidence_types.control_id += 1,000,000}
+ * 적용 + FK 를 {@code control_nodes(id)} 로 이전 완료.</p>
  *
- * <p>dev/test 환경 (ddl-auto: create) 에서는 V6 가 안 돌지만, 본 매핑이 control_nodes
- * 를 직접 가리키므로 자연 작동. 5-14e 의 impact-summary 와 5-14c 의 GET /tree 의
- * leaf 두 카운트 (evidenceTypeCount / pendingReviewCount) 가 자연 정상화.</p>
+ * <h3>v15 Phase 5-15b R3 (v15.6) — Control 엔티티 + ControlController 일괄 제거</h3>
+ *
+ * <h3>v15 Phase 5-15c (v15.7) — 자바 필드명 정합 (DB 컬럼 보존)</h3>
+ * <p>자바 필드명 {@code control} → {@link #controlNode} 로 rename. <b>DB 컬럼명은
+ * {@code control_id} 그대로 유지</b> (v15.7 Q1=B 결정 — 마이그레이션 0). 의미 정합:
+ * 매핑 대상이 {@link ControlNode} 이므로 자바 명명도 그에 맞춤. Repository derived
+ * query 도 {@code findByControlId} → {@code findByControlNodeId} 자동 정합 (Spring
+ * Data 가 {@link #controlNode} 필드 path 정합 메서드명 요구).</p>
+ *
+ * <p>cascade 영향:</p>
+ * <ul>
+ *   <li>Lombok {@code @Getter} → {@code getControlNode()} 자동 생성 (옛 {@code getControl()}
+ *       호출처는 모두 일괄 변경됨)</li>
+ *   <li>{@link ControlNode#evidenceTypes} 의 {@code @OneToMany(mappedBy="controlNode")}
+ *       정합 갱신 (v15.7)</li>
+ *   <li>JPA Repository 의 모든 JPQL {@code et.control} 참조 → {@code et.controlNode}</li>
+ *   <li>Lombok {@code @Builder} 의 {@code .control(...)} 호출 → {@code .controlNode(...)}
+ *       (FrameworkService.inherit 등)</li>
+ * </ul>
  *
  * <h3>제약</h3>
  * <ul>
- *   <li>{@code control_id} 는 leaf {@code ControlNode} ({@code node_type='control'}) 만
- *       가리켜야 함. 5-14f 시점 application 레이어에서 검증 (PATCH /tree 의 12 검증 +
- *       {@link ControlNode#addEvidenceType(EvidenceType)} 의 leaf 검증). v15 에서 DB
- *       CHECK constraint 추가 검토.</li>
+ *   <li>v15 5-15a (hybrid) 채택 후로는 leaf 만이 아니라 모든 노드가 evidence_types
+ *       보유 가능 ({@link ControlNode#addEvidenceType} 의 leaf-only 가드 제거됨).
+ *       v15 에서 DB CHECK constraint 추가 검토는 후순위.</li>
  * </ul>
  */
 @Entity
@@ -46,13 +61,14 @@ public class EvidenceType extends BaseEntity {
     private Long id;
 
     /**
-     * v14 Phase 5-14f — 타입 {@link Control} → {@link ControlNode} 변경.
-     * leaf ControlNode 만 매달 수 있다 ({@code node_type='control'}).
-     * 컬럼명은 {@code control_id} 그대로 유지 (DB 호환).
+     * v14 Phase 5-14f — 타입 {@code Control} → {@link ControlNode} 변경.
+     * v15 Phase 5-15c (v15.7) — 자바 필드명 {@code control} → {@code controlNode}.
+     * 컬럼명은 {@code control_id} 그대로 유지 (DB 호환). 호출 측은 모두
+     * {@code et.getControlNode()} / {@code .controlNode(...)} 사용.
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "control_id", nullable = false)
-    private ControlNode control;
+    private ControlNode controlNode;
 
     @Column(nullable = false, length = 300)
     private String name;
@@ -82,12 +98,15 @@ public class EvidenceType extends BaseEntity {
     private List<EvidenceFile> evidenceFiles = new ArrayList<>();
 
     /**
-     * v14 Phase 5-14f — 시그니처 변경: {@link Control} → {@link ControlNode}.
-     * 기존 호출 측 (5-14a 의 {@link Control#addEvidenceType} 등) 은 5-14f 에서 모두
-     * leaf ControlNode 직접 사용으로 전환됨.
+     * v14 Phase 5-14f — 시그니처 {@code Control} → {@link ControlNode}.
+     * v15 Phase 5-15c (v15.7) — 메서드명 {@code setControl} → {@code setControlNode}
+     * (필드명 정합).
+     *
+     * <p>호출 측은 {@link ControlNode#addEvidenceType(EvidenceType)} 안의 양방향
+     * 동기화 1 곳 — 외부 직접 호출 0.</p>
      */
-    void setControl(ControlNode control) {
-        this.control = control;
+    void setControlNode(ControlNode controlNode) {
+        this.controlNode = controlNode;
     }
 
     public void update(String name, String description) {

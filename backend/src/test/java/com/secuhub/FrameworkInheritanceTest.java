@@ -110,12 +110,12 @@ class FrameworkInheritanceTest {
 
         LocalDate dueDate = LocalDate.of(2026, 6, 30);
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c1).name("정보보호 정책서").description("경영진 승인")
+                .controlNode(c1).name("정보보호 정책서").description("경영진 승인")
                 .ownerUser(ownerUser).dueDate(dueDate).build());
         EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c1).name("처리방침").ownerUser(ownerUser).build());
+                .controlNode(c1).name("처리방침").ownerUser(ownerUser).build());
         EvidenceType et3 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c2).name("접근권한 목록").dueDate(LocalDate.of(2026, 9, 30)).build());
+                .controlNode(c2).name("접근권한 목록").dueDate(LocalDate.of(2026, 9, 30)).build());
 
         collectionJobRepository.save(CollectionJob.builder()
                 .name("접근권한 추출").jobType(JobType.excel_extract)
@@ -163,7 +163,7 @@ class FrameworkInheritanceTest {
         // 검증 의도 보존: 새 leaf id 가 source 의 c1.id 와 다름
         assertThat(newControls.get(0).getId()).isNotEqualTo(c1.getId());
 
-        List<EvidenceType> newTypesC1 = evidenceTypeRepository.findByControlId(newControls.get(0).getId());
+        List<EvidenceType> newTypesC1 = evidenceTypeRepository.findByControlNodeId(newControls.get(0).getId());
         assertThat(newTypesC1).hasSize(2);
         EvidenceType copiedEt1 = newTypesC1.stream()
                 .filter(e -> "정보보호 정책서".equals(e.getName())).findFirst().orElseThrow();
@@ -174,17 +174,17 @@ class FrameworkInheritanceTest {
         List<CollectionJob> allJobs = collectionJobRepository.findAll();
         List<CollectionJob> newJobs = allJobs.stream()
                 .filter(j -> j.getEvidenceType() != null
-                        && j.getEvidenceType().getControl().getFramework().getId().equals(newFw.getId()))
+                        && j.getEvidenceType().getControlNode().getFramework().getId().equals(newFw.getId()))
                 .toList();
         assertThat(newJobs).hasSize(2);
         long originalJobs = allJobs.stream()
                 .filter(j -> j.getEvidenceType() != null
-                        && j.getEvidenceType().getControl().getFramework().getId().equals(source.getId()))
+                        && j.getEvidenceType().getControlNode().getFramework().getId().equals(source.getId()))
                 .count();
         assertThat(originalJobs).isEqualTo(2);
 
         long newFileCount = evidenceFileRepository.findAll().stream()
-                .filter(f -> f.getEvidenceType().getControl().getFramework().getId().equals(newFw.getId()))
+                .filter(f -> f.getEvidenceType().getControlNode().getFramework().getId().equals(newFw.getId()))
                 .count();
         assertThat(newFileCount).isZero();
 
@@ -202,7 +202,7 @@ class FrameworkInheritanceTest {
                 .code("S-1").name("통제 A")
                 .displayOrder(0).depth(1).build());
         EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c1).name("증빙 A").build());
+                .controlNode(c1).name("증빙 A").build());
         collectionJobRepository.save(CollectionJob.builder()
                 .name("작업 A").jobType(JobType.log_extract)
                 .scriptPath("/s.sh").evidenceType(et1).build());
@@ -221,7 +221,7 @@ class FrameworkInheritanceTest {
         assertThat(sourceControlsAfter).hasSize(1);
         assertThat(sourceControlsAfter.get(0).getId()).isEqualTo(c1.getId());
 
-        List<EvidenceType> sourceTypesAfter = evidenceTypeRepository.findByControlId(c1.getId());
+        List<EvidenceType> sourceTypesAfter = evidenceTypeRepository.findByControlNodeId(c1.getId());
         assertThat(sourceTypesAfter).hasSize(1);
         assertThat(sourceTypesAfter.get(0).getId()).isEqualTo(et1.getId());
 
@@ -241,7 +241,7 @@ class FrameworkInheritanceTest {
                 .code("G-1").name("통제")
                 .displayOrder(0).depth(1).build());
         EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
-                .control(c).name("증빙").build());
+                .controlNode(c).name("증빙").build());
 
         collectionJobRepository.save(CollectionJob.builder()
                 .name("연결 작업").jobType(JobType.excel_extract)

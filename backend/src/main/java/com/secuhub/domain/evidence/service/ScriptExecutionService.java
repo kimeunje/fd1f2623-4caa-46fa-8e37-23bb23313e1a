@@ -401,8 +401,9 @@ public class ScriptExecutionService {
                             .orElse(0) + 1;
 
                     // storage/evidence/{controlCode}/{evidenceTypeId}/ 로 복사
-                    String controlCode = evidenceType.getControl() != null
-                            ? evidenceType.getControl().getCode() : "unknown";
+                    // v15.7 Q1=B: getControl() → getControlNode() (EvidenceType 자바 필드 rename)
+                    String controlCode = evidenceType.getControlNode() != null
+                            ? evidenceType.getControlNode().getCode() : "unknown";
                     Path destDir = Paths.get(storagePath, "evidence", controlCode,
                             String.valueOf(evidenceType.getId()));
                     Files.createDirectories(destDir);

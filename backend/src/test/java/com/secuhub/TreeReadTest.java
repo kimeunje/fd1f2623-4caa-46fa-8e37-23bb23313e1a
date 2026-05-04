@@ -323,13 +323,13 @@ class TreeReadTest {
 
         // 카테고리 자체에 evidence_types 1개 (v15.0 hybrid backend 가 leaf-only 가드 제거)
         evidenceTypeRepository.save(EvidenceType.builder()
-                .control(hybridCat).name("범위 정의서 (카테고리 자체)").build());
+                .controlNode(hybridCat).name("범위 정의서 (카테고리 자체)").build());
 
         // leaf 에 evidence_types 2개
         evidenceTypeRepository.save(EvidenceType.builder()
-                .control(childLeaf).name("범위 문서 v1").build());
+                .controlNode(childLeaf).name("범위 문서 v1").build());
         evidenceTypeRepository.save(EvidenceType.builder()
-                .control(childLeaf).name("범위 문서 v2").build());
+                .controlNode(childLeaf).name("범위 문서 v2").build());
 
         // 응답 검증:
         //   nodes[0] = hybridCat (depth=1)   — own evidenceTypeCount=1 (자체만, 자손 평탄화 X)

@@ -23,20 +23,31 @@ import java.util.List;
 
 /**
  * Phase 5-14e (생성) / Phase 5-15a (hybrid 분리 카운트) /
- * Phase 5-15b Round 3 (v15.6 — leaf detail + evidence-types 분리 응답 추가) —
+ * Phase 5-15b Round 3 (v15.6 — leaf detail + evidence-types 분리 응답 추가) /
+ * Phase 5-15c (v15.7 — Q2=A legacy alias 제거 + Q5/Q6=A 명명 정리) —
  * control_node 단위 운영 데이터 조회 서비스.
  *
- * <p>v15.6 시점 3 메서드 보유:</p>
+ * <p>v15.7 시점 3 메서드 보유:</p>
  * <ul>
- *   <li>{@link #getImpactSummary(Long)} — v14.5 도입 / v15.0 hybrid 확장</li>
  *   <li>{@link #getControlNodeDetail(Long)} — v15.6 신규 (옛 ControlController.getDetail
  *       의 의미 흡수)</li>
  *   <li>{@link #getEvidenceTypes(Long)} — v15.6 신규 (leaf detail 의 evidenceTypes[]
  *       부분만 분리 응답)</li>
+ *   <li>{@link #getImpactSummary(Long)} — v14.5 도입 / v15.0 hybrid 확장 / v15.7 legacy
+ *       alias 제거 + 파라미터 rename</li>
+ * </ul>
+ *
+ * <h3>v15.7 변경</h3>
+ * <ul>
+ *   <li>{@link #getImpactSummary(Long)} 의 builder 안 legacy alias 3 줄 제거 (Q2=A,
+ *       호출처 0 dead 확인 후 정리). own 3 + descendant 3 만 빌드.</li>
+ *   <li>Repository 호출 측 메서드명 일괄 갱신 (Q5=A, Repository 메서드 rename 정합):
+ *       {@code countByControlId} → {@code countByControlNodeId} 등</li>
+ *   <li>{@link #getImpactSummary(Long)} 의 파라미터명 {@code controlId} → {@code nodeId}
+ *       (Q6=A, service-layer 명명을 phase 의도에 정합 — wire shape "nodeId" 와 같은 명명)</li>
  * </ul>
  *
  * <h3>v15.6 신규 메서드의 데이터 모델 정합</h3>
- *
  * <p>{@code getControlNodeDetail} 은 leaf {@link ControlNode} 의 in-memory
  * evidenceTypes / evidenceFiles 순회로 카운트 + DTO 빌드. Single leaf 조회라
  * N+1 영향 미미 (typical N=1~5). N+1 최적화는 후속 phase 검토.</p>
@@ -179,11 +190,11 @@ public class ControlNodeService {
     /**
      * leaf 의 모든 evidence_files 중 review_status=pending 카운트.
      *
-     * <p>Repository 의 batch 메서드 ({@link EvidenceFileRepository#countByControlId})
+     * <p>Repository 의 batch 메서드 ({@link EvidenceFileRepository#countByControlNodeId})
      * 가 own files 전체를 카운트하나, pending 만 분리한 메서드가 없으므로 in-memory
      * 순회. Single leaf 의 files 수는 typical 작음 (N=수~수십).</p>
      *
-     * <p>대규모 leaf 발견 시 EvidenceFileRepository 에 countPendingByControlId 메서드
+     * <p>대규모 leaf 발견 시 EvidenceFileRepository 에 countPendingByControlNodeId 메서드
      * 추가 검토 (후속 phase).</p>
      */
     private long countPendingReviews(ControlNode node) {
@@ -212,61 +223,75 @@ public class ControlNodeService {
     }
 
     // ════════════════════════════════════════════════════════════════════
-    // v14.5 도입 / v15.0 hybrid 확장 — impact-summary (변경 없음)
+    // v14.5 도입 / v15.0 hybrid 확장 / v15.7 legacy alias 제거 + 파라미터 rename
     // ════════════════════════════════════════════════════════════════════
 
     /**
      * leaf / hybrid 노드 코드 변경 사전 경고 다이얼로그 (5-14h FE) 가 호출.
      *
-     * <p>입력 {@code controlId} 는 leaf control_node.id (5-14e Q1=A 결정 — spec §3.3.1.5).
+     * <p>입력 {@code nodeId} 는 leaf control_node.id (5-14e Q1=A 결정 — spec §3.3.1.5).
      * 5-14h FE 가 ControlNode.id 로 호출. service 는 받은 id 로 evidence_files /
-     * collection_jobs 의 control 매칭 카운트만 리턴. ControlNode 존재 검증 없음
+     * collection_jobs 의 control_node 매칭 카운트만 리턴. ControlNode 존재 검증 없음
      * — 매칭 0 면 모두 0 리턴 (404 아님). 단순함이 핵심 (5-14h FE 가 leaf 만 호출).</p>
      *
      * <p>v15 Phase 5-15a (hybrid): own (본인) + descendant (자손, 본인 제외) 분리 카운트.
      * 호출 측 (FE) 은 합산 / 분리 표시 자유 결정. 5-14h 의 합산 임계값 (= 0 면 무경고)
      * 은 own + descendant 합 사용 권장.</p>
      *
+     * <p>v15 Phase 5-15c (v15.7):</p>
+     * <ul>
+     *   <li>builder 안 legacy alias 3 줄 (`.evidenceFileCount(ownFiles)` 등) 제거 —
+     *       호출처 0 dead 확인 후 정리 (Q2=A)</li>
+     *   <li>파라미터명 {@code controlId} → {@code nodeId} (Q6=A, phase 의도 정합)</li>
+     *   <li>Repository 호출 메서드명 갱신 (Q5=A, Repository rename 정합)</li>
+     * </ul>
+     *
      * <h3>알고리즘</h3>
      * <ol>
-     *   <li>본인 (own) 카운트 3개 — 5-14e 패턴 그대로</li>
+     *   <li>본인 (own) 카운트 3개 — 5-14e 패턴 그대로 ({@link EvidenceFileRepository#countByControlNodeId},
+     *       {@link EvidenceFileRepository#countReviewedByControlNodeId},
+     *       {@link CollectionJobRepository#countByControlNodeId})</li>
      *   <li>자손 id list 조회 ({@link ControlNodeRepository#findAllDescendants}) —
      *       재귀 CTE, 본인 제외</li>
      *   <li>자손 list 비어있으면 descendant 3개 모두 0 (IN 절 빈 list 호출 회피)</li>
-     *   <li>자손 list 비어있지 않으면 IN 절로 카운트 3개 집계</li>
-     *   <li>legacy 3 필드 = own 의 alias 로 채움 (FE BC 보존)</li>
+     *   <li>자손 list 비어있지 않으면 IN 절로 카운트 3개 집계
+     *       ({@link EvidenceFileRepository#countByControlNodeIds},
+     *       {@link EvidenceFileRepository#countReviewedByControlNodeIds},
+     *       {@link CollectionJobRepository#countByControlNodeIds})</li>
      * </ol>
      *
-     * @param controlId leaf 또는 hybrid control_node.id
-     * @return own / descendant / legacy alias 9 필드 채워진 DTO
+     * <p>본인 자체가 존재하지 않으면 모든 카운트 0 (5-14e 의 단순 결정 그대로 — 404 아님).</p>
+     *
+     * <p>{@code reviewCount} 의 의미 (Q4 결정): {@code reviewed_at IS NOT NULL}
+     * — 관리자가 명시 검토한 횟수. pending / auto_approved 제외, approved / rejected 포함.
+     * spec §3.3.1.5 의 "검토 이력 N건" 표현 정합.</p>
+     *
+     * @param nodeId leaf 또는 hybrid control_node.id (외부 클라이언트가 호출하는 식별자)
+     * @return own / descendant 6 필드 채워진 DTO (v15.7 legacy alias 제거)
      */
     @Transactional(readOnly = true)
-    public ImpactSummaryDto getImpactSummary(Long controlId) {
+    public ImpactSummaryDto getImpactSummary(Long nodeId) {
         // ── 본인 (own) ───────────────────────────────────────────────
-        long ownFiles   = evidenceFileRepository.countByControlId(controlId);
-        long ownJobs    = collectionJobRepository.countByControlId(controlId);
-        long ownReviews = evidenceFileRepository.countReviewedByControlId(controlId);
+        long ownFiles   = evidenceFileRepository.countByControlNodeId(nodeId);
+        long ownJobs    = collectionJobRepository.countByControlNodeId(nodeId);
+        long ownReviews = evidenceFileRepository.countReviewedByControlNodeId(nodeId);
 
         // ── 자손 (descendant, 본인 제외) ─────────────────────────────
         long descFiles = 0L, descJobs = 0L, descReviews = 0L;
-        List<ControlNode> descendants = controlNodeRepository.findAllDescendants(controlId);
+        List<ControlNode> descendants = controlNodeRepository.findAllDescendants(nodeId);
         if (!descendants.isEmpty()) {
             List<Long> descIds = descendants.stream().map(ControlNode::getId).toList();
-            descFiles   = evidenceFileRepository.countByControlIds(descIds);
-            descJobs    = collectionJobRepository.countByControlIds(descIds);
-            descReviews = evidenceFileRepository.countReviewedByControlIds(descIds);
+            descFiles   = evidenceFileRepository.countByControlNodeIds(descIds);
+            descJobs    = collectionJobRepository.countByControlNodeIds(descIds);
+            descReviews = evidenceFileRepository.countReviewedByControlNodeIds(descIds);
         }
 
+        // v15.7 Q2=A: legacy alias 3 줄 (.evidenceFileCount / .jobCount / .reviewCount)
+        //             제거. own 3 + descendant 3 만 빌드.
         return ImpactSummaryDto.builder()
-                // legacy alias (= own, 5-14h FE BC 보존)
-                .evidenceFileCount(ownFiles)
-                .jobCount(ownJobs)
-                .reviewCount(ownReviews)
-                // v15 own
                 .ownEvidenceFileCount(ownFiles)
                 .ownJobCount(ownJobs)
                 .ownReviewCount(ownReviews)
-                // v15 descendant
                 .descendantEvidenceFileCount(descFiles)
                 .descendantJobCount(descJobs)
                 .descendantReviewCount(descReviews)

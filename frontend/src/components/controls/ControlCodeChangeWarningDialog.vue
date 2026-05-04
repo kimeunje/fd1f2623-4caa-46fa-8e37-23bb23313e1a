@@ -7,12 +7,19 @@
  * 가 tree.setCode(node, oldCode) 호출), [변경] 시 dirty 유지.
  *
  * z-index: 70 (UnifiedControlsDialog 55 + ImportControlsDialog 60 위에 stacking).
+ *
+ * <h3>v15 Phase 5-15c (v15.7) — Q2=A legacy alias 제거 정합</h3>
+ * <p>ImpactSummary 의 legacy alias 3 필드 ({@code evidenceFileCount} / {@code jobCount} /
+ * {@code reviewCount}) 가 제거됨 (own + descendant 6 필드만 남음). 본 다이얼로그가
+ * 표시하는 카운트는 spec §3.3.1.5 의 "5-14h 합산 임계값 (= 0 면 무경고)" 권장 정합 —
+ * own + descendant 합산. hybrid 모델에서 leaf 코드 변경의 자손 영향까지 포함.</p>
  */
 
+import { computed } from 'vue'
 import type { UnifiedNode } from '@/composables/useControlTree'
 import type { ImpactSummary } from '@/types/evidence'
 
-defineProps<{
+const props = defineProps<{
   node: UnifiedNode
   oldCode: string
   newCode: string
@@ -23,6 +30,11 @@ const emit = defineEmits<{
   confirm: []
   cancel: []
 }>()
+
+// v15.7: own + descendant 합산. spec §3.3.1.5 의 합산 임계값 정합.
+const totalFiles   = computed(() => props.impact.ownEvidenceFileCount + props.impact.descendantEvidenceFileCount)
+const totalJobs    = computed(() => props.impact.ownJobCount         + props.impact.descendantJobCount)
+const totalReviews = computed(() => props.impact.ownReviewCount      + props.impact.descendantReviewCount)
 
 function handleConfirm(): void { emit('confirm') }
 function handleCancel(): void { emit('cancel') }
@@ -44,16 +56,16 @@ function handleCancel(): void { emit('cancel') }
           </div>
           <p class="warn-name">"{{ node.name }}" — 이 통제의 코드를 변경합니다</p>
           <div class="impact-grid">
-            <div class="impact-item" :class="{ active: impact.evidenceFileCount > 0 }">
-              <span class="impact-num">{{ impact.evidenceFileCount }}</span>
+            <div class="impact-item" :class="{ active: totalFiles > 0 }">
+              <span class="impact-num">{{ totalFiles }}</span>
               <span class="impact-label">증빙 파일</span>
             </div>
-            <div class="impact-item" :class="{ active: impact.jobCount > 0 }">
-              <span class="impact-num">{{ impact.jobCount }}</span>
+            <div class="impact-item" :class="{ active: totalJobs > 0 }">
+              <span class="impact-num">{{ totalJobs }}</span>
               <span class="impact-label">수집 작업</span>
             </div>
-            <div class="impact-item" :class="{ active: impact.reviewCount > 0 }">
-              <span class="impact-num">{{ impact.reviewCount }}</span>
+            <div class="impact-item" :class="{ active: totalReviews > 0 }">
+              <span class="impact-num">{{ totalReviews }}</span>
               <span class="impact-label">검토 이력</span>
             </div>
           </div>

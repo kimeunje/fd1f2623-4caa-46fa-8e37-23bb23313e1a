@@ -29,8 +29,19 @@ import java.util.Set;
  *   <li><b>deleteEvidenceType</b> — 그대로 보존 (EvidenceType 직접 삭제, Control 거치지 않음)</li>
  * </ul>
  *
- * <p>외부 API 호환 — ControlController 의 5 endpoint 모두 시그니처 보존. v15 에서 컨트롤러
- * 자체 제거 시 본 서비스도 함께 정리.</p>
+ * <h3>v15 Phase 5-15b R3 (v15.6) — ControlController 삭제</h3>
+ * <p>본 service 의 {@link #findByFramework} / {@link #findDetail} 호출 측 (옛
+ * ControlController) 은 v15.3 에서 일괄 삭제됨. v15.6 ControlNodeController 가 신
+ * endpoint 신설 — 본 메서드들은 dead code 가능성 높음. 본 phase 비대화 회피로 v15.7
+ * 시점 보존 (Q5=A 메서드명 일괄 갱신만), 후속 phase 일괄 정리 후보로 등재.</p>
+ *
+ * <h3>v15 Phase 5-15c (v15.7) — Q5=A 정합</h3>
+ * <ul>
+ *   <li>{@code evidenceTypeRepository.findByControlId} → {@code findByControlNodeId}
+ *       (3 호출 — findByFramework × 1, findDetail × 1, 헬퍼 0)</li>
+ *   <li>{@code evidenceFileRepository.countByControlIdAndReviewStatus} →
+ *       {@code countByControlNodeIdAndReviewStatus} (1 호출)</li>
+ * </ul>
  */
 @Service
 @RequiredArgsConstructor
@@ -62,6 +73,8 @@ public class ControlService {
      * 반환. 외부 API 호환 ({@code GET /api/v1/frameworks/{id}/controls} 의 의미를 그대로
      * "통제 leaf 목록" 으로 유지). 통제 수가 수십~수백 규모라 leaf 마다 evidence_types
      * 조회 + pending count 호출 (N+1) 은 실용 범위. 규모 확대 시 GROUP BY 집계로 전환.</p>
+     *
+     * <p>v15.7: Repository 메서드명 갱신 (Q5=A).</p>
      */
     @Transactional(readOnly = true)
     public List<ControlDto.Response> findByFramework(Long frameworkId) {
@@ -71,10 +84,12 @@ public class ControlService {
 
         return leaves.stream()
                 .map(leaf -> {
-                    List<EvidenceType> ets = evidenceTypeRepository.findByControlId(leaf.getId());
+                    // v15.7 Q5=A: findByControlId → findByControlNodeId
+                    List<EvidenceType> ets = evidenceTypeRepository.findByControlNodeId(leaf.getId());
                     int total = ets.size();
                     int collected = countCollectedTypes(ets);
-                    long pending = evidenceFileRepository.countByControlIdAndReviewStatus(
+                    // v15.7 Q5=A: countByControlIdAndReviewStatus → countByControlNodeIdAndReviewStatus
+                    long pending = evidenceFileRepository.countByControlNodeIdAndReviewStatus(
                             leaf.getId(), ReviewStatus.pending);
                     return ControlDto.Response.from(leaf, total, collected, pending);
                 })
@@ -87,20 +102,24 @@ public class ControlService {
      * <p>v14 Phase 5-14f: leaf {@link ControlNode} 위임 + spec §8.2 의 ancestors[] 추가
      * (EvidenceTypeDetailView 헤더 서브텍스트의 N단 경로용).</p>
      *
-     * <p>요청된 controlId 가 category 노드면 404 ({@link ResourceNotFoundException}) —
+     * <p>요청된 nodeId 가 category 노드면 404 ({@link ResourceNotFoundException}) —
      * 통제 상세 endpoint 는 leaf 만 의미.</p>
+     *
+     * <p>v15.7: 파라미터명 {@code controlId} → {@code nodeId} (Q6=A) + Repository 호출
+     * 갱신 (Q5=A).</p>
      */
     @Transactional(readOnly = true)
-    public ControlDto.DetailResponse findDetail(Long controlId) {
-        ControlNode leaf = controlNodeRepository.findById(controlId)
-                .orElseThrow(() -> new ResourceNotFoundException("통제항목", controlId));
+    public ControlDto.DetailResponse findDetail(Long nodeId) {
+        ControlNode leaf = controlNodeRepository.findById(nodeId)
+                .orElseThrow(() -> new ResourceNotFoundException("통제항목", nodeId));
 
         if (leaf.getNodeType() != NodeType.control) {
             // category 노드는 통제 상세로 조회 불가 — 404 자연 응답
-            throw new ResourceNotFoundException("통제항목 (분류 노드는 통제 상세로 조회 불가)", controlId);
+            throw new ResourceNotFoundException("통제항목 (분류 노드는 통제 상세로 조회 불가)", nodeId);
         }
 
-        List<EvidenceType> types = evidenceTypeRepository.findByControlId(leaf.getId());
+        // v15.7 Q5=A: findByControlId → findByControlNodeId
+        List<EvidenceType> types = evidenceTypeRepository.findByControlNodeId(leaf.getId());
         List<ControlDto.EvidenceTypeResponse> typeResponses = new ArrayList<>();
         int collectedCount = 0;
 
@@ -142,7 +161,7 @@ public class ControlService {
     // ====================================================================
     // 쓰기 — 모두 410 Gone (5-14b create / 5-14f update/delete/addEvidenceType)
     // ====================================================================
-    
+
     /**
      * 통제항목 삭제 — v14 Phase 5-14f 부터 차단.
      *
@@ -155,7 +174,7 @@ public class ControlService {
      */
     @Deprecated(since = "v14 Phase 5-14f", forRemoval = true)
     @Transactional
-    public void delete(Long controlId) {
+    public void delete(Long nodeId) {
         throw new BusinessException(GONE_MESSAGE, HttpStatus.GONE);
     }
 
