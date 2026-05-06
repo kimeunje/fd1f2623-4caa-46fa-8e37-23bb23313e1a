@@ -210,6 +210,14 @@ function openUnifiedDialog() {
   showUnifiedDialog.value = true
 }
 
+/**
+ * v17 — 증빙 패널의 [+ 증빙 유형] 클릭.
+ * 통제 관리 다이얼로그를 열어 해당 통제에 증빙 유형을 추가할 수 있게 한다.
+ */
+function onAddEvidenceType(_nodeId: number) {
+  showUnifiedDialog.value = true
+}
+
 // ─── Phase 5-14i (P11) — Framework switcher dropdown ───
 //
 // 본문 헤더 h1 옆 chevron 클릭 → 4 framework + 통제 카운트 + 신규 Framework 항목.
@@ -479,47 +487,28 @@ watch(
       </button>
     </div>
 
-    <!-- ────────────────────────────── 검색/필터 ────────────────────────────── -->
-    <div class="flex items-center gap-3 flex-wrap">
-      <div class="relative">
-        <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
-        <input
-          ref="searchInputRef"
-          :value="tree.searchText.value"
-          @input="onSearchInput"
-          type="text"
-          placeholder="🔍 코드, 분류, 통제명으로 검색"
-          class="pl-8 pr-3 h-9 border border-gray-300 rounded-lg text-sm w-64 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-        />
-      </div>
-
-      <!--
-        Phase 5-14i 폴리싱 (P4):
-          검토 대기 필터 탭에 amber-500 5px dot prefix (count > 0 일 때).
-          spec §3.3.1.4 의 두 상태 (검토 대기 vs 일반) 시각 분리.
-      -->
-      <div class="flex bg-gray-100 rounded-lg p-0.5">
+    <!-- ────────────────────────────── 검색/필터 (v17 — 트리와 시각 연결) ────────────────────────────── -->
+    <div class="search-row">
+      <input
+        ref="searchInputRef"
+        :value="tree.searchText.value"
+        @input="onSearchInput"
+        type="text"
+        class="search-input"
+        placeholder="🔍 코드, 분류, 통제명으로 검색"
+      />
+      <div class="filter-tabs">
         <button
           v-for="status in statusOptions"
           :key="status"
           @click="tree.statusFilter.value = status"
-          :class="[
-            'px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5',
-            tree.statusFilter.value === status
-              ? 'bg-white text-gray-900 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700',
-          ]">
+          :class="['filter-tab', { active: tree.statusFilter.value === status }]">
           <span
             v-if="status === '검토 대기' && (tree.statusCounts.value[status] ?? 0) > 0"
             class="filter-pending-dot"
-            aria-hidden="true"
           ></span>
           {{ status }}
-          <span
-            class="text-gray-400 tabular-nums"
-            :class="tree.statusFilter.value === status ? 'text-gray-500' : ''">
-            {{ tree.statusCounts.value[status] ?? 0 }}
-          </span>
+          <span class="filter-count">{{ tree.statusCounts.value[status] ?? 0 }}</span>
         </button>
       </div>
     </div>
@@ -531,7 +520,7 @@ watch(
       P17: error (메시지 + 호출 정보 + 다시 시도)
       P18: no-results (검색/필터 결과 0 자동 전환) — Stage 3 의 매치 카운트 computed 사용
     -->
-    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden tree-body-container">
+    <div class="tree-body">
       <!-- P15: loading skeleton -->
       <div v-if="tree.loading.value" class="skeleton-rows" aria-busy="true" aria-label="로딩 중">
         <div class="skeleton-cat"><div></div></div>
@@ -613,6 +602,7 @@ watch(
           @go-evidence-type="goToEvidenceTypeDetail"
           @zip-download="onZipDownload"
           @delete-evidence-type="onDeleteEvidenceType"
+          @add-evidence-type="onAddEvidenceType"
         />
       </div>
     </div>
@@ -640,13 +630,77 @@ watch(
   transform: translateY(-10px);
 }
 
-/* ─────────────────────── P4 (5-14i) — 검토 대기 필터 dot ─────────────────────── */
+/* ═══ v17 검색/필터 바 + 트리 컨테이너 ═══ */
+.search-row {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px 12px 0 0;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.search-input {
+  flex: 1;
+  max-width: 360px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+.search-input:focus {
+  border-color: #3b82f6;
+}
+.filter-tabs {
+  display: flex;
+  background: #f3f4f6;
+  border-radius: 6px;
+  padding: 2px;
+}
+.filter-tab {
+  padding: 5px 10px;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 4px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: inherit;
+}
+.filter-tab.active {
+  background: white;
+  color: #111827;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.filter-count {
+  margin-left: 2px;
+  font-weight: 400;
+  color: #9ca3af;
+}
+.filter-tab.active .filter-count {
+  color: #6b7280;
+}
 .filter-pending-dot {
   width: 5px;
   height: 5px;
-  border-radius: 9999px;
-  background-color: rgb(245 158 11); /* amber-500 */
-  flex-shrink: 0;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+.tree-body {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  padding: 4px 0 12px;
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
 }
 
 /* ─────────────────────── P11 (5-14i) — Framework switcher dropdown ─────────────────────── */

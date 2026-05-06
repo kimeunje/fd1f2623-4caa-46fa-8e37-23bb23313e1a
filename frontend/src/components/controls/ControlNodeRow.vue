@@ -78,6 +78,7 @@ const emit = defineEmits<{
   'go-evidence-type': [evidenceTypeId: number, nodeId: number]
   'zip-download': [nodeId: number, controlCode: string]
   'delete-evidence-type': [evidenceTypeId: number, evidenceTypeName: string]
+  'add-evidence-type': [nodeId: number]
 
   // ─── dialog 모드 emits (5-14h 신규) ───
   'leaf-code-blur': [
@@ -148,12 +149,12 @@ function viewLeafStatus(): '완료' | '진행중' | '미수집' {
 }
 
 const viewStatusBadgeClass = computed<string>(() => {
-  // P2 (5-14i v2): 검토 대기 행은 status 배지도 amber 톤으로 정합 (pending vs 완료/진행중/미수집 구분)
+  // v17: scoped CSS badge 클래스 (Tailwind inline 대체)
   if (viewHasPendingReview.value) return 'badge-pending'
   switch (viewLeafStatus()) {
-    case '완료': return 'bg-green-100 text-green-700'
-    case '진행중': return 'bg-blue-100 text-blue-700'
-    default: return 'bg-gray-100 text-gray-600'
+    case '완료': return 'badge-done'
+    case '진행중': return 'badge-prog'
+    default: return 'badge-miss'
   }
 })
 
@@ -242,6 +243,38 @@ function viewOnZipDownload(): void {
   emit('zip-download', props.node.id, props.node.code)
 }
 
+function viewOnAddEt(): void {
+  emit('add-evidence-type', props.node.id)
+}
+
+/**
+ * v17 카드형 증빙 패널 — 증빙 유형 메타데이터 서브텍스트 생성.
+ * ownerUserName / files[].collectionMethod / files[].version / files[].reviewStatus 조합.
+ */
+function eviMetaParts(et: EvidenceTypeResponse): string[] {
+  const parts: string[] = []
+  parts.push(et.ownerUserName ? `담당자: ${et.ownerUserName}` : '담당자 미배정')
+  if (et.files && et.files.length > 0) {
+    const autoCount = et.files.filter(f => f.collectionMethod === 'auto').length
+    if (autoCount > 0) {
+      parts.push(`자동 수집 ${autoCount}건`)
+    } else {
+      parts.push(`수동 업로드 ${et.files.length}건`)
+    }
+    const latest = et.files.reduce((a, b) => (a.version > b.version ? a : b))
+    let versionPart = `최신 버전 v${latest.version}`
+    const statusMap: Record<string, string> = {
+      auto_approved: '자동 승인', approved: '승인됨',
+      pending: '검토 대기', rejected: '반려',
+    }
+    if (latest.reviewStatus && statusMap[latest.reviewStatus]) {
+      versionPart += ` · ${statusMap[latest.reviewStatus]}`
+    }
+    parts.push(versionPart)
+  }
+  return parts
+}
+
 function viewOnDeleteEt(et: EvidenceTypeResponse): void {
   emit('delete-evidence-type', et.id, et.name)
 }
@@ -258,6 +291,9 @@ function forwardZip(ctrlId: number, ctrlCode: string): void {
 }
 function forwardDeleteEt(etId: number, etName: string): void {
   emit('delete-evidence-type', etId, etName)
+}
+function forwardAddEt(nodeId: number): void {
+  emit('add-evidence-type', nodeId)
 }
 
 // ============================================================================
@@ -484,149 +520,91 @@ function forwardRequestDelete(n: UnifiedNode): void {
       </span>
     </div>
 
-    <!--
-      leaf 행 — Phase 5-14i 폴리싱 (P2/P3/P10/P14):
-        P2: pending 우선 amber, 펼침 우선 blue. 좌측 3px 바 (CSS ::before).
-        P3: progress bar 두께 4px (h-1) + transition .3s (duration-300).
-        P10: leaf-chev hover 색 변화 (text-gray-300 → -gray-500), expanded → blue-500.
-        P14: highlightFn 으로 코드 + 이름 substring amber 하이라이트 (v-html).
-
-      v15 Phase 5-15a (hybrid):
-        P20.v6: hasChildren 일 때 좌측 chev 12px SVG + padding-left 16px 깊이.
-        chev 클릭 = 'category' 시그널 트릭 (자식 펼침), 행 클릭 = 'control' (증빙 펼침).
-    -->
+    <!-- ═══ leaf 행 — v17 재설계 (grid 6열 + 컴팩트 증빙 패널) ═══ -->
     <div
       v-else
       :class="[
-        'row-view leaf-row group cursor-pointer',
-        hasChildren ? 'has-children' : '',
-        viewChildrenExpanded ? 'children-expanded' : '',
-        hasChildren && !viewExpanded ? 'children-collapsed' : '',
+        'leaf-row group cursor-pointer',
         viewHasPendingReview ? 'has-pending' : '',
         isLeafExpanded ? 'expanded' : '',
       ]"
-      :style="{ paddingLeft: `${hasChildren ? indentPx + 32 : indentPx + 16}px` }"
+      :style="{ paddingLeft: `${indentPx + 16}px` }"
       @click="viewHandleToggle">
-      <!--
-        v15 Phase 5-15a (P20.v6) — hybrid 좌측 chev.
-        행 클릭과 분리 (.stop). collapsed 상태는 CSS .children-collapsed 가 -90deg.
-        a11y: role/tabindex/aria-expanded.
-      -->
-      <span
-        v-if="hasChildren"
-        class="leading-chev"
-        :style="{ left: `${indentPx + 14}px` }"
-        role="button"
-        tabindex="0"
-        :aria-label="viewExpanded ? '자식 노드 접기' : '자식 노드 펼치기'"
-        :aria-expanded="viewExpanded"
-        @click.stop="viewHandleToggleChildren"
-        @keydown.enter.prevent="viewHandleToggleChildren"
-        @keydown.space.prevent="viewHandleToggleChildren">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="12" height="12" aria-hidden="true">
-          <path d="M4 6l4 4 4-4"/>
-        </svg>
+      <span class="leaf-code" v-html="renderCode"></span>
+      <span class="leaf-name">
+        <span v-html="renderName"></span>
+        <!-- hybrid 통합 칩 -->
+        <button
+          v-if="hasChildren"
+          :class="['sub-chip', { collapsed: !viewExpanded }]"
+          :title="viewExpanded ? '하위 항목 접기' : '하위 항목 펼치기'"
+          @click.stop="viewHandleToggleChildren">
+          <svg class="sub-chip-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="2" width="10" height="10"><path d="M4 6l4 4 4-4"/></svg>
+          하위 {{ node.children?.length ?? 0 }}
+        </button>
       </span>
-      <span
-        class="ctrl-code-view font-mono text-[11.5px] text-blue-600 tabular-nums w-16 shrink-0"
-        v-html="renderCode"
-      ></span>
-      <span
-        class="ctrl-name-view text-[13px] text-gray-900 flex-1 truncate min-w-0"
-        v-html="renderName"
-      ></span>
-      <span class="text-[11px] text-gray-500 tabular-nums w-14 text-right shrink-0">
-        증빙 {{ node.evidenceTypeCount ?? 0 }}
-      </span>
-      <div class="flex items-center gap-1.5 w-24 shrink-0">
-        <span class="text-[11px] text-gray-500 tabular-nums">
-          {{ node.collectedCount ?? 0 }}/{{ node.evidenceTypeCount ?? 0 }}
-        </span>
-        <div class="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+      <span class="leaf-evi">증빙 {{ node.evidenceTypeCount ?? 0 }}</span>
+      <span class="leaf-progress">
+        <span>{{ node.collectedCount ?? 0 }}/{{ node.evidenceTypeCount ?? 0 }}</span>
+        <span class="progress-bar">
           <div
-            :class="['h-full rounded-full transition-all duration-300 ease-out',
-              viewLeafStatus() === '완료' ? 'bg-green-500' : 'bg-blue-500']"
+            :class="viewLeafStatus() === '완료' ? 'complete' : ''"
             :style="{ width: `${viewProgressPercent}%` }">
           </div>
-        </div>
-      </div>
-      <span :class="[
-        'inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium shrink-0',
-        viewStatusBadgeClass,
-      ]">
-        <span v-if="viewHasPendingReview" class="pending-badge-dot"></span>
-        {{ viewHasPendingReview ? `검토 대기 ${node.pendingReviewCount ?? 0}` : viewLeafStatus() }}
+        </span>
       </span>
-      <i :class="['leaf-chev pi text-[10px] ml-2 transition-all duration-150',
+      <span class="leaf-status">
+        <span :class="['badge', viewStatusBadgeClass]">
+          <span v-if="viewHasPendingReview" class="pending-badge-dot"></span>
+          {{ viewHasPendingReview ? `검토 대기 ${node.pendingReviewCount ?? 0}` : viewLeafStatus() }}
+        </span>
+      </span>
+      <i :class="['leaf-chev pi',
         isLeafExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
     </div>
 
-    <!--
-      leaf 펼침 패널 — Phase 5-14i 폴리싱: leaf row 가 (indentPx + 16) 이므로 펼침 패널은
-      그보다 더 안쪽 (+ 32) 으로 들여서 evidence 카드가 명확히 종속 표시.
-    -->
+    <!-- 증빙 패널 (레퍼런스 HTML 정합 — CSS Grid height 애니메이션) -->
     <div
-      v-if="isLeafExpanded && controlDetail"
-      class="leaf-expanded bg-blue-50/40 border-t border-blue-100"
-      :style="{ paddingLeft: `${indentPx + 32}px` }">
-      <div v-if="detailLoading" class="px-4 py-6 text-center text-gray-400 text-sm">
-        <i class="pi pi-spin pi-spinner mr-2"></i> 로딩 중...
-      </div>
-      <div v-else>
-        <!-- evidence 카드 -->
-        <div
-          v-for="et in controlDetail.evidenceTypes"
-          :key="et.id"
-          class="flex items-center gap-3 py-2 pr-4 border-b border-gray-100 group/et hover:bg-white">
-          <i class="pi pi-file text-gray-400 text-xs shrink-0"></i>
-          <button
-            type="button"
-            class="flex-1 text-left text-sm text-gray-900 hover:text-blue-700 truncate"
-            @click.stop="viewOnGoEt(et)">
-            {{ et.name }}
-          </button>
-          <span
-            v-if="et.collected"
-            class="text-[10.5px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full shrink-0">
-            수집
-          </span>
-          <span
-            v-else
-            class="text-[10.5px] px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full shrink-0">
-            미수집
-          </span>
-          <button
-            type="button"
-            class="opacity-0 group-hover/et:opacity-100 text-gray-400 hover:text-red-500 px-1 transition-opacity"
-            title="증빙 유형 삭제"
-            @click.stop="viewOnDeleteEt(et)">
-            <i class="pi pi-trash text-xs"></i>
-          </button>
-        </div>
-        <!-- empty -->
-        <div
-          v-if="controlDetail.evidenceTypes.length === 0"
-          class="py-4 px-4 text-xs text-gray-400">
-          이 통제에 등록된 증빙 유형이 없습니다.
-        </div>
-        <!-- 액션바 -->
-        <div class="flex items-center gap-2 py-2 pr-4">
-          <button
-            type="button"
-            class="text-xs text-gray-600 hover:text-gray-900 flex items-center gap-1"
-            @click.stop="viewOnZipDownload">
-            <i class="pi pi-download text-[10px]"></i> ZIP 다운로드
-          </button>
+      v-if="controlDetail"
+      :class="['evi-panel', { collapsed: !isLeafExpanded }]">
+      <div class="evi-panel-inner">
+        <div class="evi-panel-content" :style="{ paddingLeft: `${indentPx + 32}px` }">
+          <div v-if="detailLoading" class="evi-loading">
+            <i class="pi pi-spin pi-spinner"></i> 로딩 중...
+          </div>
+          <div v-else>
+            <div class="evi-panel-head">
+              <span class="evi-label">필요 증빙 ({{ controlDetail.evidenceTypes.length }})</span>
+              <div class="evi-head-actions">
+                <button type="button" class="evi-action-btn" @click.stop="viewOnZipDownload">
+                  전체 다운로드 (ZIP)
+                </button>
+                <button type="button" class="evi-action-btn" @click.stop="viewOnAddEt">
+                  + 증빙 유형
+                </button>
+              </div>
+            </div>
+            <div
+              v-for="et in controlDetail.evidenceTypes"
+              :key="et.id"
+              class="et-card"
+              @click.stop="viewOnGoEt(et)">
+              <div class="et-card-name">{{ et.name }}</div>
+              <div class="et-card-meta">
+                <span v-for="(part, i) in eviMetaParts(et)" :key="i">{{ part }}</span>
+              </div>
+            </div>
+            <div v-if="controlDetail.evidenceTypes.length === 0" class="evi-empty">
+              이 통제에 등록된 증빙 유형이 없습니다.
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!--
-      v15 Phase 5-15a (P20.v6) — hybrid leaf 의 자식 재귀.
-      좌측 chev 클릭 (viewChildrenExpanded === true) 시 자식 트리 표시.
-      category 자식 재귀와 같은 props/emits 패턴 (forwarding 동일).
-    -->
-    <div v-if="node.nodeType === 'control' && viewChildrenExpanded">
+    <!-- hybrid 자식 재귀 (v17: 칩 토글) -->
+    <div v-if="node.nodeType === 'control' && viewChildrenExpanded" class="hybrid-children">
       <ControlNodeRow
         v-for="child in (node.children as TreeRootNode[])"
         :key="child.id"
@@ -644,6 +622,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @go-evidence-type="forwardGoEt"
         @zip-download="forwardZip"
         @delete-evidence-type="forwardDeleteEt"
+        @add-evidence-type="forwardAddEt"
       />
     </div>
 
@@ -666,6 +645,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @go-evidence-type="forwardGoEt"
         @zip-download="forwardZip"
         @delete-evidence-type="forwardDeleteEt"
+        @add-evidence-type="forwardAddEt"
       />
       <!--
         P6 (5-14i v2) — empty CTA. category 가 자식 0 일 때 "통제 항목 없음" 점선 행.
@@ -885,216 +865,201 @@ function forwardRequestDelete(n: UnifiedNode): void {
 </template>
 
 <style scoped>
-/* ─────────────────────── view 모드 (Phase 5-14i 폴리싱 적용) ─────────────────────── */
-.control-node-row-view {
-  position: relative;
-}
+/* ═══ VIEW 모드 (v17 재설계) ═══ */
+.control-node-row-view { position: relative; }
+.control-node-row-view.dimmed { opacity: 0.35; transition: opacity 0.15s; }
+.control-node-row-view.dimmed:hover { opacity: 0.6; }
 
-/*
- * P13 (5-14i v3) — 필터/검색 비매치 dim 처리.
- *   spec §3.3.1.4 line 423 "회색 처리, 숨김 X" 정합.
- *   v6 mockup: opacity 0.35 → hover 0.6.
- */
-.control-node-row-view.dimmed {
-  opacity: 0.35;
-  transition: opacity 0.15s;
-}
-.control-node-row-view.dimmed:hover {
-  opacity: 0.6;
-}
-
+/* 카테고리 행 */
 .row-view {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px 8px 0;
-  font-size: 13px;
-  user-select: none;
-  border-bottom: 1px solid rgb(249 250 251);
-  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px 8px 0; cursor: pointer;
+  user-select: none; position: relative;
   transition: background-color 0.12s;
 }
+.row-view.category-row:hover { background-color: #f9fafb; }
 
-.row-view.category-row {
-  border-bottom-color: rgb(243 244 246);
+/* leaf 행 (grid 6열) */
+.leaf-row {
+  display: grid;
+  grid-template-columns: 64px 1fr 60px 90px 100px 24px;
+  gap: 12px; align-items: center;
+  padding: 8px 16px 8px 0; cursor: pointer;
+  border-bottom: 1px solid #eef0f3;
+  transition: background 0.12s; position: relative;
 }
+.leaf-row:nth-child(even) { background: #fafbfc; }
+.leaf-row:hover { background: #f0f2f5; }
+.leaf-row.expanded { background: #eff6ff; }
+.leaf-row.expanded::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; background: #3b82f6;
+}
+.leaf-row.has-pending { background: #fffbeb; }
+.leaf-row.has-pending::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; background: #fbbf24;
+}
+.leaf-row.has-pending:hover { background: #fef6e0; }
 
-/*
- * P2 (5-14i v2) — pending vs expanded 색 분리 + 좌측 3px bar.
- *   pending  → bg amber-50 (#fffbeb) + 좌 3px amber-400 (#fbbf24)
- *   expanded → bg blue-50  (#eff6ff) + 좌 3px blue-500  (#3b82f6)
- *   pending + expanded 동시 → expanded 우선 (블루 톤)
- */
-.row-view.leaf-row.has-pending {
-  background-color: rgb(255 251 235); /* amber-50 */
-}
-.row-view.leaf-row.has-pending:hover {
-  background-color: rgb(254 246 224);
-}
-.row-view.leaf-row.has-pending::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background-color: rgb(251 191 36); /* amber-400 */
-}
-
-.row-view.leaf-row.expanded {
-  background-color: rgb(239 246 255); /* blue-50 */
-}
-.row-view.leaf-row.expanded:hover {
-  background-color: rgb(228 240 255);
-}
-.row-view.leaf-row.expanded::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background-color: rgb(59 130 246); /* blue-500 */
-}
-
-.row-view.leaf-row:not(.has-pending):not(.expanded):hover {
-  background-color: rgb(249 250 251);
-}
-
-/*
- * P2 (5-14i v2) — 검토 대기 status 배지 amber 톤 (pending 강조).
- *   v6 mockup .badge-pending: bg amber-100 / color amber-700 / weight 600 / dot amber-500.
- */
-.row-view .badge-pending {
-  background-color: rgb(254 243 199); /* amber-100 */
-  color: rgb(180 83 9);                /* amber-700 */
-  font-weight: 600;
-}
-.row-view .pending-badge-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 9999px;
-  background-color: rgb(245 158 11); /* amber-500 */
-  flex-shrink: 0;
-}
-
-/*
- * P10 (5-14i v2) — leaf chevron hover 색 강화 + expanded 시 blue.
- *   default: gray-300 / hover: gray-500 / expanded: blue-500 + rotate(90deg) (이미 pi-chevron-down 으로 표현)
- */
-.row-view.leaf-row .leaf-chev {
-  color: rgb(209 213 219); /* gray-300 */
-}
-.row-view.leaf-row:hover .leaf-chev {
-  color: rgb(107 114 128); /* gray-500 */
-}
-.row-view.leaf-row.expanded .leaf-chev {
-  color: rgb(59 130 246); /* blue-500 */
-}
-
-/* ─────────────────────── v15 Phase 5-15a — hybrid leaf 의 좌측 chev (P20.v6) ─────────────────────── */
-/*
- * spec §3.3.1.9 + 5-14i v6 mockup CSS 정합:
- *   .leaf.has-children: 일반 leaf 보다 padding-left +16px (chev 자리 확보, :style 동적).
- *   .leading-chev: 12px SVG, position absolute, vertical-center.
- *     색  default = #9ca3af (gray-400)
- *     색  hover (행) = #4b5563 (gray-600)
- *     색  hover (chev 직접) = #111827 (gray-900)
- *   .children-collapsed: chev -90deg 회전 (아래 펼침 → 우측 화살표).
- *
- * 행 자체는 일반 leaf 와 동일 톤 (P20.v6: "추가 색·라벨 0").
- * pending / expanded 의 좌측 3px bar 도 그대로 (chev 와 별도 시각 채널).
- */
-.row-view.leaf-row.has-children .leading-chev {
-  position: absolute;
-  top: 50%;
-  width: 12px;
-  height: 12px;
-  transform: translateY(-50%);
-  color: rgb(156 163 175); /* gray-400 */
-  cursor: pointer;
-  transition: transform 0.15s, color 0.15s;
-  z-index: 2;
-  /* 작은 클릭 패딩 영역 — chev 본체 12px + 외곽 4px 확장 = 20px 클릭 타겟 */
-  padding: 4px;
-  margin: -4px;
-  box-sizing: content-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.row-view.leaf-row.has-children:hover .leading-chev {
-  color: rgb(75 85 99); /* gray-600 */
-}
-
-.row-view.leaf-row.has-children .leading-chev:hover {
-  color: rgb(17 24 39); /* gray-900 */
-}
-
-/* 키보드 포커스 — a11y */
-.row-view.leaf-row.has-children .leading-chev:focus-visible {
-  outline: 2px solid rgb(59 130 246); /* blue-500 */
-  outline-offset: 2px;
-  border-radius: 3px;
-}
-
-.row-view.leaf-row.has-children.children-collapsed .leading-chev {
-  transform: translateY(-50%) rotate(-90deg);
-}
-
-.row-view.leaf-row.has-children .leading-chev svg {
-  display: block;
-}
-
-/* ─────────────────────── P14 (5-14i) — 검색 매치 substring 하이라이트 ─────────────────────── */
-/* highlightFn 이 v-html 로 삽입한 <span class="match-highlight"> 에 적용. scoped 가
-   v-html 내용에는 자동 적용되지 않으므로 :deep() 으로 강제. */
-.row-view :deep(.match-highlight) {
-  background-color: rgb(254 243 199); /* amber-100 */
-  color: rgb(146 64 14);              /* amber-800 */
-  padding: 1px 2px;
-  border-radius: 2px;
-  font-weight: 600;
-}
-
-/* ─────────────────────── P12 (5-14i) — 카테고리 매치 카운트 핍 ─────────────────────── */
-.match-count-pip {
-  background-color: rgb(254 243 199); /* amber-100 */
-  color: rgb(180 83 9);                /* amber-700 */
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 9999px;
-  margin-left: 8px;
-  flex-shrink: 0;
+.leaf-code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px; color: #3b82f6; font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
+.leaf-name {
+  font-size: 13px; color: #111827;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.leaf-evi {
+  font-size: 12px; color: #6b7280; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.leaf-progress {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: #6b7280; font-variant-numeric: tabular-nums;
+}
+.progress-bar {
+  width: 40px; height: 3px; background: #e5e7eb;
+  border-radius: 2px; overflow: hidden;
+}
+.progress-bar > div { height: 100%; background: #3b82f6; }
+.progress-bar > div.complete { background: #10b981; }
 
-/* ─────────────────────── P19 (5-14i) — 첫 매치 focus-flash 애니메이션 ─────────────────────── */
+.leaf-status { display: flex; align-items: flex-start; }
+
+/* badge (v17 — scoped CSS) */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; font-size: 11px; font-weight: 500;
+  border-radius: 4px; line-height: 1.3;
+}
+.badge.badge-done { background: #dcfce7; color: #166534; }
+.badge.badge-prog { background: #dbeafe; color: #1e40af; }
+.badge.badge-miss { background: #f3f4f6; color: #6b7280; }
+.badge.badge-pending { background: #fef3c7; color: #b45309; font-weight: 600; }
+.pending-badge-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: #f59e0b; flex-shrink: 0;
+}
+
+.leaf-chev {
+  color: #d1d5db; font-size: 12px;
+  transition: transform 0.15s, color 0.15s;
+}
+.leaf-row:hover .leaf-chev { color: #9ca3af; }
+.leaf-row.expanded .leaf-chev { transform: rotate(90deg); color: #3b82f6; }
+
+/* hybrid 통합 칩 */
+.sub-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; color: #3b82f6; font-weight: 600; font-family: inherit;
+  background: #eff6ff; border: 1px solid #dbeafe;
+  padding: 2px 8px 2px 5px; border-radius: 10px;
+  margin-left: 8px; vertical-align: middle;
+  cursor: pointer; transition: all 0.15s; line-height: 1;
+}
+.sub-chip:hover { background: #dbeafe; border-color: #93c5fd; color: #2563eb; }
+.sub-chip-chev { transition: transform 0.2s; flex-shrink: 0; }
+.sub-chip.collapsed .sub-chip-chev { transform: rotate(-90deg); }
+.sub-chip.collapsed { color: #6b7280; background: #f3f4f6; border-color: #e5e7eb; }
+.sub-chip.collapsed:hover { color: #3b82f6; background: #eff6ff; border-color: #dbeafe; }
+
+/* 증빙 패널 (CSS Grid height 애니메이션)
+ *
+ * 열기/닫기: .collapsed 토글 → grid-template-rows 1fr ↔ 0fr.
+ * 최초 렌더: @starting-style 로 0fr 에서 시작 → 1fr 트랜지션 (v-if 신규 삽입 시).
+ */
+.evi-panel {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.25s ease-out;
+}
+.evi-panel.collapsed {
+  grid-template-rows: 0fr;
+}
+/* 최초 DOM 삽입 시 0fr 에서 시작하여 1fr 로 애니메이션 */
+@starting-style {
+  .evi-panel:not(.collapsed) {
+    grid-template-rows: 0fr;
+  }
+}
+.evi-panel-inner {
+  overflow: hidden;
+}
+.evi-panel-content {
+  background: #eff6ff;
+  border-bottom: 1px solid #dbeafe;
+  padding: 12px 16px 16px;
+  opacity: 1;
+  transition: opacity 0.18s ease-out;
+}
+@starting-style {
+  .evi-panel:not(.collapsed) .evi-panel-content {
+    opacity: 0;
+  }
+}
+.evi-panel.collapsed .evi-panel-content {
+  opacity: 0;
+  border-bottom-color: transparent;
+}
+.evi-panel-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 10px;
+}
+.evi-label { font-size: 11px; color: #6b7280; }
+.evi-head-actions { display: flex; gap: 6px; }
+.evi-action-btn {
+  height: 26px; padding: 0 10px;
+  font-size: 11px; font-family: inherit;
+  background: white; color: #4b5563;
+  border: 1px solid #e5e7eb; border-radius: 5px;
+  cursor: pointer; transition: background 0.1s;
+}
+.evi-action-btn:hover { background: #f9fafb; }
+
+/* 증빙 유형 카드 (레퍼런스 et-card 정합) */
+.et-card {
+  background: white; border: 1px solid #e5e7eb; border-radius: 8px;
+  padding: 12px 14px; margin-bottom: 6px;
+  cursor: pointer; transition: border-color 0.1s;
+}
+.et-card:hover { border-color: #94a3b8; }
+.et-card-name { font-size: 13px; font-weight: 500; color: #111827; }
+.et-card-meta {
+  font-size: 11px; color: #9ca3af; margin-top: 4px;
+  display: flex; gap: 12px; flex-wrap: wrap;
+}
+.evi-loading { padding: 16px; text-align: center; color: #9ca3af; font-size: 13px; }
+.evi-empty { padding: 16px; font-size: 12px; color: #9ca3af; text-align: center; }
+
+.hybrid-children { border-left: 1px solid #f3f4f6; }
+
+/* 매치 하이라이트 (Phase 5-14i P14 보존) */
+:deep(.match-highlight) {
+  background: #fef3c7; color: #92400e;
+  padding: 1px 2px; border-radius: 2px; font-weight: 600;
+}
+.match-count-pip {
+  display: inline-flex; padding: 1px 6px; border-radius: 99px;
+  background: #fef3c7; color: #b45309; font-size: 10px; font-weight: 600;
+}
+
+/* 포커스 flash (Phase 5-14i P19 보존) */
 @keyframes focusFlash {
-  0%   { box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0); background-color: transparent; }
-  20%  { box-shadow: inset 0 0 0 2px rgb(251 191 36); background-color: rgb(255 251 235); }
-  100% { box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0); background-color: transparent; }
+  0%   { box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0); }
+  20%  { box-shadow: inset 0 0 0 2px #fbbf24; background-color: #fffbeb; }
+  100% { box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0); }
 }
-.row-view.focus-flash {
-  animation: focusFlash 1.4s ease-out;
-}
+.leaf-row.focus-flash, .row-view.focus-flash { animation: focusFlash 1.4s ease-out; }
 
-/* ─────────────────────── P6 (5-14i) — empty CTA (분류 안 통제 0) ─────────────────────── */
+/* P6 (5-14i) — empty CTA (분류 안 통제 0) — 보존 */
 .empty-cta-row {
-  display: flex;
-  align-items: center;
+  display: flex; align-items: center;
   padding: 8px 16px;
-  border-bottom: 1px dashed rgb(229 231 235);
-  font-size: 12px;
-  color: rgb(107 114 128);
-  cursor: default;
-  background-color: rgb(250 251 252);
-}
-
-.leaf-expanded {
-  font-size: 13px;
+  border-bottom: 1px dashed #e5e7eb;
+  font-size: 12px; color: #6b7280;
+  cursor: default; background-color: #fafbfc;
 }
 
 /* ─────────────────────── dialog 모드 ─────────────────────── */
