@@ -25,6 +25,8 @@ import java.util.List;
  *       5-14d cascading delete 사전 카운트 / 자손 일괄 처리용 (재귀 CTE)</li>
  *   <li>{@link #countByFrameworkIdAndNodeType} —
  *       Framework 헤더 카운트 표시 (5-14g) 용</li>
+ *   <li>{@link #findByFrameworkIdInOrderByDepthAscDisplayOrderAsc} —
+ *       v16.4a Dashboard 의 ancestors path 빌드용 (다중 framework)</li>
  * </ul>
  *
  * <p>재귀 CTE 호환성: H2 2.2+ / MariaDB 10.2.2+ 모두 표준 {@code WITH RECURSIVE} 지원.
@@ -120,4 +122,33 @@ public interface ControlNodeRepository extends JpaRepository<ControlNode, Long> 
      * 계산용 (이전 controlRepository.count() 대체).
      */
     long countByNodeType(NodeType nodeType);
+
+    // ====================================================================
+    // v16.4a (Dashboard 위젯) — 다중 framework ancestors path 빌드용
+    // ====================================================================
+
+    /**
+     * v16.4a (Dashboard) — 여러 framework 의 모든 노드 일괄 조회.
+     *
+     * <p>DashboardService 의 pending top 10 처리 시 ancestors path 빌드 재료. 각
+     * pending 파일이 속한 framework 들의 모든 노드를 한 번에 조회 →
+     * {@code byId 맵} 으로 in-memory traversal (FrameworkExportService 의
+     * {@link #findByFrameworkIdOrderByDepthAscDisplayOrderAsc} + buildAncestors 패턴
+     * 의 다중 framework 버전).</p>
+     *
+     * <p>{@code LEFT JOIN FETCH cn.parent} 로 첫 단계 parent hydrate. 추가 단계는
+     * service 측 byId 맵에서 in-memory 조회.</p>
+     *
+     * <p>정렬: 단일 framework 버전과 동일 ({@code depth ASC, displayOrder ASC}).
+     * framework 별 그룹핑은 service 측 byId 맵으로 자연 처리 — JPQL ORDER BY 에
+     * framework.id 추가 시 LEFT JOIN FETCH 와 충돌 가능성 회피.</p>
+     */
+    @Query("""
+        SELECT cn FROM ControlNode cn
+        LEFT JOIN FETCH cn.parent
+        WHERE cn.framework.id IN :frameworkIds
+        ORDER BY cn.depth ASC, cn.displayOrder ASC
+        """)
+    List<ControlNode> findByFrameworkIdInOrderByDepthAscDisplayOrderAsc(
+            @Param("frameworkIds") List<Long> frameworkIds);
 }

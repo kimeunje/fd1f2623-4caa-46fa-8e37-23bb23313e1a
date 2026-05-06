@@ -3,6 +3,7 @@ package com.secuhub.domain.evidence.repository;
 import com.secuhub.domain.evidence.entity.EvidenceFile;
 import com.secuhub.domain.evidence.entity.ReviewStatus;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -25,6 +26,9 @@ import java.util.Optional;
  *   <li>@Param 명: {@code controlId} → {@code controlNodeId} / {@code controlIds}
  *       → {@code controlNodeIds} (Repository layer 명명 정합)</li>
  * </ul>
+ *
+ * <h3>v16.4a (Dashboard) — 추가 메서드</h3>
+ * <p>DashboardService 가 사용하는 N+1 차단 JOIN FETCH 버전 + 진척률 집계 2 카운트.</p>
  */
 public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long> {
 
@@ -212,4 +216,73 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
           AND ef.reviewedAt IS NOT NULL
         """)
     long countReviewedByControlNodeIds(@Param("controlNodeIds") List<Long> controlNodeIds);
+
+    // ====================================================================
+    // v16.4a (Dashboard 위젯) — JOIN FETCH N+1 차단 + 진척률 집계
+    // ====================================================================
+
+    /**
+     * v16.4a (Dashboard) — 승인 대기 top 10 (raw, Pageable 사용).
+     *
+     * <p>기존 {@link #findByReviewStatus(ReviewStatus, Pageable)} 와 의도 다름:
+     * 본 메서드는 {@code JOIN FETCH evidenceType + controlNode + framework + uploadedBy}
+     * 로 lazy load 일괄 hydrate (N+1 차단). DashboardService 가 ancestors path 빌드 +
+     * deepLinkUrl 조립 시 lazy 폭발 회피.</p>
+     *
+     * <p>spec §3.8.1 정합. submittedAt = createdAt DESC.</p>
+     */
+    @Query("""
+        SELECT ef FROM EvidenceFile ef
+        JOIN FETCH ef.evidenceType et
+        JOIN FETCH et.controlNode cn
+        JOIN FETCH cn.framework fw
+        LEFT JOIN FETCH ef.uploadedBy u
+        WHERE ef.reviewStatus = com.secuhub.domain.evidence.entity.ReviewStatus.pending
+        ORDER BY ef.createdAt DESC
+        """)
+    List<EvidenceFile> findTop10PendingForDashboardRaw(Pageable pageable);
+
+    /**
+     * v16.4a (Dashboard) — 승인 대기 top 10 default (limit=10).
+     */
+    default List<EvidenceFile> findTop10PendingForDashboard() {
+        return findTop10PendingForDashboardRaw(PageRequest.of(0, 10));
+    }
+
+    /**
+     * v16.4a (Dashboard) — Framework 진척 계산용.
+     * 주어진 evidence_type id 들 중 1+ approved/auto_approved 가진 것의 distinct 수.
+     *
+     * <p>spec §3.8.1 의 "수집 완료 = 1+ approved/auto_approved" 정의 정합
+     * (FrameworkProgress.collectedCount).</p>
+     *
+     * <p>호출 규약: {@code evidenceTypeIds} 가 빈 list 인 경우 호출 측에서 호출 회피
+     * (JPQL {@code IN ()} 환경 의존 회피, 본 패키지의 {@link #countByControlNodeIds(List)}
+     * 와 같은 패턴).</p>
+     */
+    @Query("""
+        SELECT COUNT(DISTINCT ef.evidenceType.id) FROM EvidenceFile ef
+        WHERE ef.evidenceType.id IN :evidenceTypeIds
+          AND ef.reviewStatus IN (
+              com.secuhub.domain.evidence.entity.ReviewStatus.approved,
+              com.secuhub.domain.evidence.entity.ReviewStatus.auto_approved
+          )
+        """)
+    long countDistinctEvidenceTypesByCollectedStatus(
+            @Param("evidenceTypeIds") List<Long> evidenceTypeIds);
+
+    /**
+     * v16.4a (Dashboard) — Framework 진척 계산용.
+     * 주어진 evidence_type id 들 중 1+ pending 가진 것의 distinct 수.
+     *
+     * <p>spec §3.8.1 의 "검토 대기 = 1+ pending" 정의 정합
+     * (FrameworkProgress.pendingReviewCount).</p>
+     */
+    @Query("""
+        SELECT COUNT(DISTINCT ef.evidenceType.id) FROM EvidenceFile ef
+        WHERE ef.evidenceType.id IN :evidenceTypeIds
+          AND ef.reviewStatus = com.secuhub.domain.evidence.entity.ReviewStatus.pending
+        """)
+    long countDistinctEvidenceTypesByPendingStatus(
+            @Param("evidenceTypeIds") List<Long> evidenceTypeIds);
 }

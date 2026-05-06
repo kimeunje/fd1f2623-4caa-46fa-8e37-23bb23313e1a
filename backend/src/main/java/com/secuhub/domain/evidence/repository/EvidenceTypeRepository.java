@@ -32,6 +32,9 @@ import java.util.List;
  *       → {@link #countGroupByControlNodeIdInFramework(Long)}, 동일 패턴</li>
  *   <li>@Param 명: {@code controlId} → {@code controlNodeId} (Repository layer 명명 정합)</li>
  * </ul>
+ *
+ * <h3>v16.4a (Dashboard) — Framework 진척 계산</h3>
+ * <p>{@link #findIdsByFrameworkId(Long)} 신규 — DashboardService 의 진척 분모 계산용.</p>
  */
 public interface EvidenceTypeRepository extends JpaRepository<EvidenceType, Long> {
 
@@ -120,4 +123,24 @@ public interface EvidenceTypeRepository extends JpaRepository<EvidenceType, Long
              GROUP BY cn.id
             """)
     List<Object[]> countCollectedGroupByControlNodeIdInFramework(@Param("frameworkId") Long frameworkId);
+
+    // ====================================================================
+    // v16.4a (Dashboard 위젯) — Framework 진척 분모 계산
+    // ====================================================================
+
+    /**
+     * v16.4a (Dashboard) — 한 Framework 의 모든 evidence_types id 만 조회.
+     *
+     * <p>DashboardService.computeProgress 의 진척 분모 (totalEvidenceTypes) 계산용.
+     * entity 부담 회피 — id 만 select.</p>
+     *
+     * <p>spec §3.8.1 의 FrameworkProgress.totalEvidenceTypes 정합.</p>
+     *
+     * <p>v15.7 Q1=B 정합: {@code et.controlNode.framework.id} navigation.</p>
+     */
+    @Query("""
+        SELECT et.id FROM EvidenceType et
+        WHERE et.controlNode.framework.id = :frameworkId
+        """)
+    List<Long> findIdsByFrameworkId(@Param("frameworkId") Long frameworkId);
 }
