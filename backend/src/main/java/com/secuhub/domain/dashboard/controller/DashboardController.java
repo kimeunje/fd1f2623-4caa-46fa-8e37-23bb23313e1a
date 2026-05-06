@@ -11,24 +11,31 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 대시보드 위젯 데이터 endpoint (Phase v16.4a — §2.2 잔여 #1 일부).
+ * 대시보드 위젯 데이터 endpoint (Phase v16.4a — §2.2 잔여 #1 일부, v16.4b-fix 권한 정합).
  *
- * <p>spec §3.8 정합. v16.0 baseline 의 "Phase 5-8 예정" 표기를 본 phase 에서 구현.</p>
+ * <p>spec §3.8 정합. v16.0 baseline 의 "Phase 5-8 예정" 표기를 v16.4a 에서 구현.</p>
  *
- * <h3>권한 체크</h3>
- * <p>{@link PreAuthorize} 사용. 프로젝트 표준이 다른 경우 (예: SecurityConfig 의
- * antMatchers / EvidenceAuthService 패턴) 호출 측 정합:</p>
+ * <h3>v16.4b-fix 변경</h3>
  * <ul>
- *   <li>옵션 1: 본 어노테이션 + {@code @EnableMethodSecurity(prePostEnabled=true)}
- *       SecurityConfig 활성</li>
- *   <li>옵션 2: 본 어노테이션 제거 + service 레이어에서
- *       {@code SecurityContextHolder} 로 role 직접 체크</li>
- *   <li>옵션 3: SecurityConfig 의 antMatchers 에 {@code "/api/v1/dashboard/admin-**"}
- *       hasRole("admin") 추가</li>
+ *   <li>{@code @PreAuthorize("hasRole('admin')")} (소문자, v16.4a 시점 — 운영 시
+ *       AuthorizationDeniedException 발생) → {@code @PreAuthorize("hasRole('ADMIN')")}
+ *       (대문자, 본 프로젝트 컨벤션 정합).</li>
  * </ul>
  *
- * <p>본 phase 는 옵션 1 (가장 표준) 가정. 활성화 안 되어 있을 시 patch 적용 후 IT
- * 테스트 실행 시점 발견 → 옵션 2 로 fallback (DashboardService 안에서 직접 체크).</p>
+ * <h3>본 프로젝트 권한 컨벤션 (v16.4b-fix 시점 명문화)</h3>
+ * <ul>
+ *   <li>{@code UserRole} enum 값 = 소문자 ({@code admin / approver / developer})</li>
+ *   <li>{@code JwtAuthenticationFilter} 가 JWT subject claim 의 role 을
+ *       {@code "ROLE_" + role.toUpperCase()} 로 변환 → SimpleGrantedAuthority
+ *       ({@code ROLE_ADMIN})</li>
+ *   <li>모든 controller / SecurityConfig 의 권한 표기 = {@code hasRole('ADMIN')}
+ *       (대문자) — 본 프로젝트 컨벤션. 9 controller 모두 정합 (v16.4b-fix 까지),
+ *       DashboardController 가 유일한 위반자였음.</li>
+ * </ul>
+ *
+ * <p>참조: SecurityConfig.{@code requestMatchers(...).hasRole("ADMIN")},
+ * EvidenceTypeController / UserController / FrameworkController / TreeController /
+ * ControlNodeController / EvidenceFileController / CollectionJobController 모두 대문자.</p>
  */
 @Slf4j
 @RestController
@@ -49,7 +56,7 @@ public class DashboardController {
      * @return 200 OK + summary. 인증 없음 401, admin 외 403.
      */
     @GetMapping("/admin-summary")
-    @PreAuthorize("hasRole('admin')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<AdminDashboardSummaryDto> adminSummary() {
         log.debug("관리자 대시보드 요약 조회");
         return ApiResponse.ok(dashboardService.getAdminSummary());

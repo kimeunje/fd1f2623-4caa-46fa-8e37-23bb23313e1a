@@ -452,3 +452,116 @@ export interface MyTaskFileHistoryEntry {
   reviewNote?: string
   reviewedAt?: string
 }
+
+// ============================================================================
+// types/evidence.ts 의 끝부분에 추가될 Dashboard 인터페이스 (v16.4b 신규)
+// ============================================================================
+//
+// 본 파일은 types/evidence.ts 전체가 아니라, 추가될 영역만 발췌.
+// 적용 시 types/evidence.ts 파일 끝 (마지막 type/interface 다음) 에 그대로 붙임.
+//
+// Q2=A 결정: types/evidence.ts 추가 (도메인 분리는 Phase 3 통계 추가 시점에).
+// ============================================================================
+
+
+// ============================================================================
+// v16.4b — 관리자 대시보드 위젯 (§3.8)
+// ----------------------------------------------------------------------------
+// BE: AdminDashboardSummaryDto + 3 nested DTO (Kpi / PendingApproval /
+//     FrameworkProgress) — v16.4a 신규.
+// 본 인터페이스 모음은 그 BE shape 의 TypeScript 미러. 필드 path 정확히 정합:
+//   - Long → number
+//   - LocalDateTime → string (ISO 8601, BE Jackson 직렬화 기본)
+//   - null 가능 필드 = string | null (uploaderName / uploaderTeam / submittedAt)
+//
+// 향후 Phase 3 의 "대시보드 통계" 추가 시 본 인터페이스 군을 별도
+// types/dashboard.ts 로 이주 검토 (도메인 분리 명확화). v16.4b 시점에는 evidence
+// 도메인 안에 자연 동거.
+// ============================================================================
+
+/** 대시보드 KPI 카드 영역 (현재 1 카드, 향후 확장 예약). */
+export interface DashboardKpi {
+  /**
+   * 전체 review_status='pending' 의 evidence_files 카운트.
+   * spec §3.8 의 "내 승인 대기 N건" — 모든 admin 공통 (전체 pending 풀).
+   */
+  pendingApprovalCount: number
+}
+
+/**
+ * 승인 대기 목록의 단일 항목 (top 10).
+ *
+ * spec §3.8.1 의 PendingApproval shape 와 1:1 정합.
+ * deepLinkUrl 은 BE 가 직접 조립하여 제공 — FE 는 그대로 router.push 또는 anchor.
+ */
+export interface DashboardPendingApproval {
+  fileId: number
+  evidenceTypeId: number
+  evidenceTypeName: string
+
+  /** uploaded_by 의 user.name. 시스템 자동 업로드 시 null. */
+  uploaderName: string | null
+
+  /** uploaded_by 의 user.team. user.team 자체가 null 가능 → null. */
+  uploaderTeam: string | null
+
+  /** evidence_files.created_at — ISO 8601 string. null 인 경우는 비정상이지만 방어. */
+  submittedAt: string | null
+
+  frameworkId: number
+  frameworkName: string
+  controlNodeId: number
+
+  /**
+   * 트리 계층 경로 — FrameworkExportService 와 같은 형식.
+   * 예: "1 > 1.1 > 1.1.1".
+   */
+  controlPath: string
+
+  /**
+   * BE 가 조립한 딥링크 URL.
+   * 형식: "/controls/{frameworkId}/{controlNodeId}/evidence-types/{evidenceTypeId}"
+   * FE 는 그대로 router.push 또는 anchor href.
+   */
+  deepLinkUrl: string
+}
+
+/**
+ * 단일 framework 의 진척 카드 데이터.
+ *
+ * spec §3.8.1 의 FrameworkProgress shape 와 1:1 정합.
+ * status='active' framework 만 포함 (BE 가 사전 필터).
+ */
+export interface DashboardFrameworkProgress {
+  frameworkId: number
+  frameworkName: string
+
+  /** 해당 framework 의 evidence_types 총 개수 (분모). */
+  totalEvidenceTypes: number
+
+  /**
+   * 수집 완료 카운트 — evidence_types 중 1+ approved/auto_approved 가진 것의
+   * distinct 수.
+   */
+  collectedCount: number
+
+  /** 검토 대기 카운트 — evidence_types 중 1+ pending 가진 것의 distinct 수. */
+  pendingReviewCount: number
+
+  /**
+   * 진척률. collectedCount / totalEvidenceTypes. 0.0 ~ 1.0.
+   * total=0 시 0.0 (BE 측에서 NaN 방지).
+   */
+  progressRatio: number
+}
+
+/**
+ * GET /api/v1/dashboard/admin-summary 응답 본문.
+ *
+ * ApiResponse<AdminDashboardSummary>.data 위치에 들어감.
+ */
+export interface AdminDashboardSummary {
+  kpi: DashboardKpi
+  pendingApprovals: DashboardPendingApproval[]
+  frameworkProgresses: DashboardFrameworkProgress[]
+}

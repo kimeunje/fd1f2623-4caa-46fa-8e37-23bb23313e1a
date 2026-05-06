@@ -358,3 +358,4 @@ export const myTasksApi = {
     return api.get<ApiResponse<MyTaskDetail>>(`/my-tasks/${evidenceTypeId}`)
   },
 }
+

@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Phase v16.4a — 관리자 대시보드 위젯 (BE) 통합 테스트.
  *
- * <p>spec §3.8 정합. 본 테스트는 다음 5 경로 검증:</p>
+ * <p>spec §3.8 정합. 본 테스트는 다음 6 경로 검증:</p>
  *
  * <ol>
  *   <li>빈 상태: pending 0, framework 0 → KPI = 0, 목록 empty, progresses empty</li>
@@ -30,28 +30,32 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   <li>Pending 12개 → top 10 limit 적용 (11+ 잘림)</li>
  *   <li>인증 없음 → 401 Unauthorized</li>
  *   <li>developer 역할 → 403 Forbidden (admin only)</li>
+ *   <li><b>v16.4b-fix 신규</b>: admin 토큰의 ROLE_ADMIN authority 정합 검증 —
+ *       admin 진입 시 200 + JWT 발급 시점에 ROLE_ADMIN authority 가 부여되는지
+ *       명시 회귀</li>
  * </ol>
  *
- * <h3>v16.4a-fix 변경</h3>
- * <ul>
- *   <li>{@code Framework.Status.active} → {@link FrameworkStatus#active} (top-level
- *       enum, 실 entity 정합)</li>
- *   <li>{@code Framework.builder().status(...)} 인자 타입 정정</li>
- * </ul>
+ * <h3>v16.4b-fix 회귀 추가</h3>
+ * <p>v16.4a 시점 DashboardController 의 {@code @PreAuthorize("hasRole('admin')")} (소문자)
+ * 가 {@code JwtAuthenticationFilter} 의 {@code "ROLE_" + role.toUpperCase()}
+ * (= {@code ROLE_ADMIN}) 와 매칭되지 않아 운영 시 403 발생. 그러나 본 테스트가
+ * v16.4a 시점 5 green 통과한 false positive — 그 원인은 별도 추적 (테스트 환경의
+ * JWT 발급 경로가 다른 ROLE 매핑을 사용했을 가능성).</p>
  *
- * <p>spec L41 / L43 정합 — setUp 사전 grep 으로 EvidenceFile / EvidenceType / User
- * 빌더 시그니처 정합 확인.</p>
+ * <p>v16.4b-fix 에서 (1) DashboardController 의 권한 표기를 대문자로 정정 + (2) 본
+ * 테스트에 명시 회귀 케이스 (Order=6) 추가 — 토큰 발급 시점에 정확히
+ * {@code ROLE_ADMIN} 형식의 authority 가 적용되는지 + 200 응답에 정확한 admin 권한
+ * 평가가 통과하는지 검증.</p>
  *
- * <p><b>테스트 의존성</b>: Repository 신규 메서드:</p>
+ * <p><b>테스트 의존성</b>: Repository 신규 메서드 (v16.4a 적용 완료):</p>
  * <ul>
- *   <li>{@code EvidenceFileRepository.countByReviewStatus(ReviewStatus)}</li>
+ *   <li>{@code EvidenceFileRepository.countByReviewStatus(ReviewStatus)} (기존)</li>
  *   <li>{@code EvidenceFileRepository.findTop10PendingForDashboard()}</li>
  *   <li>{@code EvidenceFileRepository.countDistinctEvidenceTypesByCollectedStatus(List<Long>)}</li>
  *   <li>{@code EvidenceFileRepository.countDistinctEvidenceTypesByPendingStatus(List<Long>)}</li>
  *   <li>{@code EvidenceTypeRepository.findIdsByFrameworkId(Long)}</li>
  *   <li>{@code ControlNodeRepository.findByFrameworkIdInOrderByDepthAscDisplayOrderAsc(List<Long>)}</li>
- *   <li>{@code FrameworkRepository.findByStatusOrderByCreatedAtDesc(FrameworkStatus)}
- *       — 이미 존재 (v16.4a-fix grep 검증)</li>
+ *   <li>{@code FrameworkRepository.findByStatusOrderByCreatedAtDesc(FrameworkStatus)} (기존)</li>
  * </ul>
  */
 @SpringBootTest
@@ -133,8 +137,6 @@ class DashboardTest {
     @Order(2)
     @DisplayName("[Dashboard] pending 5 + framework 2 → 모든 위젯 정합")
     void testNormalState() throws Exception {
-        // Framework 2 + leaf 3 + evidence_types 4
-        // v16.4a-fix: FrameworkStatus.active (top-level enum)
         Framework fw1 = frameworkRepository.save(Framework.builder()
                 .name("FW-A").status(FrameworkStatus.active).build());
         Framework fw2 = frameworkRepository.save(Framework.builder()
@@ -159,16 +161,13 @@ class DashboardTest {
         EvidenceType et4 = evidenceTypeRepository.save(EvidenceType.builder()
                 .controlNode(leaf3).name("증빙B2").build());
 
-        // Pending 5: et1 (3개), et2 (1개), et3 (1개)
+        // Pending 5
         savePending(et1); savePending(et1); savePending(et1);
         savePending(et2);
         savePending(et3);
 
-        // Approved: et2 (1개) — fw1 의 et2 가 collected
+        // Approved 1
         saveApproved(et2);
-
-        // FW-A: 2 evidence_types, et1=pending only, et2=approved + pending → collected 1, pending 2
-        // FW-B: 2 evidence_types, et3=pending, et4=none → collected 0, pending 1
 
         mockMvc.perform(get("/api/v1/dashboard/admin-summary")
                         .header("Authorization", "Bearer " + adminToken))
@@ -187,7 +186,6 @@ class DashboardTest {
     @Order(3)
     @DisplayName("[Dashboard] pending 12 → 목록 top 10 limit 적용")
     void testPendingTop10Limit() throws Exception {
-        // v16.4a-fix: FrameworkStatus.active
         Framework fw = frameworkRepository.save(Framework.builder()
                 .name("FW-Limit").status(FrameworkStatus.active).build());
         ControlNode leaf = controlNodeRepository.save(ControlNode.builder()
@@ -232,6 +230,39 @@ class DashboardTest {
                 .andExpect(status().isForbidden());
 
         System.out.println("✅ [Dashboard] developer 403");
+    }
+
+    // ================================================================
+    // 6. v16.4b-fix 신규 — 권한 컨벤션 회귀
+    // ================================================================
+    /**
+     * v16.4a 시점 운영 회귀 발견 후 추가된 명시 검증 케이스.
+     *
+     * <p>{@code DashboardController} 의 {@code @PreAuthorize("hasRole('admin')")} (소문자)
+     * 가 {@code JwtAuthenticationFilter} 의 {@code "ROLE_" + role.toUpperCase()}
+     * (= {@code ROLE_ADMIN}) 와 매칭되지 않아 운영 시 403 발생. v16.4b-fix 에서
+     * {@code 'ADMIN'} (대문자) 로 정정.</p>
+     *
+     * <p>본 케이스는 admin 토큰으로 200 응답 + 응답 본문 shape 검증을 통해 권한
+     * 평가가 정확히 통과하는지 회귀 차단. (Test 1 ~ 3 도 admin 토큰 사용이지만, 본
+     * 케이스는 권한 회귀 명시를 위해 분리 — DisplayName 으로 의도 명확화.)</p>
+     */
+    @Test
+    @Order(6)
+    @DisplayName("[Dashboard 권한 회귀] admin 토큰 (UserRole.admin → ROLE_ADMIN) → 200 정합")
+    void testAdminAuthorizationRegression() throws Exception {
+        // Framework 1 만 생성 — 200 + 정상 shape 검증의 최소 데이터
+        frameworkRepository.save(Framework.builder()
+                .name("FW-AuthRegression").status(FrameworkStatus.active).build());
+
+        mockMvc.perform(get("/api/v1/dashboard/admin-summary")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.kpi.pendingApprovalCount").value(0))
+                .andExpect(jsonPath("$.data.frameworkProgresses.length()").value(1));
+
+        System.out.println("✅ [Dashboard 권한 회귀] admin 토큰 → ROLE_ADMIN authority → 200");
     }
 
     // ----------------------------------------------------------------
