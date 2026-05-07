@@ -187,6 +187,10 @@ function onTreeToggle(nodeId: number, nodeType: 'category' | 'control') {
     }
     tree.toggleExpand(nodeId)
   } else {
+    // 증빙 펼침 시 하위 목록 자동 닫기 (겹침 방지)
+    if (tree.effectiveExpandedIds.value.has(nodeId)) {
+      tree.toggleExpand(nodeId)
+    }
     void toggleLeaf(nodeId)
   }
 }
