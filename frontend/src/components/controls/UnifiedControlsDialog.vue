@@ -226,12 +226,12 @@ function handleRequestDelete(node: UnifiedNode): void {
   if (counts.total === 0) {
     msg = node.nodeType === 'category'
       ? `분류 "${node.name}" 을(를) 삭제하시겠습니까?`
-      : `통제 "${node.code} ${node.name}" 을(를) 삭제하시겠습니까?\n\n(이 통제에 매달린 증빙도 함께 삭제됩니다)`
+      : `항목 "${node.code} ${node.name}" 을(를) 삭제하시겠습니까?\n\n(이 항목에 연결된 증빙도 함께 삭제됩니다)`
   } else {
     msg =
       `"${node.name}" 을(를) 삭제하면 다음도 함께 삭제됩니다:\n` +
       `· 자식 분류 ${counts.categories}개\n` +
-      `· 자식 통제 ${counts.controls}개\n` +
+      `· 자식 항목 ${counts.controls}개\n` +
       `· 그에 매달린 모든 증빙\n\n계속하시겠습니까?`
   }
   if (window.confirm(msg)) {
@@ -312,7 +312,7 @@ const headerSubtitle = computed<string>(() => {
   const cats = props.treeState.dialogCategoryCount.value
   const ctrls = props.treeState.dialogControlCount.value
   const dirty = props.treeState.dirtyCount.value
-  const parts = [props.frameworkName, `분류 ${cats}`, `통제 ${ctrls}`]
+  const parts = [props.frameworkName, `분류 ${cats}`, `항목 ${ctrls}`]
   if (dirty > 0) parts.push(`미저장 변경 ${dirty}`)
   return parts.join(' · ')
 })
@@ -327,7 +327,7 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
         <!-- ─────────── 헤더 ─────────── -->
         <header class="dialog-header">
           <div class="header-left">
-            <h2 id="unified-controls-title" class="dialog-title">통제 항목 관리</h2>
+            <h2 id="unified-controls-title" class="dialog-title">관리 항목</h2>
             <p class="dialog-subtitle">{{ headerSubtitle }}</p>
           </div>
           <div class="header-actions">
@@ -355,12 +355,11 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
             ref="searchInputRef"
             class="search-input"
             type="text"
-            placeholder="코드, 분류, 통제명 검색…"
+            placeholder="코드, 분류, 항목명 검색…"
             :value="treeState.dialogSearch.value"
             spellcheck="false"
             @input="handleDialogSearchInput"
           />
-          <span class="search-hint">⌘F</span>
         </div>
 
         <!-- ─────────── 본문 ─────────── -->
@@ -370,9 +369,9 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
           </div>
           <div v-else-if="isEmpty" class="dialog-empty empty-cta">
             <i class="pi pi-folder-open empty-icon"></i>
-            <p class="empty-title">통제 항목이 아직 없습니다</p>
+            <p class="empty-title">관리 항목이 아직 없습니다</p>
             <p class="empty-sub">
-              분류를 추가하고 통제를 만들어 시작하거나, 엑셀로 한 번에 가져올 수 있습니다.
+              분류를 추가하고 관리 항목을 만들어 시작하거나, 엑셀로 한 번에 가져올 수 있습니다.
             </p>
             <div class="empty-actions">
               <button class="btn-primary" type="button" @click="handleAddRootCategory">
@@ -397,33 +396,22 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
           </template>
         </div>
 
-        <!-- ─────────── 푸터 ─────────── -->
+        <!-- ─────────── 푸터 (v18 — 키보드 힌트 제거) ─────────── -->
         <footer class="dialog-footer">
-          <div class="footer-hints">
-            <span class="hint"><kbd>Enter</kbd> 다음 통제</span>
-            <span class="hint-sep">·</span>
-            <span class="hint"><kbd>Tab</kbd> 자식 분류</span>
-            <span class="hint-sep">·</span>
-            <span class="hint"><kbd>Esc</kbd> 취소</span>
-            <span class="hint-sep">·</span>
-            <span class="hint"><kbd>⌘S</kbd> 저장</span>
-          </div>
-          <div class="footer-actions">
-            <button type="button" class="btn-secondary" @click="handleCancelClick">
-              취소
-            </button>
-            <button
-              type="button"
-              class="btn-primary"
-              :disabled="!treeState.hasDirty.value || treeState.isSaving.value"
-              @click="handleSaveClick">
-              <i v-if="treeState.isSaving.value" class="pi pi-spinner pi-spin"></i>
-              변경 저장
-              <span v-if="treeState.dirtyCount.value > 0" class="dirty-badge">
-                {{ treeState.dirtyCount.value }}
-              </span>
-            </button>
-          </div>
+          <button type="button" class="btn-secondary" @click="handleCancelClick">
+            취소
+          </button>
+          <button
+            type="button"
+            class="btn-primary"
+            :disabled="!treeState.hasDirty.value || treeState.isSaving.value"
+            @click="handleSaveClick">
+            <i v-if="treeState.isSaving.value" class="pi pi-spinner pi-spin"></i>
+            변경 저장
+            <span v-if="treeState.dirtyCount.value > 0" class="dirty-badge">
+              {{ treeState.dirtyCount.value }}
+            </span>
+          </button>
         </footer>
       </div>
     </div>
@@ -526,15 +514,10 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
   flex: 1; border: none; outline: none;
   font-size: 13px; height: 28px; background: transparent;
 }
-.search-hint {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 11px; color: rgb(156 163 175);
-  padding: 1px 6px; background: rgb(243 244 246); border-radius: 4px;
-}
 
 .dialog-body {
   flex: 1; overflow-y: auto;
-  padding: 8px 0 16px 0;
+  padding: 0;
 }
 .dialog-empty {
   text-align: center; padding: 48px 24px;
@@ -562,30 +545,15 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
   color: rgb(37 99 235);
 }
 
+/* v18: 푸터 — 키보드 힌트 제거, 버튼 우측 정렬 */
 .dialog-footer {
   padding: 12px 20px;
   border-top: 1px solid rgb(229 231 235);
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 16px;
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px;
   background: rgb(249 250 251);
   flex-shrink: 0;
 }
-.footer-hints {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; color: rgb(107 114 128);
-  flex-wrap: wrap;
-}
-.footer-hints kbd {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 10.5px; padding: 1px 5px;
-  background: white;
-  border: 1px solid rgb(229 231 235);
-  border-radius: 3px;
-  color: rgb(55 65 81);
-}
-.hint-sep { color: rgb(209 213 219); }
-
-.footer-actions { display: flex; gap: 8px; }
 
 .btn-primary {
   height: 32px; padding: 0 14px;

@@ -14,7 +14,7 @@
  * tree 의존성 없음 (5-14g 인터페이스 보존).
  */
 
-import { computed, inject, ref, nextTick } from 'vue'
+import { computed, inject, ref, nextTick, watch, onBeforeUnmount } from 'vue'
 import {
   CONTROL_TREE_INJECTION_KEY,
   type TreeRootNode,
@@ -78,7 +78,7 @@ const emit = defineEmits<{
   'go-evidence-type': [evidenceTypeId: number, nodeId: number]
   'zip-download': [nodeId: number, controlCode: string]
   'delete-evidence-type': [evidenceTypeId: number, evidenceTypeName: string]
-  'add-evidence-type': [nodeId: number]
+  'create-evidence-type': [nodeId: number, name: string]
 
   // ─── dialog 모드 emits (5-14h 신규) ───
   'leaf-code-blur': [
@@ -114,8 +114,8 @@ const indentPx = computed<number>(() => 14 + 18 * (props.node.depth - 1))
  */
 const nameWeightClass = computed<string>(() => {
   switch (props.node.depth) {
-    case 1: return 'text-[14px] font-bold text-gray-900'
-    case 2: return 'text-[13px] font-semibold text-gray-900'
+    case 1:
+    case 2: return 'text-[14px] font-bold text-gray-900'
     case 3: return 'text-[12.5px] font-medium text-gray-700'
     case 4: return 'text-[12px] font-medium text-gray-600'
     case 5: return 'text-[11.5px] font-medium text-gray-500'
@@ -193,6 +193,12 @@ const hasChildren = computed<boolean>(() => {
   return (props.node.children?.length ?? 0) > 0
 })
 
+/** v18: depth+자식 기반 렌더링 — nodeType 무관하게 자식 유무 판별 */
+const viewHasAnyChildren = computed<boolean>(() => {
+  if (props.mode !== 'view') return false
+  return (props.node.children?.length ?? 0) > 0
+})
+
 /** hybrid leaf 의 자식 펼침 상태 (expandedIds 의 별칭, semantic 명료성). */
 const viewChildrenExpanded = computed<boolean>(() => hasChildren.value && viewExpanded.value)
 
@@ -243,8 +249,46 @@ function viewOnZipDownload(): void {
   emit('zip-download', props.node.id, props.node.code)
 }
 
-function viewOnAddEt(): void {
-  emit('add-evidence-type', props.node.id)
+// v18: 인라인 증빙 추가
+const eviAddOpen = ref(false)
+const eviAddName = ref('')
+const eviAddInputRef = ref<HTMLInputElement | null>(null)
+
+// 열릴 때 자동 포커스 + 외부 클릭 시 닫기
+let eviAddClickOutside: ((e: MouseEvent) => void) | null = null
+
+watch(eviAddOpen, (open) => {
+  if (open) {
+    nextTick(() => eviAddInputRef.value?.focus())
+    setTimeout(() => {
+      eviAddClickOutside = (e: MouseEvent) => {
+        const form = document.querySelector('.et-add-form')
+        if (form && !form.contains(e.target as Node)) {
+          eviAddOpen.value = false
+          eviAddName.value = ''
+        }
+      }
+      document.addEventListener('click', eviAddClickOutside, { capture: true })
+    }, 0)
+  } else {
+    if (eviAddClickOutside) {
+      document.removeEventListener('click', eviAddClickOutside, { capture: true })
+      eviAddClickOutside = null
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  if (eviAddClickOutside) {
+    document.removeEventListener('click', eviAddClickOutside, { capture: true })
+  }
+})
+
+function viewOnCreateEt(): void {
+  if (!eviAddName.value.trim()) return
+  emit('create-evidence-type', props.node.id, eviAddName.value.trim())
+  eviAddName.value = ''
+  eviAddOpen.value = false
 }
 
 /**
@@ -292,8 +336,8 @@ function forwardZip(ctrlId: number, ctrlCode: string): void {
 function forwardDeleteEt(etId: number, etName: string): void {
   emit('delete-evidence-type', etId, etName)
 }
-function forwardAddEt(nodeId: number): void {
-  emit('add-evidence-type', nodeId)
+function forwardCreateEt(nodeId: number, name: string): void {
+  emit('create-evidence-type', nodeId, name)
 }
 
 // ============================================================================
@@ -493,11 +537,12 @@ function forwardRequestDelete(n: UnifiedNode): void {
         P14: highlightFn 으로 검색 매치 substring amber 하이라이트 (HTML 렌더).
         P12: searchActive + matchCountByCategoryId.get(node.id) > 0 → amber 핍 노출.
     -->
+    <!-- depth 1-2 → 항상 카테고리 스타일 (쉐브론) -->
     <div
-      v-if="node.nodeType === 'category'"
+      v-if="node.depth <= 2"
       class="row-view category-row group cursor-pointer hover:bg-gray-50"
       :style="{ paddingLeft: `${indentPx}px` }"
-      @click="viewHandleToggle">
+      @click="emit('toggle-expand', node.id, 'category')">
       <i :class="['pi text-[11px] text-gray-400 transition-transform duration-150 mr-1.5 shrink-0',
         viewExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
       <span
@@ -515,12 +560,12 @@ function forwardRequestDelete(n: UnifiedNode): void {
         매치 {{ catMatchCount }}
       </span>
       <span class="text-[11px] text-gray-400 tabular-nums shrink-0 ml-2">
-        통제
+        항목
         <span v-if="'descendantLeafCount' in node">{{ node.descendantLeafCount }}</span>
       </span>
     </div>
 
-    <!-- ═══ leaf 행 — v17 재설계 (grid 6열 + 컴팩트 증빙 패널) ═══ -->
+    <!-- ═══ leaf 행 (depth 3+ 전체) — 증빙 패널 + 하위 칩 통합 ═══ -->
     <div
       v-else
       :class="[
@@ -529,16 +574,16 @@ function forwardRequestDelete(n: UnifiedNode): void {
         isLeafExpanded ? 'expanded' : '',
       ]"
       :style="{ paddingLeft: `${indentPx + 16}px` }"
-      @click="viewHandleToggle">
+      @click="emit('toggle-expand', node.id, 'control')">
       <span class="leaf-code" v-html="renderCode"></span>
       <span class="leaf-name">
         <span v-html="renderName"></span>
-        <!-- hybrid 통합 칩 -->
+        <!-- 하위 칩 — 자식 있으면 항상 표시 (nodeType 무관) -->
         <button
-          v-if="hasChildren"
+          v-if="viewHasAnyChildren"
           :class="['sub-chip', { collapsed: !viewExpanded }]"
           :title="viewExpanded ? '하위 항목 접기' : '하위 항목 펼치기'"
-          @click.stop="viewHandleToggleChildren">
+          @click.stop="emit('toggle-expand', node.id, 'category')">
           <svg class="sub-chip-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor"
                stroke-width="2" width="10" height="10"><path d="M4 6l4 4 4-4"/></svg>
           하위 {{ node.children?.length ?? 0 }}
@@ -580,31 +625,65 @@ function forwardRequestDelete(n: UnifiedNode): void {
                 <button type="button" class="evi-action-btn" @click.stop="viewOnZipDownload">
                   전체 다운로드 (ZIP)
                 </button>
-                <button type="button" class="evi-action-btn" @click.stop="viewOnAddEt">
-                  + 증빙 유형
-                </button>
               </div>
             </div>
+            <!-- 증빙 카드 (클릭→상세, 삭제 아이콘) -->
             <div
               v-for="et in controlDetail.evidenceTypes"
               :key="et.id"
-              class="et-card"
+              class="et-card group/et"
               @click.stop="viewOnGoEt(et)">
-              <div class="et-card-name">{{ et.name }}</div>
+              <div class="et-card-top">
+                <div class="et-card-name">{{ et.name }}</div>
+                <button
+                  type="button"
+                  class="et-card-del"
+                  title="증빙 유형 삭제"
+                  @click.stop="viewOnDeleteEt(et)">
+                  <i class="pi pi-trash"></i>
+                </button>
+              </div>
               <div class="et-card-meta">
                 <span v-for="(part, i) in eviMetaParts(et)" :key="i">{{ part }}</span>
               </div>
             </div>
-            <div v-if="controlDetail.evidenceTypes.length === 0" class="evi-empty">
-              이 통제에 등록된 증빙 유형이 없습니다.
+            <!-- 인라인 추가 폼 -->
+            <div class="et-add-row" v-if="!eviAddOpen" @click.stop="eviAddOpen = true">
+              <i class="pi pi-plus"></i>
+              <span>증빙 유형 추가</span>
+            </div>
+            <div class="et-add-form" v-else @click.stop>
+              <input
+                ref="eviAddInputRef"
+                v-model="eviAddName"
+                class="et-add-input"
+                placeholder="증빙 유형 이름"
+                @keydown.enter.prevent="viewOnCreateEt"
+                @keydown.esc.prevent="eviAddOpen = false; eviAddName = ''" />
+              <button
+                type="button"
+                class="et-add-btn"
+                :disabled="!eviAddName.trim()"
+                @click.stop="viewOnCreateEt">
+                추가
+              </button>
+              <button
+                type="button"
+                class="et-add-cancel"
+                @click.stop="eviAddOpen = false; eviAddName = ''">
+                취소
+              </button>
+            </div>
+            <div v-if="controlDetail.evidenceTypes.length === 0 && !eviAddOpen" class="evi-empty">
+              이 항목에 등록된 증빙 유형이 없습니다.
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- hybrid 자식 재귀 (v17: 칩 토글) -->
-    <div v-if="node.nodeType === 'control' && viewChildrenExpanded" class="hybrid-children">
+    <!-- v18: 통합 자식 재귀 (depth 1-2 항상 / depth 3+ 자식 있을 때) -->
+    <div v-if="(node.depth <= 2 || viewHasAnyChildren) && viewExpanded">
       <ControlNodeRow
         v-for="child in (node.children as TreeRootNode[])"
         :key="child.id"
@@ -622,42 +701,16 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @go-evidence-type="forwardGoEt"
         @zip-download="forwardZip"
         @delete-evidence-type="forwardDeleteEt"
-        @add-evidence-type="forwardAddEt"
+        @create-evidence-type="forwardCreateEt"
       />
-    </div>
-
-    <!-- 자식 재귀 (view) — Stage 3 props 전달 (P12/P14) -->
-    <div v-if="node.nodeType === 'category' && viewExpanded">
-      <ControlNodeRow
-        v-for="child in (node.children as TreeRootNode[])"
-        :key="child.id"
-        :node="child"
-        mode="view"
-        :expanded-ids="expandedIds"
-        :expanded-leaf-id="expandedLeafId"
-        :control-detail="controlDetail"
-        :detail-loading="detailLoading"
-        :dimmed="dimmed"
-        :highlight-fn="highlightFn"
-        :match-count-by-category-id="matchCountByCategoryId"
-        :search-active="searchActive"
-        @toggle-expand="forwardToggle"
-        @go-evidence-type="forwardGoEt"
-        @zip-download="forwardZip"
-        @delete-evidence-type="forwardDeleteEt"
-        @add-evidence-type="forwardAddEt"
-      />
-      <!--
-        P6 (5-14i v2) — empty CTA. category 가 자식 0 일 때 "통제 항목 없음" 점선 행.
-        분류 안 통제 0 인 신규 framework / import 직후 발견성 향상.
-      -->
+      <!-- depth 1-2 empty CTA -->
       <div
-        v-if="(node.children as TreeRootNode[]).length === 0"
+        v-if="(node.children as TreeRootNode[]).length === 0 && node.depth <= 2"
         class="empty-cta-row"
         :style="{ paddingLeft: `${indentPx + 16}px` }">
         <i class="pi pi-info-circle text-[10px] text-gray-300 mr-1.5"></i>
-        <span>이 분류에 통제 항목이 없습니다 ·</span>
-        <strong class="text-blue-500 ml-1">[통제 관리]</strong>
+        <span>이 분류에 관리 항목이 없습니다 ·</span>
+        <strong class="text-blue-500 ml-1">[관리 항목]</strong>
         <span class="ml-1">에서 추가</span>
       </div>
     </div>
@@ -676,9 +729,11 @@ function forwardRequestDelete(n: UnifiedNode): void {
     <div
       v-if="node.nodeType === 'category'"
       class="row-dialog category-row-dialog group"
-      :class="{ 'is-draft-row': isDraft }"
+      :class="{ 'is-draft-row': isDraft, 'sub-category': node.depth >= 3 }"
       :style="{ paddingLeft: `${indentPx}px` }">
+      <!-- depth 1-2: 쉐브론, depth 3+: 서브 마커 -->
       <button
+        v-if="node.depth < 3"
         type="button"
         class="chevron-btn"
         :aria-label="dialogExpanded ? '접기' : '펼치기'"
@@ -686,6 +741,9 @@ function forwardRequestDelete(n: UnifiedNode): void {
         <i :class="['pi text-xs text-gray-400 transition-transform duration-150',
           dialogExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
       </button>
+      <span v-else class="sub-marker" @click="dialogHandleToggle">
+        <i :class="['pi', dialogExpanded ? 'pi-minus' : 'pi-plus']"></i>
+      </span>
       <input
         ref="codeInputRef"
         class="row-code-input cat-code-input"
@@ -695,25 +753,17 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @input="dialogHandleCodeInput"
         @focus="dialogHandleCodeFocus"
         @blur="dialogHandleCodeBlur"
-        @keydown.enter.prevent="dialogHandleEnterKey"
-        @keydown.tab="dialogHandleTabKey"
-        @keydown.esc.prevent="dialogHandleEscKey"
-        @keydown.backspace="dialogHandleBackspaceKey"
       />
       <input
         ref="nameInputRef"
-        :class="['row-name-input cat-name-input', nameWeightClass]"
+        class="row-name-input cat-name-input"
         :value="node.name"
         placeholder="분류 이름"
         spellcheck="false"
         @input="dialogHandleNameInput"
-        @keydown.enter.prevent="dialogHandleEnterKey"
-        @keydown.tab="dialogHandleTabKey"
-        @keydown.esc.prevent="dialogHandleEscKey"
-        @keydown.backspace="dialogHandleBackspaceKey"
       />
       <span class="cat-meta-dialog">
-        통제
+        항목
         <span v-if="dialogNode">{{ dialogNode.descendantLeafCount }}</span>
       </span>
       <span v-if="dialogShowDirtyDot" class="dirty-dot" title="미저장 변경"></span>
@@ -722,14 +772,6 @@ function forwardRequestDelete(n: UnifiedNode): void {
         class="error-dot"
         :title="dialogValidationErrorTitle"></span>
       <div class="row-actions">
-        <button type="button" class="row-iconbtn" title="자식 분류 추가"
-          @click="dialogHandleAddChildCategory">
-          <i class="pi pi-folder-plus"></i>
-        </button>
-        <button type="button" class="row-iconbtn" title="자식 통제 추가"
-          @click="dialogHandleAddChildControl">
-          <i class="pi pi-plus"></i>
-        </button>
         <button
           v-if="dialogNode?._kind === 'existing'"
           type="button"
@@ -745,21 +787,16 @@ function forwardRequestDelete(n: UnifiedNode): void {
       </div>
     </div>
 
-    <!-- leaf 행 (v15.1 5-15a 후속-2 — hybrid 분기) -->
+    <!-- leaf 행 (v18 — 모든 항목 쉐브론 + 펼침 가능) -->
     <div
       v-else
       class="row-dialog control-row-dialog group"
-      :class="{ 'is-draft-row': isDraft, 'has-children-leaf': leafDialogHasChildren }"
-      :style="{ paddingLeft: `${indentPx + (leafDialogHasChildren ? 0 : 20)}px` }">
-      <!--
-        v15.1 5-15a 후속-2 — hybrid leaf 좌측 chevron.
-        leaf 가 자식 보유 시 노출. 클릭 = dialog 펼침 토글.
-      -->
+      :class="{ 'is-draft-row': isDraft }"
+      :style="{ paddingLeft: `${indentPx}px` }">
       <button
-        v-if="leafDialogHasChildren"
         type="button"
         class="chevron-btn"
-        :aria-label="dialogExpanded ? '자식 접기' : '자식 펼치기'"
+        :aria-label="dialogExpanded ? '접기' : '펼치기'"
         @click="dialogHandleToggle">
         <i :class="['pi text-xs text-gray-400 transition-transform duration-150',
           dialogExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
@@ -773,22 +810,14 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @input="dialogHandleCodeInput"
         @focus="dialogHandleCodeFocus"
         @blur="dialogHandleCodeBlur"
-        @keydown.enter.prevent="dialogHandleEnterKey"
-        @keydown.tab="dialogHandleTabKey"
-        @keydown.esc.prevent="dialogHandleEscKey"
-        @keydown.backspace="dialogHandleBackspaceKey"
       />
       <input
         ref="nameInputRef"
         class="row-name-input ctrl-name-input"
         :value="node.name"
-        placeholder="통제 이름"
+        placeholder="관리 항목 이름"
         spellcheck="false"
         @input="dialogHandleNameInput"
-        @keydown.enter.prevent="dialogHandleEnterKey"
-        @keydown.tab="dialogHandleTabKey"
-        @keydown.esc.prevent="dialogHandleEscKey"
-        @keydown.backspace="dialogHandleBackspaceKey"
       />
       <span class="ctrl-evidence-dialog">· 증빙 {{ node.evidenceTypeCount ?? 0 }}</span>
       <span v-if="dialogShowDirtyDot" class="dirty-dot" title="미저장 변경"></span>
@@ -797,20 +826,6 @@ function forwardRequestDelete(n: UnifiedNode): void {
         class="error-dot"
         :title="dialogValidationErrorTitle"></span>
       <div class="row-actions">
-        <!-- v15.1 5-15a 후속-2 — hybrid: leaf 도 자식 추가 가능 (Q2=B) -->
-        <button type="button" class="row-iconbtn" title="자식 분류 추가"
-          @click="dialogHandleAddChildCategory">
-          <i class="pi pi-folder-plus"></i>
-        </button>
-        <button type="button" class="row-iconbtn" title="자식 통제 추가"
-          @click="dialogHandleAddChildControl">
-          <i class="pi pi-plus"></i>
-        </button>
-        <!-- 기존 액션 (형제 통제 추가 / 이동 / 삭제) -->
-        <button type="button" class="row-iconbtn" title="형제 통제 추가"
-          @click="dialogHandleAddSiblingControl">
-          <i class="pi pi-clone"></i>
-        </button>
         <button
           v-if="dialogNode?._kind === 'existing'"
           type="button"
@@ -827,10 +842,9 @@ function forwardRequestDelete(n: UnifiedNode): void {
     </div>
 
     <!--
-      자식 재귀 (dialog) — v15.1 5-15a 후속-2: hybrid 모든 노드 자식 재귀.
-      카테고리는 펼침 시 자식 0 이어도 add-row 노출 (기존 동작 보존).
-      hybrid leaf 는 chev 노출 (자식 1+) + 펼침 시 add-row 동일.
-      자식 0 leaf 는 chev 미노출 → 토글 불가 → dialogExpanded === false 자연 보장.
+      자식 재귀 (dialog) — v18: 모든 항목 펼침 가능.
+      펼침 시 자식 목록 + "항목 추가" 버튼 노출.
+      자식 0 이어도 "항목 추가"만 표시되어 하위 항목 생성 가능.
     -->
     <div v-if="dialogExpanded">
       <ControlNodeRow
@@ -842,23 +856,16 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @request-move="forwardRequestMove"
         @request-delete="forwardRequestDelete"
       />
-      <!-- 카테고리 끝의 [+ 통제 추가] / [+ 자식 분류 추가] -->
+      <!-- v18: 항목 추가 (드롭다운 없이 바로 추가) -->
       <div
         class="add-row"
         :style="{ paddingLeft: `${indentPx + 20}px` }"
-        @click="dialogHandleAddChildControl">
+        @click.stop="dialogHandleAddChildControl">
         <i class="pi pi-plus"></i>
-        <span>통제 추가</span>
-        <span v-if="tree && dialogNode" class="next-code">
-          {{ tree.nextSiblingCode(dialogNode) }} · 다음 번호 자동
+        <span>항목 추가</span>
+        <span v-if="tree && dialogNode" class="add-row-hint">
+          {{ tree.nextSiblingCode(dialogNode) }}
         </span>
-      </div>
-      <div
-        class="add-row add-row-category"
-        :style="{ paddingLeft: `${indentPx + 20}px` }"
-        @click="dialogHandleAddChildCategory">
-        <i class="pi pi-folder-plus"></i>
-        <span>자식 분류 추가</span>
       </div>
     </div>
   </div>
@@ -882,7 +889,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
 /* leaf 행 (grid 6열) */
 .leaf-row {
   display: grid;
-  grid-template-columns: 64px 1fr 60px 90px 100px 24px;
+  grid-template-columns: 100px 1fr 60px 90px 100px 24px;
   gap: 12px; align-items: center;
   padding: 8px 16px 8px 0; cursor: pointer;
   border-bottom: 1px solid #eef0f3;
@@ -1015,7 +1022,9 @@ function forwardRequestDelete(n: UnifiedNode): void {
   background: white; color: #4b5563;
   border: 1px solid #e5e7eb; border-radius: 5px;
   cursor: pointer; transition: background 0.1s;
+  display: inline-flex; align-items: center; gap: 4px;
 }
+.evi-action-btn .pi { font-size: 10px; }
 .evi-action-btn:hover { background: #f9fafb; }
 
 /* 증빙 유형 카드 (레퍼런스 et-card 정합) */
@@ -1026,10 +1035,57 @@ function forwardRequestDelete(n: UnifiedNode): void {
 }
 .et-card:hover { border-color: #94a3b8; }
 .et-card-name { font-size: 13px; font-weight: 500; color: #111827; }
+.et-card-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.et-card-del {
+  opacity: 0; border: none; background: transparent;
+  color: #9ca3af; cursor: pointer; padding: 2px;
+  border-radius: 4px; font-size: 11px;
+  transition: opacity 0.1s, color 0.1s;
+}
+.et-card.group\/et:hover .et-card-del { opacity: 1; }
+.et-card-del:hover { color: #ef4444; background: #fef2f2; }
 .et-card-meta {
   font-size: 11px; color: #9ca3af; margin-top: 4px;
   display: flex; gap: 12px; flex-wrap: wrap;
 }
+/* 인라인 추가 */
+.et-add-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px; margin-top: 6px;
+  border: 1px dashed #d1d5db; border-radius: 6px;
+  color: #9ca3af; font-size: 12px;
+  cursor: pointer; transition: all 0.1s;
+}
+.et-add-row:hover { color: #3b82f6; border-color: #93c5fd; background: white; }
+.et-add-row .pi { font-size: 10px; }
+.et-add-form {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 0; margin-top: 6px;
+}
+.et-add-input {
+  flex: 1; height: 30px; padding: 0 10px;
+  border: 1px solid #d1d5db; border-radius: 6px;
+  font-size: 12px; outline: none; font-family: inherit;
+}
+.et-add-input:focus { border-color: #3b82f6; }
+.et-add-btn {
+  height: 30px; padding: 0 12px;
+  background: #111827; color: white;
+  border: none; border-radius: 6px;
+  font-size: 11px; font-weight: 500;
+  cursor: pointer; font-family: inherit;
+}
+.et-add-btn:hover { background: #1f2937; }
+.et-add-btn:disabled { background: #d1d5db; cursor: not-allowed; }
+.et-add-cancel {
+  height: 30px; padding: 0 10px;
+  background: transparent; color: #6b7280;
+  border: 1px solid #e5e7eb; border-radius: 6px;
+  font-size: 11px; cursor: pointer; font-family: inherit;
+}
+.et-add-cancel:hover { background: #f9fafb; }
 .evi-loading { padding: 16px; text-align: center; color: #9ca3af; font-size: 13px; }
 .evi-empty { padding: 16px; font-size: 12px; color: #9ca3af; text-align: center; }
 
@@ -1076,15 +1132,21 @@ function forwardRequestDelete(n: UnifiedNode): void {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 16px 6px 0;
+  padding: 7px 16px 7px 0;
   font-size: 13px;
-  border-radius: 4px;
   user-select: none;
+  border-bottom: 1px solid rgb(243 244 246);
+  transition: background 0.08s;
 }
 
 .row-dialog.category-row-dialog:hover,
 .row-dialog.control-row-dialog:hover {
-  background-color: rgb(249 250 251);
+  background-color: rgb(240 242 245);
+}
+
+/* v18: 통제 행 줄무늬 */
+.row-dialog.control-row-dialog:nth-child(even) {
+  background: rgb(250 251 252);
 }
 
 .row-dialog.is-draft-row {
@@ -1104,6 +1166,30 @@ function forwardRequestDelete(n: UnifiedNode): void {
   padding: 0;
 }
 
+/* v18: depth 3+ 서브 분류 — 대분류와 시각 구분 */
+.sub-marker {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; cursor: pointer;
+  font-size: 8px; color: #9ca3af;
+  background: #f3f4f6; border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  transition: all 0.12s;
+}
+.sub-marker:hover { background: #e5e7eb; color: #6b7280; }
+.sub-marker .pi { font-size: 8px; }
+
+.row-dialog.sub-category {
+  background: rgb(249 250 251);
+  border-left: 2px solid #d1d5db;
+}
+.row-dialog.sub-category .cat-code-input {
+  font-size: 10px; width: 100px; color: #9ca3af;
+}
+.row-dialog.sub-category .cat-name-input {
+  font-size: 12px !important; font-weight: 500 !important; color: #6b7280 !important;
+}
+
 .cat-meta-dialog {
   font-size: 11px;
   color: rgb(156 163 175);
@@ -1118,13 +1204,14 @@ function forwardRequestDelete(n: UnifiedNode): void {
   flex-shrink: 0;
 }
 
+/* v18: input border 상시 표시 (가독성 개선) */
 .row-code-input,
 .row-name-input {
-  border: 1.5px solid transparent;
+  border: 1px solid rgb(229 231 235);
   border-radius: 4px;
   padding: 0 6px;
-  height: 24px;
-  background: transparent;
+  height: 26px;
+  background: rgb(250 251 252);
   outline: none;
   transition: border-color 0.1s, background-color 0.1s;
   font-family: inherit;
@@ -1146,7 +1233,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11px;
   color: rgb(107 114 128);
-  width: 56px;
+  width: 100px;
   flex-shrink: 0;
 }
 
@@ -1154,15 +1241,22 @@ function forwardRequestDelete(n: UnifiedNode): void {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11.5px;
   color: rgb(37 99 235);
-  width: 64px;
+  width: 100px;
   flex-shrink: 0;
 }
 
-.cat-name-input,
+.cat-name-input {
+  flex: 1;
+  min-width: 0;
+  color: rgb(17 24 39);
+  font-size: 13px;
+  font-weight: 500;
+}
 .ctrl-name-input {
   flex: 1;
   min-width: 0;
   color: rgb(17 24 39);
+  font-size: 13px;
 }
 
 .dirty-dot {
@@ -1218,32 +1312,27 @@ function forwardRequestDelete(n: UnifiedNode): void {
   color: rgb(239 68 68);
 }
 
+/* v18: 항목 추가 행 */
 .add-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 16px 5px 30px;
+  padding: 8px 16px;
   color: rgb(156 163 175);
-  font-size: 12px;
+  font-size: 12px; font-weight: 500;
   cursor: pointer;
-  border-radius: 4px;
+  border-bottom: 1px solid rgb(243 244 246);
 }
-
 .add-row:hover {
   color: rgb(37 99 235);
   background: rgb(249 250 251);
 }
-
-.add-row .next-code {
+.add-row-hint {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 11px;
-  color: rgb(209 213 219);
+  font-size: 11px; color: rgb(209 213 219);
   margin-left: auto;
 }
-
-.add-row:hover .next-code {
-  color: rgb(147 197 253);
-}
+.add-row:hover .add-row-hint { color: rgb(147 197 253); }
 
 .add-row-category {
   margin-bottom: 4px;

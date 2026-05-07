@@ -3,7 +3,7 @@
  * ControlsView (Framework 상세) — Phase 5-14h 편집 모드 진입 (v14.8 final).
  *
  * <p>spec §3.3 정합. v13 의 평면 테이블 (코드/영역/항목명/수집현황/상태/관리 6컬럼) 을
- * 5-14g 에서 N단 재귀 트리로 전환했고, 5-14h 에서 단일 [통제 관리] 다이얼로그가
+ * 5-14g 에서 N단 재귀 트리로 전환했고, 5-14h 에서 단일 [관리 항목] 다이얼로그가
  * read-only shell → 편집 모드 (dirty 추적 + PATCH /tree 단일 트랜잭션 저장) 로 진입.</p>
  *
  * <h3>5-14h 변경점</h3>
@@ -24,7 +24,7 @@
  *   <li>leaf 행 클릭 → 인라인 펼침으로 evidence 카드 목록 (v12 5-12b)</li>
  *   <li>증빙 유형 카드 클릭 → EvidenceTypeDetailView 별도 페이지 이동 (goToEvidenceTypeDetail)</li>
  *   <li>증빙 유형 우측 🗑 → evidenceTypesApi.delete (v15.6 namespace 일치)</li>
- *   <li>[ZIP 다운로드] 버튼 (펼친 leaf 안). 증빙 유형 추가는 [통제 관리] 다이얼로그로 통합 (v15.5)</li>
+ *   <li>[ZIP 다운로드] 버튼 (펼친 leaf 안). 증빙 유형 추가는 [관리 항목] 다이얼로그로 통합 (v15.5)</li>
  *   <li>pending 행 배경 강조 (Phase 5-9)</li>
  *   <li>본문 헤더의 Framework 이름 + 카운트 서브텍스트 (Phase 5-13f)</li>
  *   <li>useControlTree(selectedFrameworkIdRef) 시그니처 + tree.load() / tree.reload() /
@@ -39,7 +39,7 @@
  *       5-14h 에서 @saved emit 추가</li>
  * </ul>
  */
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   frameworksApi,
@@ -180,6 +180,11 @@ const statusOptions: Array<'전체' | LeafStatus> = [
 
 function onTreeToggle(nodeId: number, nodeType: 'category' | 'control') {
   if (nodeType === 'category') {
+    // 하위 펼침 시 증빙 패널 자동 닫기 (겹침 방지)
+    if (expandedLeafId.value === nodeId) {
+      expandedLeafId.value = null
+      controlDetail.value = null
+    }
     tree.toggleExpand(nodeId)
   } else {
     void toggleLeaf(nodeId)
@@ -211,11 +216,29 @@ function openUnifiedDialog() {
 }
 
 /**
- * v17 — 증빙 패널의 [+ 증빙 유형] 클릭.
- * 통제 관리 다이얼로그를 열어 해당 통제에 증빙 유형을 추가할 수 있게 한다.
+ * v18 — 증빙 패널 인라인 [증빙 유형 추가].
+ * 해당 통제에 새 증빙 유형을 생성하고 트리를 새로고침.
  */
-function onAddEvidenceType(_nodeId: number) {
-  showUnifiedDialog.value = true
+async function onCreateEvidenceType(nodeId: number, name: string) {
+  try {
+    await evidenceTypesApi.create(nodeId, name)
+    showToast(`"${name}" 증빙 유형이 추가되었습니다.`, 'success')
+    // 현재 열린 leaf 유지 + 상세 갱신 → 트리 카운트 갱신 (펼침 상태 보존)
+    expandedLeafId.value = nodeId
+    await refreshDetail()
+    await tree.reload()
+    // 새로 추가된 카드(마지막)로 스크롤 + 하이라이트
+    await nextTick()
+    const cards = document.querySelectorAll('.evi-panel:not(.collapsed) .et-card')
+    if (cards.length > 0) {
+      const last = cards[cards.length - 1] as HTMLElement
+      last.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      last.style.boxShadow = 'inset 0 0 0 2px #3b82f6'
+      setTimeout(() => { last.style.boxShadow = '' }, 1500)
+    }
+  } catch (e: any) {
+    showToast(e?.response?.data?.message ?? '증빙 유형 추가에 실패했습니다.', 'error')
+  }
 }
 
 // ─── Phase 5-14i (P11) — Framework switcher dropdown ───
@@ -451,7 +474,7 @@ watch(
               :class="{ 'is-current': fw.id === selectedFrameworkId }"
               @click="selectFramework(fw.id)">
               <span class="fw-item-name truncate">{{ fw.name }}</span>
-              <span class="fw-item-meta tabular-nums">통제 {{ fw.controlCount ?? 0 }}</span>
+              <span class="fw-item-meta tabular-nums">항목 {{ fw.controlCount ?? 0 }}</span>
               <i
                 class="pi pi-check fw-item-check text-[11px]"
                 :class="fw.id === selectedFrameworkId ? 'opacity-100' : 'opacity-0'"
@@ -468,7 +491,7 @@ watch(
           </div>
         </div>
         <p v-if="currentFramework" class="text-xs text-gray-500 mt-0.5">
-          <strong class="text-gray-900 font-semibold">통제 {{ tree.totalLeafCount.value }}</strong>
+          <strong class="text-gray-900 font-semibold">관리 항목 {{ tree.totalLeafCount.value }}</strong>
           <span class="mx-1.5 text-gray-300">·</span>
           증빙 {{ tree.totalEvidenceTypeCount.value }}
           <span class="mx-1.5 text-gray-300">·</span>
@@ -479,11 +502,11 @@ watch(
           </template>
         </p>
       </div>
-      <!-- 단일 [통제 관리] 버튼 — v13 의 두 버튼 (엑셀 Import / + 통제 항목) 통합 -->
+      <!-- 단일 [관리 항목] 버튼 — v13 의 두 버튼 (엑셀 Import / + 통제 항목) 통합 -->
       <button
         @click="openUnifiedDialog"
         class="h-8 px-3 text-xs bg-gray-900 text-white rounded-md hover:bg-gray-800 flex items-center gap-1.5 shrink-0">
-        <i class="pi pi-cog text-[10px]"></i> 통제 관리
+        <i class="pi pi-cog text-[10px]"></i> 관리 항목
       </button>
     </div>
 
@@ -495,7 +518,7 @@ watch(
         @input="onSearchInput"
         type="text"
         class="search-input"
-        placeholder="🔍 코드, 분류, 통제명으로 검색"
+        placeholder="🔍 코드, 분류, 항목명으로 검색"
       />
       <div class="filter-tabs">
         <button
@@ -535,7 +558,7 @@ watch(
       <!-- P17: error -->
       <div v-else-if="tree.error.value" class="state-block error-state">
         <div class="state-icon error-icon"><i class="pi pi-exclamation-triangle"></i></div>
-        <h3 class="state-title">통제 트리를 불러오지 못했습니다</h3>
+        <h3 class="state-title">관리 항목을 불러오지 못했습니다</h3>
         <p class="state-desc">네트워크 또는 서버 응답에 문제가 있습니다.</p>
         <code class="state-code">
           GET /api/v1/frameworks/{{ selectedFrameworkId ?? '?' }}/tree → {{ tree.error.value }}
@@ -553,14 +576,14 @@ watch(
       <!-- P16: empty Framework (등록된 통제 0) -->
       <div v-else-if="tree.flatNodes.value.length === 0" class="state-block empty-state">
         <div class="state-icon empty-icon"><i class="pi pi-folder-open"></i></div>
-        <h3 class="state-title">이 Framework 에 통제 항목이 없습니다</h3>
-        <p class="state-desc">엑셀 파일을 import 하거나 [통제 관리] 에서 직접 추가하세요.</p>
+        <h3 class="state-title">이 Framework 에 관리 항목이 없습니다</h3>
+        <p class="state-desc">엑셀 파일을 import 하거나 [관리 항목] 에서 직접 추가하세요.</p>
         <div class="state-actions">
           <button
             type="button"
             class="state-btn-primary"
             @click="openUnifiedDialog">
-            <i class="pi pi-cog text-[10px] mr-1.5"></i> 통제 관리
+            <i class="pi pi-cog text-[10px] mr-1.5"></i> 관리 항목
           </button>
         </div>
       </div>
@@ -572,7 +595,7 @@ watch(
       -->
       <div v-else-if="showNoResults" class="state-block no-results-state">
         <div class="state-icon no-results-icon"><i class="pi pi-search"></i></div>
-        <h4 class="state-title-sm">일치하는 통제 항목이 없습니다</h4>
+        <h4 class="state-title-sm">일치하는 관리 항목이 없습니다</h4>
         <p class="state-desc">다른 검색어를 시도하거나 필터를 해제하세요.</p>
         <button
           type="button"
@@ -602,7 +625,7 @@ watch(
           @go-evidence-type="goToEvidenceTypeDetail"
           @zip-download="onZipDownload"
           @delete-evidence-type="onDeleteEvidenceType"
-          @add-evidence-type="onAddEvidenceType"
+          @create-evidence-type="onCreateEvidenceType"
         />
       </div>
     </div>

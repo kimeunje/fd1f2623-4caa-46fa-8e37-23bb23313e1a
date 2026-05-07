@@ -6,6 +6,9 @@ import com.secuhub.domain.evidence.dto.ControlDto;
 import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import com.secuhub.domain.evidence.entity.*;
 import com.secuhub.domain.evidence.repository.*;
+import com.secuhub.domain.user.entity.User;
+import com.secuhub.domain.user.repository.UserRepository;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -59,6 +62,7 @@ public class ControlService {
     private final ControlNodeRepository controlNodeRepository;        // ← v14 Phase 5-14f: ControlRepository 제거
     private final EvidenceTypeRepository evidenceTypeRepository;
     private final EvidenceFileRepository evidenceFileRepository;
+    private final UserRepository userRepository;
 
     // ====================================================================
     // 조회 (leaf-only 위임)
@@ -192,6 +196,68 @@ public class ControlService {
             throw new ResourceNotFoundException("증빙 유형", evidenceTypeId);
         }
         evidenceTypeRepository.deleteById(evidenceTypeId);
+    }
+
+    /**
+     * v18 — 증빙 유형 생성 (특정 통제 노드에 추가).
+     *
+     * @param nodeId      통제 노드 ID (control_nodes.id)
+     * @param name        증빙 유형 이름
+     * @param description 설명 (nullable)
+     */
+    @Transactional
+    public void createEvidenceType(Long nodeId, String name, String description) {
+        ControlNode node = controlNodeRepository.findById(nodeId)
+                .orElseThrow(() -> new ResourceNotFoundException("통제 노드", nodeId));
+        EvidenceType et = EvidenceType.builder()
+                .controlNode(node)
+                .name(name)
+                .description(description)
+                .build();
+        evidenceTypeRepository.save(et);
+    }
+
+    /**
+     * v18 — 증빙 유형 수정 (이름/설명/담당자/마감일).
+     *
+     * <p>부분 수정: null 필드는 기존 값 유지.</p>
+     * <ul>
+     *   <li>ownerUserId = null → 변경 안 함</li>
+     *   <li>ownerUserId = 0L → 담당자 해제 (미배정)</li>
+     *   <li>ownerUserId > 0 → 해당 사용자로 배정</li>
+     *   <li>dueDate = null → 변경 안 함</li>
+     *   <li>dueDate = "" → 마감일 해제</li>
+     *   <li>dueDate = "2026-12-31" → 해당 날짜로 설정</li>
+     * </ul>
+     */
+    @Transactional
+    public void updateEvidenceType(Long evidenceTypeId, String name, String description,
+                                    Long ownerUserId, String dueDate) {
+        EvidenceType et = evidenceTypeRepository.findById(evidenceTypeId)
+                .orElseThrow(() -> new ResourceNotFoundException("증빙 유형", evidenceTypeId));
+ 
+        // 이름/설명 수정
+        et.update(name, description);
+ 
+        // 담당자 수정
+        if (ownerUserId != null) {
+            if (ownerUserId == 0L) {
+                et.assignOwner(null);  // 미배정
+            } else {
+                User owner = userRepository.findById(ownerUserId)
+                        .orElseThrow(() -> new ResourceNotFoundException("사용자", ownerUserId));
+                et.assignOwner(owner);
+            }
+        }
+ 
+        // 마감일 수정
+        if (dueDate != null) {
+            if (dueDate.isBlank()) {
+                et.updateDueDate(null);  // 마감일 해제
+            } else {
+                et.updateDueDate(java.time.LocalDate.parse(dueDate));
+            }
+        }
     }
 
     // ====================================================================

@@ -124,9 +124,24 @@ export const controlNodesApi = {
 // 후속 phase 에서 evidence-types CRUD 추가 시 본 객체에 자연 확장.
 // ========================================
 export const evidenceTypesApi = {
-  /** v14 Phase 5-14f — leaf 의 evidence_type 단건 삭제. v15.6 namespace 정리. */
+  /** v14 Phase 5-14f — 증빙 유형 단건 삭제. v15.6 namespace 정리. */
   delete(evidenceTypeId: number) {
     return api.delete(`/evidence-types/${evidenceTypeId}`)
+  },
+
+  /** v18 — 증빙 유형 생성 (특정 통제 노드에 추가). */
+  create(nodeId: number, name: string, description?: string) {
+    return api.post('/evidence-types', { nodeId, name, description })
+  },
+
+  /** v18 — 증빙 유형 수정 (이름/설명/담당자/마감일). */
+  update(evidenceTypeId: number, payload: {
+    name?: string
+    description?: string
+    ownerUserId?: number | null
+    dueDate?: string | null
+  }) {
+    return api.put(`/evidence-types/${evidenceTypeId}`, payload)
   },
 }
 
@@ -358,4 +373,3 @@ export const myTasksApi = {
     return api.get<ApiResponse<MyTaskDetail>>(`/my-tasks/${evidenceTypeId}`)
   },
 }
-

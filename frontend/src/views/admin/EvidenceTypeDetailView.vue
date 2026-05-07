@@ -27,7 +27,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { controlNodesApi, evidenceFilesApi, jobsApi } from '@/services/evidenceApi'
+import { controlNodesApi, evidenceFilesApi, evidenceTypesApi, jobsApi } from '@/services/evidenceApi'
 import type {
   ControlDetail,
   EvidenceTypeResponse,
@@ -156,6 +156,78 @@ function goBack() {
     name: 'framework-detail',
     params: { frameworkId: props.frameworkId },
   })
+}
+
+// ========================================
+// 증빙 유형 삭제 (v18)
+// ========================================
+const deleting = ref(false)
+
+async function handleDeleteEvidenceType() {
+  if (!evidenceType.value) return
+  const name = evidenceType.value.name
+  const fileCount = files.value.length
+  let msg = `"${name}" 증빙 유형을 삭제하시겠습니까?`
+  if (fileCount > 0) {
+    msg += `\n\n이 증빙 유형에 연결된 파일 ${fileCount}건도 함께 삭제됩니다.`
+  }
+  if (!confirm(msg)) return
+
+  deleting.value = true
+  try {
+    await evidenceTypesApi.delete(props.evidenceTypeId)
+    showToast(`"${name}" 증빙 유형이 삭제되었습니다.`, 'success')
+    setTimeout(() => goBack(), 800)
+  } catch (e: any) {
+    showToast(e?.response?.data?.message ?? '증빙 유형 삭제에 실패했습니다.', 'error')
+  } finally {
+    deleting.value = false
+  }
+}
+
+// ========================================
+// 증빙 유형 수정 (v18)
+// ========================================
+const editing = ref(false)
+const editForm = ref({ name: '', description: '', ownerUserId: null as number | null, dueDate: '' })
+const saving = ref(false)
+
+function startEdit() {
+  if (!evidenceType.value) return
+  editForm.value = {
+    name: evidenceType.value.name ?? '',
+    description: evidenceType.value.description ?? '',
+    ownerUserId: evidenceType.value.ownerUserId ?? null,
+    dueDate: evidenceType.value.dueDate ?? '',
+  }
+  editing.value = true
+}
+
+function cancelEdit() {
+  editing.value = false
+}
+
+async function saveEdit() {
+  if (!editForm.value.name.trim()) {
+    showToast('증빙 유형 이름은 필수입니다.', 'error')
+    return
+  }
+  saving.value = true
+  try {
+    await evidenceTypesApi.update(props.evidenceTypeId, {
+      name: editForm.value.name.trim(),
+      description: editForm.value.description.trim() || undefined,
+      ownerUserId: editForm.value.ownerUserId,
+      dueDate: editForm.value.dueDate || undefined,
+    })
+    showToast('증빙 유형이 수정되었습니다.', 'success')
+    editing.value = false
+    await loadAll()
+  } catch (e: any) {
+    showToast(e?.response?.data?.message ?? '수정에 실패했습니다.', 'error')
+  } finally {
+    saving.value = false
+  }
 }
 
 // ========================================
@@ -431,7 +503,7 @@ function executionDotCls(status?: string): string {
         @click="goBack"
         class="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 mb-3">
         <i class="pi pi-chevron-left text-[10px]"></i>
-        통제 항목 목록으로
+        관리 항목 목록으로
       </button>
 
       <!-- 헤더 (Phase 5-14g — ancestors 경로 추가, spec §3.4.0) -->
@@ -447,37 +519,113 @@ function executionDotCls(status?: string): string {
           <span class="text-gray-700 font-medium">{{ control.code }} {{ control.name }}</span>
         </div>
 
-        <h1 class="text-lg font-medium m-0">{{ evidenceType.name }}</h1>
-        <p v-if="evidenceType.description" class="text-xs text-gray-500 mt-1">
-          {{ evidenceType.description }}
-        </p>
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex-1 min-w-0">
+            <!-- 뷰 모드 -->
+            <template v-if="!editing">
+              <h1 class="text-lg font-medium m-0">{{ evidenceType.name }}</h1>
+              <p v-if="evidenceType.description" class="text-xs text-gray-500 mt-1">
+                {{ evidenceType.description }}
+              </p>
+            </template>
+            <!-- 편집 모드 -->
+            <template v-else>
+              <input
+                v-model="editForm.name"
+                class="w-full text-lg font-medium border border-gray-300 rounded-md px-3 py-1.5 outline-none focus:border-blue-500"
+                placeholder="증빙 유형 이름" />
+              <textarea
+                v-model="editForm.description"
+                rows="2"
+                class="w-full mt-2 text-xs text-gray-500 border border-gray-300 rounded-md px-3 py-2 outline-none focus:border-blue-500 resize-none"
+                placeholder="설명 (선택)"></textarea>
+            </template>
+          </div>
+          <!-- v18: 증빙 유형 관리 액션 -->
+          <div class="flex items-center gap-2 shrink-0">
+            <template v-if="!editing">
+              <button
+                @click="startEdit"
+                class="h-8 px-3 text-xs border border-gray-200 bg-white rounded-md text-gray-600 hover:bg-gray-50 inline-flex items-center gap-1.5"
+                title="증빙 유형 수정">
+                <i class="pi pi-pencil text-[10px]"></i>
+                수정
+              </button>
+              <button
+                @click="handleDeleteEvidenceType"
+                :disabled="deleting"
+                class="h-8 px-3 text-xs border border-gray-200 bg-white rounded-md text-gray-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1.5 transition-colors"
+                title="증빙 유형 삭제">
+                <i :class="['pi text-[10px]', deleting ? 'pi-spin pi-spinner' : 'pi-trash']"></i>
+                삭제
+              </button>
+            </template>
+            <template v-else>
+              <button
+                @click="cancelEdit"
+                :disabled="saving"
+                class="h-8 px-3 text-xs border border-gray-200 bg-white rounded-md text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                취소
+              </button>
+              <button
+                @click="saveEdit"
+                :disabled="saving || !editForm.name.trim()"
+                class="h-8 px-3 text-xs bg-gray-900 text-white rounded-md hover:bg-gray-800 disabled:opacity-50 inline-flex items-center gap-1.5">
+                <i v-if="saving" class="pi pi-spin pi-spinner text-[10px]"></i>
+                저장
+              </button>
+            </template>
+          </div>
+        </div>
       </div>
 
       <!-- 메타 2-col 카드 -->
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 py-4">
         <div class="bg-gray-50 rounded-md p-3">
           <div class="text-[11px] text-gray-400 mb-1">담당자</div>
-          <div class="text-sm font-medium">
-            {{ ownerName }}
-            <span v-if="ownerTeam" class="text-[11px] text-gray-400 font-normal">· {{ ownerTeam }}</span>
-          </div>
+          <template v-if="!editing">
+            <div class="text-sm font-medium">
+              {{ ownerName }}
+              <span v-if="ownerTeam" class="text-[11px] text-gray-400 font-normal">· {{ ownerTeam }}</span>
+            </div>
+          </template>
+          <template v-else>
+            <input
+              v-model.number="editForm.ownerUserId"
+              type="number"
+              min="0"
+              class="w-full text-sm border border-gray-300 rounded-md px-2 py-1 outline-none focus:border-blue-500"
+              placeholder="사용자 ID (0 = 미배정)" />
+            <p class="text-[10px] text-gray-400 mt-1">담당자 사용자 ID를 입력하세요. 0이면 미배정.</p>
+          </template>
         </div>
         <div class="bg-gray-50 rounded-md p-3">
-          <div class="text-[11px] text-gray-400 mb-1">최신 파일</div>
-          <div v-if="latestFile" class="text-sm font-medium flex items-center gap-1.5 flex-wrap">
-            <span>v{{ latestFile.version }}</span>
-            <span class="text-[11px] text-gray-400 font-normal">
-              · {{ formatDate(latestFile.collectedAt) }}
-              · {{ methodLabel(latestFile.collectionMethod) }}
-            </span>
-            <span
-              v-if="reviewStatusBadge(latestFile.reviewStatus)"
-              class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded"
-              :class="reviewStatusBadge(latestFile.reviewStatus)!.cls">
-              {{ reviewStatusBadge(latestFile.reviewStatus)!.label }}
-            </span>
+          <div class="text-[11px] text-gray-400 mb-1">
+            {{ editing ? '마감일' : '최신 파일' }}
           </div>
-          <div v-else class="text-sm text-gray-400">아직 파일이 없습니다</div>
+          <template v-if="!editing">
+            <div v-if="latestFile" class="text-sm font-medium flex items-center gap-1.5 flex-wrap">
+              <span>v{{ latestFile.version }}</span>
+              <span class="text-[11px] text-gray-400 font-normal">
+                · {{ formatDate(latestFile.collectedAt) }}
+                · {{ methodLabel(latestFile.collectionMethod) }}
+              </span>
+              <span
+                v-if="reviewStatusBadge(latestFile.reviewStatus)"
+                class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded"
+                :class="reviewStatusBadge(latestFile.reviewStatus)!.cls">
+                {{ reviewStatusBadge(latestFile.reviewStatus)!.label }}
+              </span>
+            </div>
+            <div v-else class="text-sm text-gray-400">아직 파일이 없습니다</div>
+          </template>
+          <template v-else>
+            <input
+              v-model="editForm.dueDate"
+              type="date"
+              class="w-full text-sm border border-gray-300 rounded-md px-2 py-1 outline-none focus:border-blue-500" />
+            <p class="text-[10px] text-gray-400 mt-1">비워두면 마감일 없음</p>
+          </template>
         </div>
       </div>
 
@@ -814,7 +962,7 @@ function executionDotCls(status?: string): string {
       <i class="pi pi-exclamation-circle text-3xl text-gray-300 mb-2"></i>
       <p class="text-sm text-gray-500">증빙 유형을 찾을 수 없습니다.</p>
       <button @click="goBack" class="mt-3 text-sm text-blue-600 hover:underline">
-        통제 항목 목록으로 돌아가기
+        관리 항목 목록으로 돌아가기
       </button>
     </div>
 
