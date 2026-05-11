@@ -9,52 +9,78 @@ import com.secuhub.domain.user.entity.UserRole;
 import com.secuhub.domain.user.repository.UserRepository;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.WebApplicationContext;
 
 import java.time.LocalDateTime;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
  * Phase v16.4a — 관리자 대시보드 위젯 (BE) 통합 테스트.
  *
- * <h3>v18.3 — 임시 @Disabled 처리 (별도 phase 분리)</h3>
- * <p><b>본 클래스 6 케이스 모두 v18.3 환경에서 500 fail.</b> v18.3 phase 본질 (entity
- * @OnDelete + TreeUpdateService cascade delete) 와 무관한 dashboard 의 별도 회귀가
- * v18.3 진입 시점에 발현. v16.4a (DashboardTest 5 신규) + v16.4b-fix (Order=6 추가, 6 green)
- * 통과는 false positive 였음 — 어떤 환경 우연으로 통과했지만 v18.3 환경 변화로 회귀 표면화.</p>
+ * <h3>v18.4 — Dashboard 정공 진단 + 회귀 fix 완료 (가설 A 확정)</h3>
+ * <p>v18.3 시점 {@code @Disabled} 처리됐던 6 케이스 모두 정공 fix 후 active green.
+ * v18.3 의 1차 원인 진단 ("SecurityConfig dashboard URL 매핑 부재") 은 SecurityConfig 에
+ * {@code /api/v1/dashboard/**.hasRole("ADMIN")} 추가로 운영 환경 안전망 확보 (v18.3 commit
+ * 보존). 그러나 본 테스트 환경 (MockMvc) 의 회귀 원인은 그것이 아니라 본 클래스의
+ * <b>MockMvc 빌드 패턴</b>이었음.</p>
  *
- * <h3>v18.3 시점 진단 결과</h3>
- * <ul>
- *   <li><b>증상</b>: 6 케이스 모두 500 응답. testUnauthorized 의 stack trace 명확:
- *       {@code AuthenticationCredentialsNotFoundException at @PreAuthorize evaluation} →
- *       GlobalExceptionHandler 의 catch-all 핸들러가 500 매핑.</li>
- *   <li><b>1차 원인</b>: SecurityConfig 에 {@code /api/v1/dashboard/**} URL 매핑 부재
- *       (다른 9 controller 는 모두 URL 매핑 명시). fallback {@code .anyRequest().authenticated()}
- *       이 anonymous 요청을 method 레벨 {@code @PreAuthorize} 평가까지 도달시켜 위 exception 발생.</li>
- *   <li><b>2차 원인 가능성</b>: SecurityConfig 의 dashboard 매핑 추가 ({@code /api/v1/dashboard/**}.hasRole("ADMIN"))
- *       후에도 같은 결과 — 빌드 캐시 또는 다른 더 깊은 issue (별도 phase 에서 정공 진단).</li>
- * </ul>
+ * <h3>가설 A — MockMvc 빌드 패턴 outlier (v18.4 확정)</h3>
+ * <p>본 프로젝트의 다른 통합 테스트 (TreeUpdateTest / EvidencePermissionTest / MyTasksTest /
+ * Phase514fIntegrationTest / Phase514gBackendTest 등) 는 모두 다음 표준 패턴 사용:</p>
+ * <pre>
+ *   {@literal @}SpringBootTest
+ *   {@literal @}ActiveProfiles("test")
+ *   {@literal @}AutoConfigureMockMvc          ← Spring Boot 가 SpringSecurityFilterChain 자동 wiring
+ *   class XxxTest {
+ *       {@literal @}Autowired private MockMvc mockMvc;
+ * </pre>
  *
- * <h3>v18.3 결정 (Q1=Disabled 분리)</h3>
- * <p>v18.3 의 본질은 entity {@code @OnDelete(CASCADE)} 3 추가 + TreeUpdateService 의 native
- * SQL DELETE 단순화 + TreeUpdateTest 회귀 보호 +3. dashboard 회귀는 v18.3 진입 직전 (v16.4a/b/fix)
- * 의 잠재 버그이며, 본 phase 의 cascade delete 변경과 무관. 다음 sub-phase 또는 별도 phase 에서
- * 다음 시도 권장:</p>
+ * <p>v18.3 시점 본 클래스는 유일한 outlier 였음:</p>
+ * <pre>
+ *   {@literal @}SpringBootTest
+ *   {@literal @}ActiveProfiles("test")
+ *   // {@literal @}AutoConfigureMockMvc 없음                    ← 회귀 원인
+ *   class DashboardTest {
+ *       {@literal @}Autowired private WebApplicationContext context;
+ *       private MockMvc mockMvc;
+ *       {@literal @}BeforeEach void setUp() {
+ *           mockMvc = MockMvcBuilders.webAppContextSetup(context).build();  // ← 필터 chain 자동 attach 안 됨
+ *       }
+ * </pre>
+ *
+ * <p><b>회귀 메커니즘</b>: {@code webAppContextSetup(context).build()} 는 기본적으로
+ * SpringSecurityFilterChain 을 자동 적용하지 않음 ({@code apply(springSecurity())} 명시 필요).
+ * 결과적으로 anonymous 요청이 URL 레벨 hasRole 매핑을 건너뛰고 controller method 레벨
+ * {@code @PreAuthorize} 평가까지 도달 → SecurityContext 가 비어있는 anonymous 상태에서
+ * {@code AuthenticationCredentialsNotFoundException} throw → {@code GlobalExceptionHandler}
+ * 의 catch-all 핸들러가 500 매핑. 6 케이스 모두 같은 경로로 500.</p>
+ *
+ * <h3>v18.4 정공 fix</h3>
+ * <ol>
+ *   <li>클래스 어노테이션에 {@code @AutoConfigureMockMvc} 추가 → SpringBootTest 가 MockMvc 빈을
+ *       자동 wiring, SpringSecurityFilterChain 자동 attach.</li>
+ *   <li>{@code @Autowired private WebApplicationContext context;} 필드 제거.</li>
+ *   <li>{@code private MockMvc mockMvc;} → {@code @Autowired private MockMvc mockMvc;} 로 전환.</li>
+ *   <li>{@code @BeforeEach setUp} 의 첫 줄 (수동 MockMvc 빌드) 제거. cleanup 로직만 보존.</li>
+ *   <li>{@code @Disabled} 어노테이션 제거 — 6 케이스 모두 active 로 복원.</li>
+ *   <li>관련 import 정리: {@code MockMvcBuilders} / {@code WebApplicationContext} 제거,
+ *       {@code AutoConfigureMockMvc} 추가.</li>
+ * </ol>
+ *
+ * <h3>v18.4 후속 진단 단계 (가설 A 가 맞으므로 미실행)</h3>
+ * <p>다음 단계는 가설 A 가 어긋난 경우 진입 예정이었음 — v18.4 에서 가설 A 단독으로 6 케이스
+ * 모두 green 회복 시 미실행 (v18.3 commit 본질 보존):</p>
  * <ul>
  *   <li>gradle daemon 재시작 + build/.gradle 캐시 강제 삭제 후 재빌드</li>
- *   <li>{@code DashboardTest} 에 {@code .andDo(print())} 추가하여 정확한 backend exception 노출</li>
- *   <li>SecurityConfig 의 dashboard 매핑이 작동하는지 정공 검증 (다른 endpoint 와 비교)</li>
- *   <li>{@code @AutoConfigureMockMvc} 명시 추가하여 SpringSecurityFilterChain 정합 보장 검토</li>
+ *   <li>{@code .andDo(print())} 추가하여 backend exception stack trace 노출</li>
  * </ul>
  *
- * <h3>아래 6 케이스의 원본 의도 (재사용 위해 보존)</h3>
+ * <h3>아래 6 케이스 의도 (v16.4a 시점 원본 보존)</h3>
  *
  * <p>spec §3.8 정합. 본 테스트는 다음 6 경로 검증:</p>
  *
@@ -69,9 +95,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *       명시 회귀</li>
  * </ol>
  *
- * <h3>v18.3 회귀 fix 사후 보존 (다음 phase 에서 재활용)</h3>
- * <p>본 클래스의 setUp 패턴이 v18.3 fix 작업 시점에 다음과 같이 갱신됨 — 다음 phase 진입 시
- * 활용 가능:</p>
+ * <h3>setUp 패턴 의도 보존 (v18.3 회귀 fix 사후 보존)</h3>
+ * <p>본 클래스의 setUp 패턴은 v18.3 fix 작업 시점에 갱신됨 — v18.4 에서도 그대로 보존:</p>
  * <ul>
  *   <li>{@code @BeforeAll setUpAll} → {@code @BeforeEach setUp} 으로 통합. 다른 테스트 클래스의
  *       {@code userRepository.deleteAll()} leftover 격리 (테스트 클래스 실행 순서 무관 보장).</li>
@@ -92,14 +117,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@AutoConfigureMockMvc
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-@Disabled("v18.3 — dashboard 회귀 별도 phase 분리. v16.4a/b-fix 시점 6 green 은 false positive. " +
-        "v18.3 환경에서 모든 케이스 500 (1차 원인: SecurityConfig dashboard URL 매핑 부재, 2차 원인 별도 진단 필요). " +
-        "v18.3 본질 (entity @OnDelete + TreeUpdateService cascade delete) 과 무관하므로 분리.")
 @DisplayName("Phase v16.4a — 관리자 대시보드 위젯 (BE)")
 class DashboardTest {
 
-    @Autowired private WebApplicationContext context;
+    @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JwtTokenProvider jwtTokenProvider;
 
@@ -109,7 +132,6 @@ class DashboardTest {
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
 
-    private MockMvc mockMvc;
     private String adminToken;
     private String developerToken;
     private User adminUser;
@@ -117,13 +139,14 @@ class DashboardTest {
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
-
-        // v18.3 회귀 fix — user 도 cleanup 후 매 케이스 재생성.
+        // v18.3 회귀 fix 보존 — user 도 cleanup 후 매 케이스 재생성.
         // 이전 @BeforeAll setUpAll + @BeforeEach cleanData (evidence/control/framework 만)
         // 패턴은 다른 테스트 클래스의 userRepository.deleteAll() leftover 영향 (테스트
         // 클래스 실행 순서에 의존). v18.3 cleanup 패턴 변경 후 재현 확인되어 패턴 정합:
         // 매 케이스 격리 (다른 테스트 클래스 leftover 무관 보장).
+        //
+        // v18.4: MockMvc 수동 빌드 라인 제거 (가설 A fix). @Autowired MockMvc 가
+        // @AutoConfigureMockMvc 어노테이션 효과로 SpringSecurityFilterChain 자동 attach.
         evidenceFileRepository.deleteAllInBatch();
         evidenceTypeRepository.deleteAllInBatch();
         controlNodeRepository.deleteAllInBatch();
