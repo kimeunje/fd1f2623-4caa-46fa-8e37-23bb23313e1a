@@ -8,16 +8,16 @@
  *
  * 계층 시각 체계:
  *   - 상위 컨텍스트 (SecuHub, 증빙 수집, 시스템 …)  : text-xs text-gray-400
- *   - 중간 링크 (통제 항목, 통제 코드+이름 …)       : text-sm text-gray-600 hover:text-gray-900
+ *   - 중간 링크 (관리 항목, 통제 코드+이름 …)       : text-sm text-gray-600 hover:text-gray-900
  *   - 드롭다운 (Framework 전환)                    : text-sm + chevron
  *   - 현재 페이지                                  : text-sm text-gray-900 font-medium
  *
  * 라우트별 계층:
  *   - dashboard              : SecuHub · 대시보드
- *   - framework-list         : SecuHub · 증빙 수집 · 통제 항목
- *   - framework-create-wizard: SecuHub · 증빙 수집 · 통제 항목 · 새 Framework
- *   - framework-detail       : SecuHub · 증빙 수집 · 통제 항목 · [FW ▾]
- *   - evidence-type-detail   : SecuHub · 증빙 수집 · 통제 항목 · [FW ▾] · 통제 · 증빙 유형
+ *   - framework-list         : SecuHub · 증빙 수집 · 관리 항목
+ *   - framework-create-wizard: SecuHub · 증빙 수집 · 관리 항목 · 새 Framework
+ *   - framework-detail       : SecuHub · 증빙 수집 · 관리 항목 · [FW ▾]
+ *   - evidence-type-detail   : SecuHub · 증빙 수집 · 관리 항목 · [FW ▾] · 통제 · 증빙 유형
  *   - jobs                   : SecuHub · 증빙 수집 · 수집 작업
  *   - files                  : SecuHub · 증빙 수집 · 증빙 파일
  *   - accounts               : SecuHub · 시스템 · 계정 관리
@@ -175,14 +175,14 @@ const crumbs = computed<Crumb[]>(() => {
 
     case 'framework-list':
       out.push({ key: 'section', text: '증빙 수집', muted: true })
-      out.push({ key: 'current', text: '통제 항목', current: true })
+      out.push({ key: 'current', text: '관리 항목', current: true })
       break
 
     case 'framework-create-wizard':
       out.push({ key: 'section', text: '증빙 수집', muted: true })
       out.push({
         key: 'controls',
-        text: '통제 항목',
+        text: '관리 항목',
         onClick: () => router.push({ name: 'framework-list' }),
       })
       out.push({ key: 'current', text: '새 Framework', current: true })
@@ -192,7 +192,7 @@ const crumbs = computed<Crumb[]>(() => {
       out.push({ key: 'section', text: '증빙 수집', muted: true })
       out.push({
         key: 'controls',
-        text: '통제 항목',
+        text: '관리 항목',
         onClick: () => router.push({ name: 'framework-list' }),
       })
       out.push({
@@ -207,7 +207,7 @@ const crumbs = computed<Crumb[]>(() => {
       out.push({ key: 'section', text: '증빙 수집', muted: true })
       out.push({
         key: 'controls',
-        text: '통제 항목',
+        text: '관리 항목',
         onClick: () => router.push({ name: 'framework-list' }),
       })
       out.push({

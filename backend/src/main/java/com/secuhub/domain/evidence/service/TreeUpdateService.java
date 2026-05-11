@@ -194,27 +194,111 @@ public class TreeUpdateService {
         }
 
         // -----------------------------------------------------------
-        // 9. DELETE (deleted) — DB ON DELETE CASCADE 가 자손 + evidence_types 정리
+        // 9. DELETE (deleted) — native SQL + DB ON DELETE CASCADE 우회
+        //
+        // v18.2 fix-2 — 옵션 A (entityManager.remove + flush) 도 silent skip 확인.
+        // Hibernate 6 의 cascade graph 처리가 자손 collection 이 lazy load 된 상태에서
+        // 모호함으로 silent skip 하는 패턴이 deleteById / em.remove 동일하게 발생.
+        // Native SQL DELETE 로 Hibernate persistence context 전체를 우회.
+        //
+        // DB FK 의 ON DELETE CASCADE (ControlNode 엔티티의 @OnDelete(CASCADE) +
+        // V6 마이그레이션에서 적용) 가 자손 control_nodes + evidence_types +
+        // evidence_files 일괄 처리. ControlNodeSchemaTest.testCascadeOnParentDelete 에서
+        // native DELETE → 자손 자동 삭제 검증 완료된 패턴 재사용.
+        //
+        // 처리 순서 (deleted 있을 때):
+        //   (1) created/updated/moved + fw.touchVersion 먼저 commit (clear 전 마지막 기회)
+        //   (2) native DELETE 발행 (각 id 마다 1회, DB CASCADE 가 자손 처리)
+        //   (3) entityManager.clear() — stale persistence context 무효화
+        //         (자손/evidence_types/files 는 DB 에서 사라졌지만 JPA cache 에 잔존)
+        //
+        // touchVersion 은 clear 전에 완료되어야 함 (clear 후 fw 도 detach 됨).
+        // step 11 의 fw.getVersion() 은 단순 필드 접근으로 detach 상태에서도 정상 동작.
         // -----------------------------------------------------------
-        for (TreeUpdateDto.DeletedNode d : deleted) {
-            controlNodeRepository.deleteById(d.getId());
-        }
+        if (!deleted.isEmpty()) {
+            // (1) 다른 변경 + fw version touch 먼저 commit
+            fw.touchVersion();
+            entityManager.flush();
 
-        // -----------------------------------------------------------
-        // 10. Framework.@Version 강제 증가
-        //
-        // children (control_nodes) 변경만으로는 Hibernate dirty-checking 이
-        // Framework 의 @Version 을 자동 증가시키지 않으므로, 명시적으로 처리.
-        //
-        // touchVersion() 이 @Version 필드를 직접 +1 → dirty 마킹 → flush 시
-        // UPDATE frameworks SET version = ? WHERE id = ? AND version = ?
-        // SQL 발행. Optimistic lock 검증 + entity version 갱신 동시 처리.
-        //
-        // 이 패턴이 entityManager.lock(OPTIMISTIC_FORCE_INCREMENT) 의
-        // Hibernate 6 commit-시점 동작 의존성을 회피한다.
-        // -----------------------------------------------------------
-        fw.touchVersion();
-        entityManager.flush();
+            // (2) 삭제할 노드 + 자손 모든 ID 수집 (in-memory walk)
+            //
+            // v18.2 fix-3 발견 — evidence_types.control_id FK 가 ON DELETE RESTRICT (CASCADE 아님).
+            // EvidenceType 엔티티의 @JoinColumn 에 @OnDelete 루락 → default RESTRICT.
+            // spec 의 "ON DELETE CASCADE 가 evidence_types 까지 자동 삭제" 명기와 실 스키마 mismatch.
+            // 정공 fix 는 Flyway 로 FK 변경 (v18.3 또는 v19) → 일단 추가 fix 는
+            // 자손 포함 evidence_files + evidence_types 를 사전에 명시 삭제.
+            //
+            // 자손 control_nodes 자신의 삭제는 self-FK (parent_id) 의 ON DELETE CASCADE 로 처리됨.
+            //
+            // existingNodes 의 ControlNode 는 이미 children 컬렉션이 lazy load 된 상태 (위 검증 단계에서
+            // 발화) → in-memory walk 으로 자손 수집 가능.
+            Set<Long> allDeletedIds = new HashSet<>();
+            for (TreeUpdateDto.DeletedNode d : deleted) {
+                ControlNode node = existingNodes.get(d.getId());
+                if (node != null) {
+                    collectNodeAndDescendantIds(node, allDeletedIds);
+                }
+            }
+
+            // (3) evidence_files 삭제 (evidence_types 통해 연결)
+            // (4) collection_jobs 삭제 (v18.2 fix-3 추가 발견 — collection_jobs.evidence_type_id FK 도 RESTRICT)
+            // (5) evidence_types 삭제 (위 둘 FK 먼저 제거 후)
+            //
+            // 향후 FK 위반이 또 나오면 같은 패턴으로 한 줄 씩 추가. 정공 fix 는 v18.3:
+            // Flyway 로 FK 들을 ON DELETE CASCADE 로 ALTER + Entity @OnDelete 개선.
+            if (!allDeletedIds.isEmpty()) {
+                // (a) evidence_files 삭제 (evidence_types 통해 연결)
+                entityManager.createNativeQuery(
+                        "DELETE FROM evidence_files WHERE evidence_type_id IN " +
+                        "(SELECT id FROM evidence_types WHERE control_id IN (:nodeIds))")
+                        .setParameter("nodeIds", allDeletedIds)
+                        .executeUpdate();
+
+                // (b) job_executions 삭제 (v18.2 fix-4 추가 발견 — collection_jobs 삭제 전 선행)
+                //     job_executions.job_id FK 도 RESTRICT (JobExecution.job 의 @OnDelete 루락)
+                entityManager.createNativeQuery(
+                        "DELETE FROM job_executions WHERE job_id IN " +
+                        "(SELECT id FROM collection_jobs WHERE evidence_type_id IN " +
+                        "(SELECT id FROM evidence_types WHERE control_id IN (:nodeIds)))")
+                        .setParameter("nodeIds", allDeletedIds)
+                        .executeUpdate();
+
+                // (c) collection_jobs 삭제
+                entityManager.createNativeQuery(
+                        "DELETE FROM collection_jobs WHERE evidence_type_id IN " +
+                        "(SELECT id FROM evidence_types WHERE control_id IN (:nodeIds))")
+                        .setParameter("nodeIds", allDeletedIds)
+                        .executeUpdate();
+
+                // (d) evidence_types 삭제
+                entityManager.createNativeQuery(
+                        "DELETE FROM evidence_types WHERE control_id IN (:nodeIds)")
+                        .setParameter("nodeIds", allDeletedIds)
+                        .executeUpdate();
+            }
+
+            // (5) control_nodes 삭제 (부모만 호출, self-FK CASCADE 가 자손 처리)
+            for (TreeUpdateDto.DeletedNode d : deleted) {
+                entityManager.createNativeQuery(
+                        "DELETE FROM control_nodes WHERE id = :id")
+                        .setParameter("id", d.getId())
+                        .executeUpdate();
+            }
+
+            // (6) stale persistence context 무효화
+            entityManager.clear();
+        } else {
+            // -----------------------------------------------------------
+            // 10. Framework.@Version 강제 증가 (deleted 없는 평소 흐름)
+            //
+            // children (control_nodes) 변경만으로는 Hibernate dirty-checking 이
+            // Framework 의 @Version 을 자동 증가시키지 않으므로 명시적 처리.
+            // touchVersion() 이 @Version 필드를 직접 +1 → dirty 마킹 → flush 시
+            // UPDATE frameworks SET version = ? WHERE id = ? AND version = ? SQL 발행.
+            // -----------------------------------------------------------
+            fw.touchVersion();
+            entityManager.flush();
+        }
 
         // -----------------------------------------------------------
         // 11. Response
@@ -635,5 +719,18 @@ public class TreeUpdateService {
                 .target("node").targetId(id)
                 .field(field).code(code).message(message)
                 .build();
+    }
+
+    /**
+     * v18.2 fix-3 helper — 자손 포함 모든 ControlNode ID 재귀 수집.
+     *
+     * <p>evidence_files / evidence_types 사전 삭제에 필요. existingNodes 의 ControlNode 는 children 이
+     * lazy load 된 상태 → in-memory 재귀로 자손 ID 전체 수집 가능.</p>
+     */
+    private static void collectNodeAndDescendantIds(ControlNode node, Set<Long> result) {
+        result.add(node.getId());
+        for (ControlNode child : node.getChildren()) {
+            collectNodeAndDescendantIds(child, result);
+        }
     }
 }

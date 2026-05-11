@@ -2,6 +2,8 @@ package com.secuhub.domain.evidence.entity;
 
 import com.secuhub.common.BaseEntity;
 import jakarta.persistence.*;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import lombok.*;
 
 import java.util.ArrayList;
@@ -34,6 +36,7 @@ public class CollectionJob extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "evidence_type_id")
+    @OnDelete(action = OnDeleteAction.CASCADE)
     private EvidenceType evidenceType;
 
     @Column(name = "schedule_cron", length = 100)

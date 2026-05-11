@@ -356,14 +356,6 @@ const dialogExpanded = computed<boolean>(() => {
   return tree.dialogIsExpanded(dialogNode.value)
 })
 
-// v15.1 5-15a 후속-2 — hybrid: leaf 도 자식 보유 가능. chev 노출 + 자식 재귀 가드.
-const leafDialogHasChildren = computed<boolean>(() => {
-  if (props.mode !== 'dialog') return false
-  if (props.node.nodeType !== 'control') return false
-  const n = props.node as UnifiedNode
-  return (n.children?.length ?? 0) > 0
-})
-
 function dialogHandleToggle(): void {
   if (!tree || !dialogNode.value) return
   tree.dialogToggleExpand(dialogNode.value)
@@ -403,53 +395,6 @@ function dialogHandleCodeBlur(): void {
     oldCode: lastSeenCode.value,
     newCode: dialogNode.value.code,
   })
-}
-
-// ─── 키보드 단축키 (메서드 추출 — Vue 3.5 SFC 학습) ───
-async function dialogHandleEnterKey(): Promise<void> {
-  if (!tree || !dialogNode.value) return
-  if (dialogNode.value.nodeType === 'category') {
-    const draft = tree.createChildControl(dialogNode.value)
-    await nextTick()
-    focusDraftByTempId(draft.tempId)
-  } else {
-    const draft = tree.createSiblingControl(dialogNode.value)
-    if (draft) {
-      await nextTick()
-      focusDraftByTempId(draft.tempId)
-    }
-  }
-}
-
-async function dialogHandleTabKey(e: KeyboardEvent): Promise<void> {
-  if (!tree || !dialogNode.value) return
-  e.preventDefault()
-  // hybrid Tab — existing/draft + leaf/category 구분 없이 자식 통제 draft 추가.
-  try {
-    const childDraft = tree.createChildControl(dialogNode.value)
-    await nextTick()
-    focusDraftByTempId(childDraft.tempId)
-  } catch (err) {
-    console.warn('[ControlNodeRow] Tab createChildControl failed', err)
-  }
-}
-
-function dialogHandleEscKey(): void {
-  if (!tree || !dialogNode.value) return
-  if (dialogNode.value._kind === 'draft') {
-    tree.deleteNode(dialogNode.value)
-  }
-}
-
-function dialogHandleBackspaceKey(e: KeyboardEvent): void {
-  if (!tree || !dialogNode.value) return
-  if (dialogNode.value._kind !== 'draft') return
-  const target = e.target as HTMLInputElement
-  if (target.value !== '') return
-  if (target === nameInputRef.value && codeInputRef.value && codeInputRef.value.value === '') {
-    e.preventDefault()
-    tree.deleteNode(dialogNode.value)
-  }
 }
 
 function focusDraftByTempId(tempId: string): void {

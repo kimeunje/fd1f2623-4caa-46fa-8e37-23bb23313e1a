@@ -346,8 +346,8 @@ function setupSearchHook() {
 // reload() 호출) 이므로 별도 호출 불요.
 function onUnifiedSaved(payload: { newVersion: number; createdCount: number }) {
   const msg = payload.createdCount > 0
-    ? `저장되었습니다. (신규 ${payload.createdCount}개, v${payload.newVersion})`
-    : `저장되었습니다. (v${payload.newVersion})`
+    ? `저장되었습니다. (신규 ${payload.createdCount}개)`
+    : `저장되었습니다.`
   showToast(msg, 'success')
 }
 

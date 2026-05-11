@@ -3,6 +3,8 @@ package com.secuhub.domain.evidence.entity;
 import com.secuhub.common.BaseEntity;
 import com.secuhub.domain.user.entity.User;
 import jakarta.persistence.*;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import lombok.*;
 
 import java.time.LocalDate;
@@ -68,6 +70,7 @@ public class EvidenceType extends BaseEntity {
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "control_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     private ControlNode controlNode;
 
     @Column(nullable = false, length = 300)

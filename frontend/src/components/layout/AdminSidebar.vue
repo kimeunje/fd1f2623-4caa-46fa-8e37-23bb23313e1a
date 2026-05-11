@@ -26,7 +26,7 @@ function navigate(routeName: string) {
  * 메뉴 활성 여부 판정.
  *
  * v11 Phase 5-3:
- * - "통제 항목" 메뉴는 /controls (framework-list) 와 /controls/:id (framework-detail)
+ * - "관리 항목" 메뉴는 /controls (framework-list) 와 /controls/:id (framework-detail)
  *   둘 다 활성으로 표시하기 위해 route.path 기반으로 판정.
  */
 function isActive(routeName: string) {
@@ -49,7 +49,7 @@ const menuGroups = [
     label: '증빙 수집',
     items: [
       // v11 Phase 5-3: 'controls' → 'framework-list' (진입 페이지)
-      { routeName: 'framework-list', icon: 'pi-list', label: '통제 항목' },
+      { routeName: 'framework-list', icon: 'pi-list', label: '관리 항목' },
       { routeName: 'jobs', icon: 'pi-play', label: '수집 작업' },
       { routeName: 'files', icon: 'pi-folder', label: '증빙 파일' },
     ],
