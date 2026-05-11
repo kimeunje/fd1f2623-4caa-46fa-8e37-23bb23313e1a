@@ -3,12 +3,21 @@ package com.secuhub.domain.evidence.entity;
 import com.secuhub.common.BaseEntity;
 import com.secuhub.domain.user.entity.User;
 import jakarta.persistence.*;
+import lombok.*;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
-import lombok.*;
 
 import java.time.LocalDateTime;
 
+/**
+ * 증빙 파일 (Evidence File) 엔티티.
+ *
+ * <h3>v18.3 — {@code @OnDelete(CASCADE)} 추가 (L_SPEC_SCHEMA_MISMATCH 종결)</h3>
+ * <p>EvidenceType 의 {@code @OneToMany(cascade=ALL, orphanRemoval=true)} 는 Hibernate
+ * 레벨 매핑이고, DB FK 자체는 default RESTRICT 였음 (v18.2 부산 발견). Hibernate
+ * cascade graph 가 silent skip 되는 사례 (L_HIBERNATE_CASCADE_SILENT) 에서는 DB FK
+ * 가 정공 — native SQL DELETE 가 cascade chain 처리.</p>
+ */
 @Entity
 @Table(name = "evidence_files", indexes = {
         @Index(name = "idx_evidence_files_review_status", columnList = "review_status"),
@@ -25,6 +34,10 @@ public class EvidenceFile extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /**
+     * v18.3 — {@code @OnDelete(CASCADE)} 추가.
+     * EvidenceType 삭제 시 매달린 EvidenceFile 도 자동 삭제.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "evidence_type_id", nullable = false)
     @OnDelete(action = OnDeleteAction.CASCADE)

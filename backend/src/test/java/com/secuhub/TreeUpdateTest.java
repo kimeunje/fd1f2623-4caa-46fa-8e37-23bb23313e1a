@@ -2,10 +2,19 @@ package com.secuhub;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.secuhub.config.jwt.JwtTokenProvider;
+import com.secuhub.domain.evidence.entity.CollectionJob;
+import com.secuhub.domain.evidence.entity.CollectionMethod;
 import com.secuhub.domain.evidence.entity.ControlNode;
+import com.secuhub.domain.evidence.entity.EvidenceFile;
+import com.secuhub.domain.evidence.entity.EvidenceType;
 import com.secuhub.domain.evidence.entity.Framework;
+import com.secuhub.domain.evidence.entity.JobType;
 import com.secuhub.domain.evidence.entity.NodeType;
+import com.secuhub.domain.evidence.entity.ReviewStatus;
+import com.secuhub.domain.evidence.repository.CollectionJobRepository;
 import com.secuhub.domain.evidence.repository.ControlNodeRepository;
+import com.secuhub.domain.evidence.repository.EvidenceFileRepository;
+import com.secuhub.domain.evidence.repository.EvidenceTypeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
 import com.secuhub.domain.user.entity.User;
 import com.secuhub.domain.user.entity.UserRole;
@@ -22,6 +31,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -39,17 +49,27 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code Phase515aHybridIntegrationTest.testMoveNodeUnderLeaf} (Order=4) 가 inverted
  * version 으로 커버 (이전 422 → 이제 200 기대).</p>
  *
- * <h3>7 케이스 (5-15a 후 8 → 7, spec §3.3.1.4 의 12 검증 규칙 중 10개 + 응답 shape)</h3>
+ * <h3>v18.3 — 회귀 보호 3 케이스 추가 (Order=9/10/11)</h3>
+ * <p>v18.2 silent skip 시나리오 의 정공 fix (V_v18_3 Flyway + entity
+ * {@code @OnDelete(CASCADE)} 3 추가) 회귀 차단. testCascadingDelete (Order=4, 단순
+ * graph) 의 한계 — evidence_types / collection_jobs / evidence_files 매달림 부재 —
+ * 를 본 3 케이스가 확장 커버. {@code @BeforeEach cleanup} 에 evidence_files /
+ * collection_jobs DELETE 추가.</p>
+ *
+ * <h3>10 케이스 (v18.3 시점: 7 + 3, spec §3.3.1.4 의 12 검증 규칙 중 10개 + 응답 shape + cascade chain)</h3>
  * <ol>
  *   <li>{@link #testHappyPath} — created 2 + updated 1 + moved 1 + deleted 1 → 200, version+1</li>
  *   <li>{@link #testVersionMismatch_409} — expectedVersion 불일치 → 409 currentVersion 노출</li>
  *   <li>{@link #testValidationFailed_422_multipleDetails} — code 중복 + max_depth → 422 details 2개</li>
- *   <li>{@link #testCascadingDelete} — category 삭제 → 자손 leaf 자동 삭제 (DB CASCADE)</li>
+ *   <li>{@link #testCascadingDelete} — category 삭제 → 자손 leaf 자동 삭제 (DB CASCADE, 단순 graph)</li>
  *   <li>{@link #testTempIdMapping} — created 의 parentId="tempA" → 위상 정렬 INSERT 후 mappings 정합</li>
  *   <li>{@link #testMoveAction} — parent / displayOrder / depth 갱신 정합</li>
  *   <li>{@link #testCycleDetected} — moved.newParentId 가 자기 자손 → 422</li>
  *   <li>(✂ Order=8) <s>{@code testLeafParentBlocked}</s> — v15 5-15a 에서 삭제됨.
  *       hybrid 모델: leaf 아래로 이동 가능 (Phase515aHybridIntegrationTest.testMoveNodeUnderLeaf 가 inverted 커버)</li>
+ *   <li>{@link #testCascadingDeleteWithEvidenceTypes} — v18.3: evidence_types 매달린 cascade</li>
+ *   <li>{@link #testCascadingDeleteWithCollectionJobs} — v18.3: collection_jobs 까지 cascade</li>
+ *   <li>{@link #testCascadingDeleteWithEvidenceFiles} — v18.3: evidence_files N+M 그래프 (v18.2 재현 시나리오)</li>
  * </ol>
  *
  * <p>5-14b/c 학습 패턴 — FK off + DELETE + 본 테스트 전용 admin 정리.
@@ -71,6 +91,11 @@ class TreeUpdateTest {
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private JdbcTemplate jdbcTemplate;
 
+    // v18.3 — cascade chain 회귀 보호 케이스용 Repository
+    @Autowired private EvidenceTypeRepository evidenceTypeRepository;
+    @Autowired private CollectionJobRepository collectionJobRepository;
+    @Autowired private EvidenceFileRepository evidenceFileRepository;
+
     @PersistenceContext
     private EntityManager entityManager;
 
@@ -80,6 +105,9 @@ class TreeUpdateTest {
     void cleanup() {
         jdbcTemplate.execute("SET REFERENTIAL_INTEGRITY FALSE");
         try {
+            // v18.3 — evidence_files / collection_jobs cleanup 추가 (회귀 케이스 정합)
+            jdbcTemplate.execute("DELETE FROM evidence_files");
+            jdbcTemplate.execute("DELETE FROM collection_jobs");
             jdbcTemplate.execute("DELETE FROM evidence_types");
             jdbcTemplate.execute("DELETE FROM control_nodes");
             jdbcTemplate.execute("DELETE FROM frameworks");
@@ -276,7 +304,7 @@ class TreeUpdateTest {
     }
 
     // ========================================================================
-    // 4. cascading delete
+    // 4. cascading delete (단순 graph, v18.2 시점 부족했던 회귀 보호 — Order=9~11 가 보강)
     // ========================================================================
     @Test
     @Order(4)
@@ -456,4 +484,177 @@ class TreeUpdateTest {
     //    Phase515aHybridIntegrationTest.testMoveNodeUnderLeaf (Order=4) 가 커버
     //    (이전 422 → 이제 200 기대).
     // ========================================================================
+
+    // ========================================================================
+    // 9. v18.3 회귀 보호 — evidence_types 매달림 cascade
+    //
+    // v18.2 silent skip 시나리오 (자식 + evidence_types 매달림) 의 정공 fix
+    // (V_v18_3 CASCADE FK) 회귀 차단. evidence_types.control_id FK 가
+    // ON DELETE CASCADE 인지 검증. testCascadingDelete (Order=4) 의 단순 graph
+    // 한계를 확장.
+    // ========================================================================
+    @Test
+    @Order(9)
+    @DisplayName("[v18.3] cascading delete — evidence_types 매달린 카테고리 삭제 → " +
+            "control_nodes + evidence_types 모두 cascade 삭제")
+    void testCascadingDeleteWithEvidenceTypes() throws Exception {
+        Framework fw = frameworkRepository.save(Framework.builder().name("CD-ET FW").build());
+
+        ControlNode cat = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.category)
+                .code("1").name("cat").displayOrder(0).depth(1).build());
+        ControlNode leaf = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(cat).nodeType(NodeType.control)
+                .code("1.1").name("leaf").displayOrder(0).depth(2).build());
+
+        EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(leaf).name("증빙1").build());
+        EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(leaf).name("증빙2").build());
+
+        Long et1Id = et1.getId();
+        Long et2Id = et2.getId();
+
+        // 카테고리 삭제 → cascade chain 으로 leaf + 2 evidence_types 모두 삭제
+        Map<String, Object> body = patchBody(0L,
+                List.of(), List.of(), List.of(),
+                List.of(Map.of("id", cat.getId()))
+        );
+
+        mockMvc.perform(patch("/api/v1/frameworks/{id}/tree", fw.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk());
+
+        // DB 검증 — control_nodes 0, evidence_types 0
+        assertThat(controlNodeRepository.count()).isEqualTo(0L);
+        assertThat(evidenceTypeRepository.findById(et1Id)).isEmpty();
+        assertThat(evidenceTypeRepository.findById(et2Id)).isEmpty();
+
+        System.out.println("✅ [v18.3] evidence_types 매달림 cascade — " +
+                "control_nodes 0 / evidence_types 0 (V_v18_3 CASCADE 작동)");
+    }
+
+    // ========================================================================
+    // 10. v18.3 회귀 보호 — collection_jobs 매달림 cascade
+    //
+    // collection_jobs.evidence_type_id FK 가 ON DELETE CASCADE 인지 검증.
+    // 카테고리 → leaf → evidence_type → collection_job 의 3-level cascade chain.
+    // ========================================================================
+    @Test
+    @Order(10)
+    @DisplayName("[v18.3] cascading delete — collection_jobs 매달린 노드 삭제 → " +
+            "control_nodes + evidence_types + collection_jobs 모두 cascade 삭제")
+    void testCascadingDeleteWithCollectionJobs() throws Exception {
+        Framework fw = frameworkRepository.save(Framework.builder().name("CD-CJ FW").build());
+
+        ControlNode cat = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.category)
+                .code("1").name("cat").displayOrder(0).depth(1).build());
+        ControlNode leaf = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(cat).nodeType(NodeType.control)
+                .code("1.1").name("leaf").displayOrder(0).depth(2).build());
+
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(leaf).name("증빙").build());
+        CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
+                .name("자동수집작업")
+                .jobType(JobType.web_scraping)   // ✅ 실 enum 값 (script | excel_extract | log_extract 중 1)
+                .scriptPath("/scripts/test.sh")
+                .evidenceType(et)
+                .isActive(true)
+                .build());
+
+        Long etId = et.getId();
+        Long jobId = job.getId();
+
+        // 카테고리 삭제 → cascade chain 으로 leaf + et + job 모두 삭제
+        Map<String, Object> body = patchBody(0L,
+                List.of(), List.of(), List.of(),
+                List.of(Map.of("id", cat.getId()))
+        );
+
+        mockMvc.perform(patch("/api/v1/frameworks/{id}/tree", fw.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk());
+
+        // DB 검증
+        assertThat(controlNodeRepository.count()).isEqualTo(0L);
+        assertThat(evidenceTypeRepository.findById(etId)).isEmpty();
+        assertThat(collectionJobRepository.findById(jobId)).isEmpty();
+
+        System.out.println("✅ [v18.3] collection_jobs 매달림 cascade — " +
+                "control_nodes 0 / evidence_types 0 / collection_jobs 0");
+    }
+
+    // ========================================================================
+    // 11. v18.3 회귀 보호 — evidence_files 매달림 cascade (N+M 그래프)
+    //
+    // v18.2 silent skip 의 가장 복잡한 시나리오. L_HIBERNATE_CASCADE_SILENT 가
+    // 명시한 "evidence_types/files N+M 매달림 추가 시 재현" 의 정공 검증.
+    // ========================================================================
+    @Test
+    @Order(11)
+    @DisplayName("[v18.3] cascading delete — evidence_files 매달린 N+M 그래프 " +
+            "(v18.2 재현 시나리오) → 전체 cascade 삭제")
+    void testCascadingDeleteWithEvidenceFiles() throws Exception {
+        Framework fw = frameworkRepository.save(Framework.builder().name("CD-EF FW").build());
+
+        ControlNode cat = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.category)
+                .code("1").name("cat").displayOrder(0).depth(1).build());
+        ControlNode leaf = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(cat).nodeType(NodeType.control)
+                .code("1.1").name("leaf").displayOrder(0).depth(2).build());
+
+        EvidenceType et1 = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(leaf).name("증빙1").build());
+        EvidenceType et2 = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(leaf).name("증빙2").build());
+
+        // 각 et 에 2 / 1 EvidenceFile 매달기 (N+M 그래프)
+        EvidenceFile ef1a = evidenceFileRepository.save(EvidenceFile.builder()
+                .evidenceType(et1).fileName("f1a.pdf").filePath("/tmp/f1a.pdf")
+                .fileSize(100L).version(1).collectionMethod(CollectionMethod.manual)
+                .collectedAt(LocalDateTime.now()).reviewStatus(ReviewStatus.auto_approved)
+                .build());
+        EvidenceFile ef1b = evidenceFileRepository.save(EvidenceFile.builder()
+                .evidenceType(et1).fileName("f1b.pdf").filePath("/tmp/f1b.pdf")
+                .fileSize(200L).version(2).collectionMethod(CollectionMethod.manual)
+                .collectedAt(LocalDateTime.now()).reviewStatus(ReviewStatus.auto_approved)
+                .build());
+        EvidenceFile ef2a = evidenceFileRepository.save(EvidenceFile.builder()
+                .evidenceType(et2).fileName("f2a.pdf").filePath("/tmp/f2a.pdf")
+                .fileSize(300L).version(1).collectionMethod(CollectionMethod.manual)
+                .collectedAt(LocalDateTime.now()).reviewStatus(ReviewStatus.auto_approved)
+                .build());
+
+        List<Long> efIds = List.of(ef1a.getId(), ef1b.getId(), ef2a.getId());
+
+        // 카테고리 삭제 → 전체 N+M cascade
+        Map<String, Object> body = patchBody(0L,
+                List.of(), List.of(), List.of(),
+                List.of(Map.of("id", cat.getId()))
+        );
+
+        mockMvc.perform(patch("/api/v1/frameworks/{id}/tree", fw.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk());
+
+        // DB 검증 — 전체 0
+        assertThat(controlNodeRepository.count()).isEqualTo(0L);
+        assertThat(evidenceTypeRepository.count()).isEqualTo(0L);
+        for (Long efId : efIds) {
+            assertThat(evidenceFileRepository.findById(efId)).isEmpty();
+        }
+
+        System.out.println("✅ [v18.3] N+M 그래프 cascade — " +
+                "control_nodes 0 / evidence_types 0 / evidence_files 0 " +
+                "(v18.2 재현 시나리오 정공 차단)");
+    }
 }

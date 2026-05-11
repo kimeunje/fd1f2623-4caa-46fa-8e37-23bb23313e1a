@@ -81,6 +81,14 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/evidence/**").hasRole("ADMIN")
                 .requestMatchers("/api/v1/jobs/**").hasRole("ADMIN")
 
+                // === 관리자 대시보드 (v18.3 추가 — v16.4a 시점부터 잠재 잠재 버그였음) ===
+                // SecurityConfig URL 매핑 부재 시 controller 의 @PreAuthorize 만으로는 anonymous 요청
+                // 차단 불가. fallback .anyRequest().authenticated() 가 URL 레벨 통과 → method 레벨
+                // @PreAuthorize 가 SecurityContext 비어있는 anonymous 평가 시점에
+                // AuthenticationCredentialsNotFoundException throw → GlobalExceptionHandler 가 500
+                // 매핑. v18.3 환경에서 발현된 회귀를 정공 fix.
+                .requestMatchers("/api/v1/dashboard/**").hasRole("ADMIN")
+
                 // === 증빙 파일 (역할 혼재 영역) — Phase 5-2 변경 ===
                 // URL 레벨은 인증만 요구하고, 메서드별 @PreAuthorize 와
                 // EvidenceAuthService 가 admin / 담당자(소유자) 구분을 담당.

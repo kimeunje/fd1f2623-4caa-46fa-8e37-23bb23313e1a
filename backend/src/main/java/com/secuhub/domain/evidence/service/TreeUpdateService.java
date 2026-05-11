@@ -41,6 +41,24 @@ import java.util.*;
  * invalid_parent_type, node_type_change_not_allowed, cycle_detected,
  * sibling_code_duplicate, node_not_found).</p>
  *
+ * <h3>v18.3 — DELETE 정공 fix (L_SPEC_SCHEMA_MISMATCH + L_HIBERNATE_CASCADE_SILENT 종결)</h3>
+ * <p>v18.2 의 native SQL 우회 fix (helper {@code collectNodeAndDescendantIds} +
+ * 사전 evidence_files / collection_jobs / evidence_types 명시 삭제 3 블록) 를 모두
+ * 제거. {@code V_v18_3} Flyway + entity {@code @OnDelete(CASCADE)} 3 추가로 DB
+ * 레벨 cascade chain 이 다음을 처리:</p>
+ * <pre>
+ *   control_nodes (self-FK CASCADE)
+ *     → 자손 control_nodes (cascade)
+ *     → 매달린 evidence_types (v18.3 신규 CASCADE)
+ *     → 매달린 collection_jobs (v18.3 신규 CASCADE)
+ *     → 매달린 evidence_files (v18.3 신규 CASCADE)
+ * </pre>
+ *
+ * <p>native SQL {@code DELETE FROM control_nodes WHERE id = :id} 1줄. Hibernate
+ * {@code em.remove()} silent skip 패턴 (L_HIBERNATE_CASCADE_SILENT) 회피. UPDATE /
+ * MOVE 액션의 dirty 변경 보존을 위해 {@code entityManager.clear()} 는 사용 안 함
+ * (v18.3 회귀 fix — clear() 가 dirty 무효화로 moved 변경이 DB 미반영되는 사례 확인).</p>
+ *
  * <h3>알고리즘 흐름</h3>
  * <ol>
  *   <li>Framework lookup (404 fallback)</li>
@@ -52,7 +70,7 @@ import java.util.*;
  *   <li>위상 정렬 순서로 created INSERT (tempId → newId 매핑 누적)</li>
  *   <li>updated 적용 (code/name/description 부분 갱신)</li>
  *   <li>moved 적용 (parent/displayOrder/depth 갱신)</li>
- *   <li>deleted 적용 (DB ON DELETE CASCADE 가 자손 + evidence_types 정리)</li>
+ *   <li>deleted 적용 — v18.3 정공: native SQL DELETE 1줄 + DB FK 4단 cascade chain</li>
  *   <li>Framework.@Version 강제 증가 (Framework.touchVersion + flush)</li>
  *   <li>Response { version, mappings }</li>
  * </ol>
@@ -194,111 +212,53 @@ public class TreeUpdateService {
         }
 
         // -----------------------------------------------------------
-        // 9. DELETE (deleted) — native SQL + DB ON DELETE CASCADE 우회
+        // 9. DELETE (deleted) — v18.3 정공 fix
         //
-        // v18.2 fix-2 — 옵션 A (entityManager.remove + flush) 도 silent skip 확인.
-        // Hibernate 6 의 cascade graph 처리가 자손 collection 이 lazy load 된 상태에서
-        // 모호함으로 silent skip 하는 패턴이 deleteById / em.remove 동일하게 발생.
-        // Native SQL DELETE 로 Hibernate persistence context 전체를 우회.
+        // v18.2 fix 의 우회 코드 (helper collectNodeAndDescendantIds + 사전
+        // evidence_files/collection_jobs/evidence_types 명시 삭제 3 블록) 를
+        // 모두 제거. V_v18_3 Flyway + entity @OnDelete(CASCADE) 3 정공 fix 로
+        // DB cascade chain 이 다음을 처리:
+        //   control_nodes (self-FK CASCADE)
+        //     → 자손 control_nodes (cascade)
+        //     → 매달린 evidence_types (v18.3 신규 CASCADE)
+        //     → 매달린 collection_jobs (v18.3 신규 CASCADE)
+        //     → 매달린 evidence_files (v18.3 신규 CASCADE)
         //
-        // DB FK 의 ON DELETE CASCADE (ControlNode 엔티티의 @OnDelete(CASCADE) +
-        // V6 마이그레이션에서 적용) 가 자손 control_nodes + evidence_types +
-        // evidence_files 일괄 처리. ControlNodeSchemaTest.testCascadeOnParentDelete 에서
-        // native DELETE → 자손 자동 삭제 검증 완료된 패턴 재사용.
-        //
-        // 처리 순서 (deleted 있을 때):
-        //   (1) created/updated/moved + fw.touchVersion 먼저 commit (clear 전 마지막 기회)
-        //   (2) native DELETE 발행 (각 id 마다 1회, DB CASCADE 가 자손 처리)
-        //   (3) entityManager.clear() — stale persistence context 무효화
-        //         (자손/evidence_types/files 는 DB 에서 사라졌지만 JPA cache 에 잔존)
-        //
-        // touchVersion 은 clear 전에 완료되어야 함 (clear 후 fw 도 detach 됨).
-        // step 11 의 fw.getVersion() 은 단순 필드 접근으로 detach 상태에서도 정상 동작.
+        // native SQL DELETE 는 보존 — Hibernate em.remove silent skip 패턴
+        // (L_HIBERNATE_CASCADE_SILENT) 회피.
         // -----------------------------------------------------------
-        if (!deleted.isEmpty()) {
-            // (1) 다른 변경 + fw version touch 먼저 commit
-            fw.touchVersion();
-            entityManager.flush();
-
-            // (2) 삭제할 노드 + 자손 모든 ID 수집 (in-memory walk)
-            //
-            // v18.2 fix-3 발견 — evidence_types.control_id FK 가 ON DELETE RESTRICT (CASCADE 아님).
-            // EvidenceType 엔티티의 @JoinColumn 에 @OnDelete 루락 → default RESTRICT.
-            // spec 의 "ON DELETE CASCADE 가 evidence_types 까지 자동 삭제" 명기와 실 스키마 mismatch.
-            // 정공 fix 는 Flyway 로 FK 변경 (v18.3 또는 v19) → 일단 추가 fix 는
-            // 자손 포함 evidence_files + evidence_types 를 사전에 명시 삭제.
-            //
-            // 자손 control_nodes 자신의 삭제는 self-FK (parent_id) 의 ON DELETE CASCADE 로 처리됨.
-            //
-            // existingNodes 의 ControlNode 는 이미 children 컬렉션이 lazy load 된 상태 (위 검증 단계에서
-            // 발화) → in-memory walk 으로 자손 수집 가능.
-            Set<Long> allDeletedIds = new HashSet<>();
-            for (TreeUpdateDto.DeletedNode d : deleted) {
-                ControlNode node = existingNodes.get(d.getId());
-                if (node != null) {
-                    collectNodeAndDescendantIds(node, allDeletedIds);
-                }
-            }
-
-            // (3) evidence_files 삭제 (evidence_types 통해 연결)
-            // (4) collection_jobs 삭제 (v18.2 fix-3 추가 발견 — collection_jobs.evidence_type_id FK 도 RESTRICT)
-            // (5) evidence_types 삭제 (위 둘 FK 먼저 제거 후)
-            //
-            // 향후 FK 위반이 또 나오면 같은 패턴으로 한 줄 씩 추가. 정공 fix 는 v18.3:
-            // Flyway 로 FK 들을 ON DELETE CASCADE 로 ALTER + Entity @OnDelete 개선.
-            if (!allDeletedIds.isEmpty()) {
-                // (a) evidence_files 삭제 (evidence_types 통해 연결)
-                entityManager.createNativeQuery(
-                        "DELETE FROM evidence_files WHERE evidence_type_id IN " +
-                        "(SELECT id FROM evidence_types WHERE control_id IN (:nodeIds))")
-                        .setParameter("nodeIds", allDeletedIds)
-                        .executeUpdate();
-
-                // (b) job_executions 삭제 (v18.2 fix-4 추가 발견 — collection_jobs 삭제 전 선행)
-                //     job_executions.job_id FK 도 RESTRICT (JobExecution.job 의 @OnDelete 루락)
-                entityManager.createNativeQuery(
-                        "DELETE FROM job_executions WHERE job_id IN " +
-                        "(SELECT id FROM collection_jobs WHERE evidence_type_id IN " +
-                        "(SELECT id FROM evidence_types WHERE control_id IN (:nodeIds)))")
-                        .setParameter("nodeIds", allDeletedIds)
-                        .executeUpdate();
-
-                // (c) collection_jobs 삭제
-                entityManager.createNativeQuery(
-                        "DELETE FROM collection_jobs WHERE evidence_type_id IN " +
-                        "(SELECT id FROM evidence_types WHERE control_id IN (:nodeIds))")
-                        .setParameter("nodeIds", allDeletedIds)
-                        .executeUpdate();
-
-                // (d) evidence_types 삭제
-                entityManager.createNativeQuery(
-                        "DELETE FROM evidence_types WHERE control_id IN (:nodeIds)")
-                        .setParameter("nodeIds", allDeletedIds)
-                        .executeUpdate();
-            }
-
-            // (5) control_nodes 삭제 (부모만 호출, self-FK CASCADE 가 자손 처리)
-            for (TreeUpdateDto.DeletedNode d : deleted) {
-                entityManager.createNativeQuery(
-                        "DELETE FROM control_nodes WHERE id = :id")
-                        .setParameter("id", d.getId())
-                        .executeUpdate();
-            }
-
-            // (6) stale persistence context 무효화
-            entityManager.clear();
-        } else {
-            // -----------------------------------------------------------
-            // 10. Framework.@Version 강제 증가 (deleted 없는 평소 흐름)
-            //
-            // children (control_nodes) 변경만으로는 Hibernate dirty-checking 이
-            // Framework 의 @Version 을 자동 증가시키지 않으므로 명시적 처리.
-            // touchVersion() 이 @Version 필드를 직접 +1 → dirty 마킹 → flush 시
-            // UPDATE frameworks SET version = ? WHERE id = ? AND version = ? SQL 발행.
-            // -----------------------------------------------------------
-            fw.touchVersion();
-            entityManager.flush();
+        for (TreeUpdateDto.DeletedNode d : deleted) {
+            entityManager.createNativeQuery(
+                    "DELETE FROM control_nodes WHERE id = :id")
+                .setParameter("id", d.getId())
+                .executeUpdate();
         }
+
+        // v18.3 회귀 fix — entityManager.clear() 제거:
+        // 직전 7번 (UPDATE) + 8번 (MOVE) 의 ControlNode dirty 가 영속성 컨텍스트에
+        // 있는 상태에서 clear() 호출 시 dirty 가 flush 전 무효화 → DB UPDATE SQL
+        // 발행 안 됨. v18.2 의 clear() 는 native SQL 사전 명시 삭제의 stale managed
+        // entity 무효화 목적이었으나, v18.3 정공 fix 는 DB CASCADE 가 처리하므로
+        // clear() 자체가 불필요. 메서드 끝에서 return 이라 후속 read 없음.
+
+        // -----------------------------------------------------------
+        // 10. Framework.@Version 강제 증가
+        //
+        // children (control_nodes) 변경만으로는 Hibernate dirty-checking 이
+        // Framework 의 @Version 을 자동 증가시키지 않으므로, 명시적으로 처리.
+        //
+        // touchVersion() 이 @Version 필드를 직접 +1 → dirty 마킹 → flush 시
+        // UPDATE frameworks SET version = ? WHERE id = ? AND version = ?
+        // SQL 발행. Optimistic lock 검증 + entity version 갱신 동시 처리.
+        //
+        // 이 패턴이 entityManager.lock(OPTIMISTIC_FORCE_INCREMENT) 의
+        // Hibernate 6 commit-시점 동작 의존성을 회피한다.
+        //
+        // v18.3: flush() 시점에 UPDATE / MOVE 액션의 dirty 변경 (ControlNode.parent
+        // 등) 도 함께 DB 에 반영됨. entityManager.clear() 제거로 dirty 보존.
+        // -----------------------------------------------------------
+        fw.touchVersion();
+        entityManager.flush();
 
         // -----------------------------------------------------------
         // 11. Response
@@ -488,9 +448,10 @@ public class TreeUpdateService {
                 }
             }
 
-            // 규칙 6, 7 — depth
+            // 규칙 6 — depth 일관성
             if (m.getNewDepth() != null) {
-                int expected = (pid == null) ? 1 : (parentDepth != null ? parentDepth + 1 : -1);
+                int expected = (pid == null)
+                        ? 1 : (parentDepth != null ? parentDepth + 1 : -1);
                 if (expected != -1 && m.getNewDepth() != expected) {
                     details.add(detailId(m.getId(), "newDepth", "depth_mismatch",
                             "newDepth(" + m.getNewDepth() + ") 가 예상값("
@@ -719,18 +680,5 @@ public class TreeUpdateService {
                 .target("node").targetId(id)
                 .field(field).code(code).message(message)
                 .build();
-    }
-
-    /**
-     * v18.2 fix-3 helper — 자손 포함 모든 ControlNode ID 재귀 수집.
-     *
-     * <p>evidence_files / evidence_types 사전 삭제에 필요. existingNodes 의 ControlNode 는 children 이
-     * lazy load 된 상태 → in-memory 재귀로 자손 ID 전체 수집 가능.</p>
-     */
-    private static void collectNodeAndDescendantIds(ControlNode node, Set<Long> result) {
-        result.add(node.getId());
-        for (ControlNode child : node.getChildren()) {
-            collectNodeAndDescendantIds(child, result);
-        }
     }
 }

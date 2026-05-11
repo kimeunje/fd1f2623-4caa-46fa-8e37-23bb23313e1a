@@ -2,13 +2,22 @@ package com.secuhub.domain.evidence.entity;
 
 import com.secuhub.common.BaseEntity;
 import jakarta.persistence.*;
+import lombok.*;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
-import lombok.*;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 수집 작업 (Collection Job) 엔티티.
+ *
+ * <h3>v18.3 — {@code @OnDelete(CASCADE)} 추가 (L_SPEC_SCHEMA_MISMATCH 종결)</h3>
+ * <p>v18.2 fix 부산 발견 — DB FK ({@code FK30ebo0xryo4qm4o059ea7cjls}) 가 default
+ * RESTRICT 였음. EvidenceType 삭제 시 매달린 CollectionJob cascade 삭제 필요.
+ * {@code evidence_type_id} 컬럼 자체는 nullable (전역 작업 허용) — CASCADE 는 NULL
+ * 행에 영향 없음 (FK 검사 자체가 skip).</p>
+ */
 @Entity
 @Table(name = "collection_jobs")
 @Getter
@@ -34,6 +43,10 @@ public class CollectionJob extends BaseEntity {
     @Column(name = "script_path", length = 1000)
     private String scriptPath;
 
+    /**
+     * v18.3 — {@code @OnDelete(CASCADE)} 추가.
+     * EvidenceType 삭제 시 매달린 CollectionJob 도 자동 삭제.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "evidence_type_id")
     @OnDelete(action = OnDeleteAction.CASCADE)

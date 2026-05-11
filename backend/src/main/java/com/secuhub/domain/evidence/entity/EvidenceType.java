@@ -3,9 +3,9 @@ package com.secuhub.domain.evidence.entity;
 import com.secuhub.common.BaseEntity;
 import com.secuhub.domain.user.entity.User;
 import jakarta.persistence.*;
+import lombok.*;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
-import lombok.*;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -24,28 +24,15 @@ import java.util.List;
  *
  * <h3>v15 Phase 5-15c (v15.7) — 자바 필드명 정합 (DB 컬럼 보존)</h3>
  * <p>자바 필드명 {@code control} → {@link #controlNode} 로 rename. <b>DB 컬럼명은
- * {@code control_id} 그대로 유지</b> (v15.7 Q1=B 결정 — 마이그레이션 0). 의미 정합:
- * 매핑 대상이 {@link ControlNode} 이므로 자바 명명도 그에 맞춤. Repository derived
- * query 도 {@code findByControlId} → {@code findByControlNodeId} 자동 정합 (Spring
- * Data 가 {@link #controlNode} 필드 path 정합 메서드명 요구).</p>
+ * {@code control_id} 그대로 유지</b> (v15.7 Q1=B 결정 — 마이그레이션 0).</p>
  *
- * <p>cascade 영향:</p>
- * <ul>
- *   <li>Lombok {@code @Getter} → {@code getControlNode()} 자동 생성 (옛 {@code getControl()}
- *       호출처는 모두 일괄 변경됨)</li>
- *   <li>{@link ControlNode#evidenceTypes} 의 {@code @OneToMany(mappedBy="controlNode")}
- *       정합 갱신 (v15.7)</li>
- *   <li>JPA Repository 의 모든 JPQL {@code et.control} 참조 → {@code et.controlNode}</li>
- *   <li>Lombok {@code @Builder} 의 {@code .control(...)} 호출 → {@code .controlNode(...)}
- *       (FrameworkService.inherit 등)</li>
- * </ul>
- *
- * <h3>제약</h3>
- * <ul>
- *   <li>v15 5-15a (hybrid) 채택 후로는 leaf 만이 아니라 모든 노드가 evidence_types
- *       보유 가능 ({@link ControlNode#addEvidenceType} 의 leaf-only 가드 제거됨).
- *       v15 에서 DB CHECK constraint 추가 검토는 후순위.</li>
- * </ul>
+ * <h3>v18.3 — {@code @OnDelete(CASCADE)} 추가 (L_SPEC_SCHEMA_MISMATCH 종결)</h3>
+ * <p>v18.2 fix 부산 발견 — DB FK ({@code FKn504iexlvxm3rnqu2j0fbkpej}) 가 default
+ * RESTRICT 였음. spec §3.3.1.3 의 "ON DELETE CASCADE 가 evidence_types 까지 자동
+ * 삭제" 표기와 mismatch. v18.3 정공 fix 로 ddl-auto (dev/test) + Flyway
+ * {@code V_v18_3} (staging/prod) 양쪽에서 ON DELETE CASCADE 동등 동작.
+ * ControlNode 삭제 → 매달린 EvidenceType cascade 삭제 → (cascade 연쇄)
+ * CollectionJob / EvidenceFile 까지 자동 정리.</p>
  */
 @Entity
 @Table(name = "evidence_types", indexes = {
@@ -65,8 +52,7 @@ public class EvidenceType extends BaseEntity {
     /**
      * v14 Phase 5-14f — 타입 {@code Control} → {@link ControlNode} 변경.
      * v15 Phase 5-15c (v15.7) — 자바 필드명 {@code control} → {@code controlNode}.
-     * 컬럼명은 {@code control_id} 그대로 유지 (DB 호환). 호출 측은 모두
-     * {@code et.getControlNode()} / {@code .controlNode(...)} 사용.
+     * v18.3 — {@code @OnDelete(CASCADE)} 추가 (L_SPEC_SCHEMA_MISMATCH 종결).
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "control_id", nullable = false)
@@ -102,11 +88,7 @@ public class EvidenceType extends BaseEntity {
 
     /**
      * v14 Phase 5-14f — 시그니처 {@code Control} → {@link ControlNode}.
-     * v15 Phase 5-15c (v15.7) — 메서드명 {@code setControl} → {@code setControlNode}
-     * (필드명 정합).
-     *
-     * <p>호출 측은 {@link ControlNode#addEvidenceType(EvidenceType)} 안의 양방향
-     * 동기화 1 곳 — 외부 직접 호출 0.</p>
+     * v15 Phase 5-15c (v15.7) — 메서드명 {@code setControl} → {@code setControlNode}.
      */
     void setControlNode(ControlNode controlNode) {
         this.controlNode = controlNode;
