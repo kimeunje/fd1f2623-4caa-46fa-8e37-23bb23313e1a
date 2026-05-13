@@ -18,8 +18,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.fail;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -416,5 +418,44 @@ class ScriptExecutionTest {
         System.out.println("✅ [Download] xlsx Content-Type 추정 정상: " + download.getContentType());
 
         Files.deleteIfExists(xlsxFile);
+    }
+
+// ========================================
+    // 9. 회귀 보호 — git checkout 된 .sh 파일은 LF only 여야 함
+    //    (v18.5-platform-b — .gitattributes 의 "*.sh text eol=lf" 규칙 위반 사전 차단)
+    // ========================================
+    @Test
+    @Order(9)
+    @DisplayName("[LineEnding] git checkout 된 .sh 파일은 LF only — CRLF 발견 시 fail")
+    void testGitCheckedInScriptHasLfLineEnding() throws IOException {
+        Path scriptDir = Paths.get(scriptsBaseDir).toAbsolutePath().normalize();
+
+        if (!Files.exists(scriptDir)) {
+            System.out.println("⚠ scripts 디렉토리 없음 — skip: " + scriptDir);
+            return;
+        }
+
+        List<Path> shFiles;
+        try (Stream<Path> walk = Files.walk(scriptDir).filter(p -> p.toString().endsWith(".sh"))) {
+            shFiles = walk.toList();
+        }
+
+        if (shFiles.isEmpty()) {
+            System.out.println("⚠ .sh 파일 없음 — skip");
+            return;
+        }
+
+        for (Path sh : shFiles) {
+            byte[] bytes = Files.readAllBytes(sh);
+            for (int i = 0; i < bytes.length; i++) {
+                if (bytes[i] == 0x0D) {  // CR (\r)
+                    fail(".sh 파일에 CRLF 발견: " + sh + " (offset=" + i + "). " +
+                         ".gitattributes 의 '*.sh text eol=lf' 규칙 위반 — " +
+                         "`git add --renormalize .` 실행 후 commit 필요");
+                }
+            }
+        }
+
+        System.out.println("✅ [LineEnding] " + shFiles.size() + "개 .sh 파일 모두 LF only 확인");
     }
 }
