@@ -6,6 +6,8 @@ import com.secuhub.domain.evidence.service.EvidenceFileService;
 import com.secuhub.domain.evidence.service.ScriptExecutionService;
 import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -420,7 +422,7 @@ class ScriptExecutionTest {
         Files.deleteIfExists(xlsxFile);
     }
 
-// ========================================
+	// ========================================
     // 9. 회귀 보호 — git checkout 된 .sh 파일은 LF only 여야 함
     //    (v18.5-platform-b — .gitattributes 의 "*.sh text eol=lf" 규칙 위반 사전 차단)
     // ========================================
@@ -457,5 +459,54 @@ class ScriptExecutionTest {
         }
 
         System.out.println("✅ [LineEnding] " + shFiles.size() + "개 .sh 파일 모두 LF only 확인");
+    }
+
+	// ========================================
+    // 10. 회귀 보호 — Linux 환경에서 .ps1 등록 시 BusinessException
+    //     (v18.5-platform-b — .ps1 은 Windows 한정 운영 정책)
+    // ========================================
+    @Test
+    @Order(10)
+    @DisplayName("[Script] Linux 환경에서 .ps1 등록 시 BusinessException — Windows 에서는 skip")
+    @EnabledOnOs(OS.LINUX)
+    @Transactional
+    void testPs1ScriptRejectedOnLinux() throws IOException {
+        Path scriptDir = Paths.get(scriptsBaseDir).toAbsolutePath().normalize();
+        Files.createDirectories(scriptDir);
+
+        Path ps1Script = scriptDir.resolve("test_reject.ps1");
+        Files.writeString(ps1Script,
+                "Write-Host 'this should never execute on Linux'\n");
+
+        Framework fw = frameworkRepository.save(Framework.builder().name("PS1 거부 FW").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("PS-01").name(".ps1 거부 항목")
+                .displayOrder(0).depth(1).build());
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(ctrl).name(".ps1 거부 증빙").build());
+
+        CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
+                .name(".ps1 거부 테스트")
+                .jobType(JobType.log_extract)
+                .scriptPath(ps1Script.getFileName().toString())
+                .evidenceType(et)
+                .build());
+
+        JobExecution execution = jobExecutionRepository.save(JobExecution.builder()
+                .job(job)
+                .status(ExecutionStatus.running)
+                .startedAt(LocalDateTime.now())
+                .build());
+
+        scriptExecutionService.executeSync(job, execution);
+
+        JobExecution saved = jobExecutionRepository.findById(execution.getId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(ExecutionStatus.failed);
+        assertThat(saved.getErrorMessage()).contains(".ps1 스크립트는 Windows 환경에서만 지원됩니다");
+
+        System.out.println("✅ [Script] Linux 환경에서 .ps1 거부 정상 (BusinessException → JobExecution.failed)");
+
+        Files.deleteIfExists(ps1Script);
     }
 }

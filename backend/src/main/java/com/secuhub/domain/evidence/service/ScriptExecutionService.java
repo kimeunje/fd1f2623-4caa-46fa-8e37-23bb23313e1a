@@ -280,6 +280,14 @@ public class ScriptExecutionService {
             command.add("/c");
             command.add(script.toString());
         } else if (fileName.endsWith(".ps1")) {
+            // v18.5-platform-b: .ps1 은 Windows 환경에서만 지원.
+            // Rocky 운영 환경에는 PowerShell Core (pwsh) 가 기본 설치되어 있지 않고,
+            // 운영 정책상 자동 수집 스크립트는 .sh / .py 로 통일.
+            if (!isWindows) {
+                throw new BusinessException(
+                    ".ps1 스크립트는 Windows 환경에서만 지원됩니다. " +
+                    "Linux 운영 환경에서는 .sh 또는 .py 스크립트로 변환해주세요.");
+            }
             command.add("powershell");
             command.add("-ExecutionPolicy");
             command.add("Bypass");
