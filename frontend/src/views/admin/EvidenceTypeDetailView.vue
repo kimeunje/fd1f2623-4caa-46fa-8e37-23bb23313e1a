@@ -77,7 +77,7 @@ const showAddJobDialog = ref(false)
 const newJob = ref({
   name: '',
   description: '',
-  jobType: 'SHELL',
+  jobType: 'web_scraping',   // ← BE JobType enum 정합
   scriptPath: '',
   scheduleCron: '',
 })
@@ -398,7 +398,7 @@ function openAddJobDialog() {
   newJob.value = {
     name: '',
     description: '',
-    jobType: 'SHELL',
+    jobType: 'web_scraping',   // ← BE JobType enum 정합
     scriptPath: '',
     scheduleCron: '',
   }
@@ -1006,9 +1006,9 @@ function executionDotCls(status?: string): string {
             <select
               v-model="newJob.jobType"
               class="w-full px-3 py-2 border rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
-              <option value="SHELL">SHELL — 쉘 스크립트 실행</option>
-              <option value="PYTHON">PYTHON — 파이썬 스크립트 실행</option>
-              <option value="API">API — 외부 API 호출</option>
+              <option value="web_scraping">웹 스크래핑</option>
+              <option value="excel_extract">엑셀 추출</option>
+              <option value="log_extract">로그 추출</option>
             </select>
           </div>
           <div>
