@@ -130,6 +130,10 @@ export interface EvidenceFileItem {
   evidenceTypeName: string
   controlCode: string
   controlName: string
+    /**
+   * v18.6a — Evidence Asset 매핑 ID (transitional, 옛 데이터는 null).
+   */
+  assetId?: number
   fileName: string
   filePath: string
   fileSize: number
@@ -564,4 +568,89 @@ export interface AdminDashboardSummary {
   kpi: DashboardKpi
   pendingApprovals: DashboardPendingApproval[]
   frameworkProgresses: DashboardFrameworkProgress[]
+}
+
+// ========================================
+// v18.6a — Evidence Asset (신규 채널)
+// ========================================
+
+/**
+ * upload 응답의 status — `created` (정상 신규 등록) | `duplicate_detected` (sha256 일치).
+ *
+ * `duplicate_detected` 시 FE 는 confirm dialog 노출 → 사용자 선택 후 다시 호출:
+ * - 기존 사용 → POST /evidence-files/link (multipart 없음)
+ * - 새로 등록 → POST /evidence-files/upload?forceUpload=true
+ */
+export type UploadStatus = 'created' | 'duplicate_detected'
+
+/**
+ * Evidence Asset (sha256 기반 콘텐츠 단위, v18.6a 신규).
+ *
+ * 여러 EvidenceFile (link) 이 같은 asset 을 공유 가능. usedInCount 는 link 수.
+ */
+export interface EvidenceAsset {
+  id: number
+  sha256: string
+  originalFileName: string
+  fileSize: number
+  uploadedByUserId?: number
+  uploadedByName?: string
+  createdAt: string
+  /** 본 asset 을 참조하는 EvidenceFile (link) 의 수 (Q11). */
+  usedInCount: number
+}
+
+/**
+ * POST /evidence-files/upload 의 응답 shape (v18.6a 변경).
+ *
+ * 분기:
+ * - `status === 'created'` → `evidenceFile` 만 존재. 정상 신규 등록.
+ * - `status === 'duplicate_detected'` → `existingAsset` 만 존재. link 미생성,
+ *   사용자 confirm 대기.
+ */
+export interface UploadResponse {
+  status: UploadStatus
+  evidenceFile?: EvidenceFileItem
+  existingAsset?: EvidenceAsset
+}
+
+/**
+ * POST /evidence-files/link 의 body.
+ *
+ * 기존 asset 에 link 만 생성 (multipart 없음). 화면 mockup 의
+ * [기존 파일에서 선택] 또는 [중복 감지 → 기존 사용] 흐름.
+ */
+export interface LinkRequest {
+  evidenceTypeId: number
+  assetId: number
+  /** null/빈 문자열 시 asset.originalFileName fallback (Q6 = link 단위 보존). */
+  fileName?: string
+  submitNote?: string
+}
+
+/**
+ * GET /evidence-assets 의 query string.
+ */
+export interface AssetSearchParams {
+  q?: string
+  uploaderId?: number
+  from?: string  // ISO datetime
+  to?: string    // ISO datetime
+  page?: number
+  size?: number
+}
+
+/**
+ * BE 의 검색 응답 shape (Spring Data Page 직접, PageResponse.from 미사용).
+ *
+ * 기존 FE 의 {@link PageResponse} (items/total 패턴) 와 다름 — Spring Page
+ * 표준 (content/totalElements). v18.6a 의 EvidenceAssetController 만의 예외.
+ * v18.6c 또는 후순위 통일 carry-over (BE 의 PageResponse.from 적용 + test 동기 갱신).
+ */
+export interface AssetPage<T> {
+  content: T[]
+  totalElements: number
+  totalPages: number
+  size: number
+  number: number   // page index (0-based)
 }

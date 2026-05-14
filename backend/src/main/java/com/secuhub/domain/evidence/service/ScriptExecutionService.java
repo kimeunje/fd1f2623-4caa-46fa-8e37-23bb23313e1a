@@ -23,6 +23,7 @@ import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -40,6 +41,17 @@ import java.util.stream.Stream;
  * - scriptPath 허용 디렉토리(scripts.base-dir) 외부 경로 차단
  * - 실행 타임아웃 적용 (기본 5분)
  * - 스크립트 존재 여부 및 실행 권한 사전 검증
+ *
+ * <h3>v18.5-platform-b — .ps1 Linux 차단</h3>
+ * <p>{@link #buildCommand} 의 .ps1 분기에 {@code if (!isWindows) throw} 추가.
+ * 운영 정책 = Rocky 에 PowerShell Core 부재, .sh/.py 통일.</p>
+ *
+ * <h3>v18.6a — collectOutputFiles asset 채널 전환 (Q7 자동 reuse)</h3>
+ * <p>{@link #collectOutputFiles} 의 옛 {@code {storage}/evidence/{controlCode}/{etId}/}
+ * 직접 저장 → asset 채널 ({@link EvidenceAssetService#findBySha256} +
+ * {@link EvidenceAssetService#createNewAssetFromPath}). 자동 수집은 사용자 개입 0
+ * 정책 = 같은 sha256 발견 시 자동 reuse (confirm 없음, L_HASH_DEDUP_UX 패턴 ④
+ * 자동·수동 분리).</p>
  */
 @Slf4j
 @Service
@@ -50,6 +62,9 @@ public class ScriptExecutionService {
     private final JobExecutionRepository jobExecutionRepository;
     private final EvidenceFileRepository evidenceFileRepository;
     private final EvidenceTypeRepository evidenceTypeRepository;
+
+    // v18.6a — Evidence Asset 신규 채널
+    private final EvidenceAssetService evidenceAssetService;
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
@@ -224,7 +239,8 @@ public class ScriptExecutionService {
             resolved = Paths.get(scriptPath).normalize();
         } else {
             // /scripts/xxx.py 형태일 경우 앞의 / 제거 후 base-dir 기준 resolve
-            String cleanPath = scriptPath.startsWith("/") ? scriptPath.substring(1) : scriptPath;
+            String cleanPath = scriptPath.startsWith("/") ?
+                    scriptPath.substring(1) : scriptPath;
             resolved = basePath.resolve(cleanPath).normalize();
         }
 
@@ -368,10 +384,20 @@ public class ScriptExecutionService {
     }
 
     /**
-     * output 디렉토리에서 생성된 파일을 감지하여 EvidenceFile로 등록
+     * output 디렉토리에서 생성된 파일을 감지하여 EvidenceFile로 등록.
      *
-     * 스크립트가 output 디렉토리에 파일을 생성하면,
-     * 해당 파일을 storage/evidence/ 하위로 이동하고 DB에 등록합니다.
+     * <h3>v18.6a — Asset 채널 전환 (Q7 자동 reuse, confirm 없음)</h3>
+     * <p>운영 정책: 자동 수집은 사용자 개입 0 — 같은 sha256 발견 시 confirm dialog 없이
+     * 자동 reuse (FE 수동 업로드와 분리, L_HASH_DEDUP_UX 패턴 ④ 자동·수동 분리).</p>
+     *
+     * <p>흐름:</p>
+     * <ol>
+     *   <li>output 디렉토리의 파일 enumerate</li>
+     *   <li>각 파일 SHA-256 계산</li>
+     *   <li>기존 asset 조회 — 있으면 reuse + output 파일 정리, 없으면 신규 asset 생성
+     *       ({@link EvidenceAssetService#createNewAssetFromPath} = move)</li>
+     *   <li>EvidenceFile (link) 생성 + asset 매핑</li>
+     * </ol>
      */
     private int collectOutputFiles(CollectionJob job, JobExecution execution, Path outputDir) {
         if (!Files.exists(outputDir) || !Files.isDirectory(outputDir)) {
@@ -403,40 +429,43 @@ public class ScriptExecutionService {
 
             for (Path file : fileList) {
                 try {
-                    // 다음 버전 계산
+                    String originalFileName = file.getFileName().toString();
+
+                    // v18.6a — 자동 수집은 Q7 (자동 reuse, confirm 없음)
+                    // 1. SHA-256 계산
+                    String sha256 = evidenceAssetService.computeSha256(file);
+
+                    // 2. 기존 asset 조회 — 있으면 reuse, 없으면 신규 생성
+                    Optional<EvidenceAsset> existing = evidenceAssetService.findBySha256(sha256);
+                    EvidenceAsset asset;
+                    if (existing.isPresent()) {
+                        asset = existing.get();
+                        // reuse — outputDir 의 파일 정리 (이미 asset 에 있으므로 불필요)
+                        try {
+                            Files.deleteIfExists(file);
+                        } catch (IOException ex) {
+                            log.debug("reuse 후 output 파일 정리 실패: {}", file, ex);
+                        }
+                        log.info("증빙 파일 자동 수집 (asset reuse): assetId={}, sha256={}, jobId={}",
+                                asset.getId(), sha256, job.getId());
+                    } else {
+                        // 신규 asset 생성 — createNewAssetFromPath 가 file 을 move (복사 아님)
+                        asset = evidenceAssetService.createNewAssetFromPath(
+                                file, originalFileName, sha256, null);
+                    }
+
+                    // 3. EvidenceFile (link) 생성
                     int nextVersion = evidenceFileRepository
                             .findMaxVersionByEvidenceTypeId(evidenceType.getId())
                             .orElse(0) + 1;
 
-                    // storage/evidence/{controlCode}/{evidenceTypeId}/ 로 복사
-                    // v15.7 Q1=B: getControl() → getControlNode() (EvidenceType 자바 필드 rename)
-                    String controlCode = evidenceType.getControlNode() != null
-                            ? evidenceType.getControlNode().getCode() : "unknown";
-                    Path destDir = Paths.get(storagePath, "evidence", controlCode,
-                            String.valueOf(evidenceType.getId()));
-                    Files.createDirectories(destDir);
-
-                    String destFileName = file.getFileName().toString();
-                    Path destPath = destDir.resolve(destFileName);
-
-                    // 같은 이름이 있으면 타임스탬프 추가
-                    if (Files.exists(destPath)) {
-                        String nameWithoutExt = getNameWithoutExtension(destFileName);
-                        String ext = getExtension(destFileName);
-                        destFileName = nameWithoutExt + "_" + System.currentTimeMillis() + ext;
-                        destPath = destDir.resolve(destFileName);
-                    }
-
-                    Files.copy(file, destPath);
-                    long fileSize = Files.size(destPath);
-
-                    // DB 등록
                     EvidenceFile evidenceFile = EvidenceFile.builder()
                             .evidenceType(evidenceType)
                             .execution(execution)
-                            .fileName(destFileName)
-                            .filePath(destPath.toString())
-                            .fileSize(fileSize)
+                            .asset(asset)
+                            .fileName(originalFileName)
+                            .filePath(asset.getFilePath())    // transitional
+                            .fileSize(asset.getFileSize())
                             .version(nextVersion)
                             .collectionMethod(CollectionMethod.auto)
                             .collectedAt(LocalDateTime.now())
@@ -444,8 +473,9 @@ public class ScriptExecutionService {
                     evidenceFileRepository.save(evidenceFile);
 
                     count++;
-                    log.info("증빙 파일 자동 수집: {} (v{}, jobId={})", destFileName, nextVersion, job.getId());
-                } catch (IOException e) {
+                    log.info("증빙 파일 자동 수집 link: {} (v{}, jobId={}, assetId={})",
+                            originalFileName, nextVersion, job.getId(), asset.getId());
+                } catch (Exception e) {
                     log.warn("output 파일 처리 실패: {} — {}", file.getFileName(), e.getMessage());
                 }
             }
@@ -456,11 +486,23 @@ public class ScriptExecutionService {
         return count;
     }
 
+    // ========================================
+    // 옛 helper (v18.6a 후 호출처 0, v18.6b 후 제거 예정)
+    // ========================================
+
+    /**
+     * @deprecated v18.6a 의 asset 채널 전환으로 호출처 0. v18.6b 마이그레이션 후 제거 예정.
+     */
+    @Deprecated
     private String getNameWithoutExtension(String fileName) {
         int dotIdx = fileName.lastIndexOf('.');
         return dotIdx > 0 ? fileName.substring(0, dotIdx) : fileName;
     }
 
+    /**
+     * @deprecated v18.6a 의 asset 채널 전환으로 호출처 0. v18.6b 마이그레이션 후 제거 예정.
+     */
+    @Deprecated
     private String getExtension(String fileName) {
         int dotIdx = fileName.lastIndexOf('.');
         return dotIdx > 0 ? fileName.substring(dotIdx) : "";

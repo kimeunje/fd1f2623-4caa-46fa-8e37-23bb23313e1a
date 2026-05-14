@@ -31,6 +31,7 @@ import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.temporal.IsoFields;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -40,14 +41,26 @@ import java.util.zip.ZipOutputStream;
  *
  * <h3>v15 Phase 5-15c (v15.7) 변경</h3>
  * <ul>
- *   <li>{@code evidenceType.getControlNode().getCode()} (line ~166, upload 시 storage path
- *       빌드) + {@code f.getEvidenceType().getControlNode().getId()} (line ~329, getStats
+ *   <li>{@code evidenceType.getControlNode().getCode()} (upload 시 storage path
+ *       빌드) + {@code f.getEvidenceType().getControlNode().getId()} (getStats
  *       의 coverage 계산) → {@code getControlNode().*} (Q1=B FORCED)</li>
  *   <li>{@link #downloadZip(Long, OutputStream)} 시그니처 {@code Long controlId} →
  *       {@code Long nodeId} (Q3=B URL path variable rename + Q6=A service param 정합).
  *       메서드 본문의 변수 사용 5 곳도 일괄 갱신.</li>
  *   <li>{@code evidenceTypeRepository.findByControlId} → {@code findByControlNodeId}
  *       (Q5=A)</li>
+ * </ul>
+ *
+ * <h3>v18.6a 변경 — Evidence Asset 신규 채널 (§2.4 진입)</h3>
+ * <ul>
+ *   <li>{@link #upload} — sha256 기반 중복 감지 + asset 채널 (응답 shape 변경
+ *       {@code UploadResponse} = {@code "created"} | {@code "duplicate_detected"})</li>
+ *   <li>{@link #linkExistingAsset} — multipart 없이 기존 asset 에 link 만 생성 (신규)</li>
+ *   <li>{@link #download} / {@link #downloadZip} — asset_id 있으면 asset.filePath,
+ *       없으면 옛 filePath fallback ({@link EvidenceFile#resolveFilePath()})</li>
+ *   <li>{@link #delete} — asset 있으면 link 삭제 후 GC 위임
+ *       ({@link EvidenceAssetService#gcIfUnused})</li>
+ *   <li>{@link #saveFile} — {@code @Deprecated}, v18.6b 마이그레이션 후 제거 예정</li>
  * </ul>
  */
 @Slf4j
@@ -60,6 +73,10 @@ public class EvidenceFileService {
     // v15.3 5-15b — ControlRepository → ControlNodeRepository 위임 (leaf-only 의미).
     private final ControlNodeRepository controlNodeRepository;
     private final UserRepository userRepository;
+
+    // v18.6a — Evidence Asset 신규 채널
+    private final EvidenceAssetService evidenceAssetService;
+    private final EvidenceAssetRepository evidenceAssetRepository;
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
@@ -155,45 +172,72 @@ public class EvidenceFileService {
     }
 
     // ========================================
-    // Phase 5-2: 업로드
+    // Phase 5-2: 업로드 (v18.6a 변경)
     // ========================================
 
     /**
-     * 수동 파일 업로드 — 버전 자동 증가
+     * 수동 파일 업로드 — v18.6a 변경 (sha256 기반 중복 감지 + asset 채널).
      *
-     * <p>역할별 초기 검토 상태:</p>
+     * <p>응답 분기 (Q1=b / Q4=a):</p>
+     * <ul>
+     *   <li>{@code forceUpload=false} + 같은 sha256 발견 → status="duplicate_detected"
+     *       (link 미생성, FE confirm dialog 노출 후 사용자 선택)</li>
+     *   <li>{@code forceUpload=false} + 미발견 → status="created" + asset 신규 생성 + link</li>
+     *   <li>{@code forceUpload=true} → 항상 status="created" + 별도 asset 생성 (Q9)</li>
+     * </ul>
+     *
+     * <p>역할별 초기 검토 상태 (v18.5 시점 보존):</p>
      * <ul>
      *   <li>admin → auto_approved (관리자 직접 업로드는 검토 생략)</li>
      *   <li>담당자 → pending (관리자 검토 대기)</li>
      * </ul>
-     *
-     * <p>v15.7: storage path 빌드 시 {@code evidenceType.getControlNode().getCode()} →
-     * {@code getControlNode().getCode()} (Q1=B).</p>
      */
     @Transactional
-    public EvidenceFileDto.Response upload(Long evidenceTypeId,
-                                           MultipartFile file,
-                                           UserPrincipal uploader,
-                                           String submitNote) {
+    public EvidenceFileDto.UploadResponse upload(Long evidenceTypeId,
+                                                  MultipartFile file,
+                                                  UserPrincipal uploader,
+                                                  String submitNote,
+                                                  boolean forceUpload) {
         EvidenceType evidenceType = evidenceTypeRepository.findById(evidenceTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 유형", evidenceTypeId));
-
-        int nextVersion = evidenceFileRepository.findMaxVersionByEvidenceTypeId(evidenceTypeId)
-                .orElse(0) + 1;
-
-        // v15.7 Q1=B: getControl() → getControlNode()
-        String savedPath = saveFile(file, evidenceType.getControlNode().getCode(), evidenceTypeId);
 
         User uploaderEntity = userRepository.findById(uploader.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("사용자", uploader.getUserId()));
 
+        // 1. SHA-256 계산
+        String sha256 = evidenceAssetService.computeSha256(file);
+
+        // 2. 중복 검사 (forceUpload=false 시)
+        if (!forceUpload) {
+            Optional<EvidenceAsset> existing = evidenceAssetService.findBySha256(sha256);
+            if (existing.isPresent()) {
+                long usedInCount = evidenceAssetRepository.countLinkedFiles(existing.get().getId());
+                log.info("중복 감지: sha256={}, existingAssetId={}, usedInCount={}, " +
+                                "uploader={}, evidenceTypeId={}",
+                        sha256, existing.get().getId(), usedInCount,
+                        uploader.getEmail(), evidenceTypeId);
+                return EvidenceFileDto.UploadResponse.duplicateDetected(
+                        existing.get(), usedInCount);
+            }
+        }
+
+        // 3. 신규 asset 생성 (또는 forceUpload=true 시 별도 생성, Q9)
+        EvidenceAsset asset = evidenceAssetService.createNewAssetFromMultipart(
+                file, sha256, uploader);
+
+        // 4. EvidenceFile (link) 생성
+        int nextVersion = evidenceFileRepository.findMaxVersionByEvidenceTypeId(evidenceTypeId)
+                .orElse(0) + 1;
+
         boolean isAdmin = "admin".equalsIgnoreCase(uploader.getRole());
-        ReviewStatus initialStatus = isAdmin ? ReviewStatus.auto_approved : ReviewStatus.pending;
+        ReviewStatus initialStatus = isAdmin ?
+                ReviewStatus.auto_approved : ReviewStatus.pending;
 
         EvidenceFile evidenceFile = EvidenceFile.builder()
                 .evidenceType(evidenceType)
+                .asset(asset)                       // v18.6a NEW
                 .fileName(file.getOriginalFilename())
-                .filePath(savedPath)
+                .filePath(asset.getFilePath())      // transitional — v18.6b 후 폐기
                 .fileSize(file.getSize())
                 .version(nextVersion)
                 .collectionMethod(CollectionMethod.manual)
@@ -204,9 +248,65 @@ public class EvidenceFileService {
                 .build();
 
         evidenceFile = evidenceFileRepository.save(evidenceFile);
-        log.info("증빙 파일 업로드: {} (v{}, by={}/{}, status={})",
+        log.info("증빙 파일 업로드: {} (v{}, by={}/{}, status={}, assetId={}, forceUpload={})",
                 file.getOriginalFilename(), nextVersion,
-                uploader.getEmail(), uploader.getRole(), initialStatus);
+                uploader.getEmail(), uploader.getRole(), initialStatus,
+                asset.getId(), forceUpload);
+
+        return EvidenceFileDto.UploadResponse.created(evidenceFile);
+    }
+
+    /**
+     * 기존 asset 에 link 생성 — v18.6a 신규 (multipart 없음). POST /link 호출.
+     *
+     * <p>화면 mockup [기존 파일에서 선택] 흐름 또는 [중복 감지 confirm] 의 [기존 사용] 결과.</p>
+     *
+     * <p>fileName 정책 (Q6 = link 단위 보존): {@code fileName} 명시값 우선,
+     * null/blank 시 {@code asset.originalFileName} fallback.</p>
+     */
+    @Transactional
+    public EvidenceFileDto.Response linkExistingAsset(Long evidenceTypeId,
+                                                       Long assetId,
+                                                       String fileName,
+                                                       String submitNote,
+                                                       UserPrincipal uploader) {
+        EvidenceType evidenceType = evidenceTypeRepository.findById(evidenceTypeId)
+                .orElseThrow(() -> new ResourceNotFoundException("증빙 유형", evidenceTypeId));
+
+        EvidenceAsset asset = evidenceAssetRepository.findById(assetId)
+                .orElseThrow(() -> new ResourceNotFoundException("증빙 자산", assetId));
+
+        User uploaderEntity = userRepository.findById(uploader.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("사용자", uploader.getUserId()));
+
+        int nextVersion = evidenceFileRepository.findMaxVersionByEvidenceTypeId(evidenceTypeId)
+                .orElse(0) + 1;
+
+        boolean isAdmin = "admin".equalsIgnoreCase(uploader.getRole());
+        ReviewStatus initialStatus = isAdmin ?
+                ReviewStatus.auto_approved : ReviewStatus.pending;
+
+        String resolvedFileName = (fileName != null && !fileName.isBlank())
+                ? fileName
+                : asset.getOriginalFileName();
+
+        EvidenceFile evidenceFile = EvidenceFile.builder()
+                .evidenceType(evidenceType)
+                .asset(asset)
+                .fileName(resolvedFileName)
+                .filePath(asset.getFilePath())     // transitional
+                .fileSize(asset.getFileSize())
+                .version(nextVersion)
+                .collectionMethod(CollectionMethod.manual)
+                .collectedAt(LocalDateTime.now())
+                .uploadedBy(uploaderEntity)
+                .submitNote(submitNote)
+                .reviewStatus(initialStatus)
+                .build();
+
+        evidenceFile = evidenceFileRepository.save(evidenceFile);
+        log.info("증빙 파일 link (asset reuse): assetId={}, evidenceTypeId={}, v{}, by={}",
+                assetId, evidenceTypeId, nextVersion, uploader.getEmail());
 
         return EvidenceFileDto.Response.from(evidenceFile);
     }
@@ -233,7 +333,8 @@ public class EvidenceFileService {
         EvidenceFile file = evidenceFileRepository.findById(fileId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
 
-        Path filePath = Paths.get(file.getFilePath()).toAbsolutePath().normalize();
+        // v18.6a — asset 우선, 옛 filePath fallback (transitional)
+        Path filePath = Paths.get(file.resolveFilePath()).toAbsolutePath().normalize();
 
         if (!Files.exists(filePath)) {
             log.error("증빙 파일 물리 경로에 파일이 없습니다: {} (fileId={})", filePath, fileId);
@@ -277,6 +378,9 @@ public class EvidenceFileService {
      * variable rename 정합 + Q6=A service param). 본문의 변수 사용 5 곳 + 에러 메시지
      * "nodeId=" 표기와 자연 정합. {@code findByControlId} → {@code findByControlNodeId}
      * (Q5=A).</p>
+     *
+     * <p>v18.6a: filePath 분기 — asset 우선, 옛 filePath fallback
+     * ({@link EvidenceFile#resolveFilePath()}).</p>
      */
     @Transactional(readOnly = true)
     public String downloadZip(Long nodeId, OutputStream outputStream) {
@@ -301,7 +405,8 @@ public class EvidenceFileService {
                 if (files.isEmpty()) continue;
 
                 EvidenceFile latestFile = files.get(0);
-                Path filePath = Paths.get(latestFile.getFilePath()).toAbsolutePath().normalize();
+                // v18.6a — asset 우선, 옛 filePath fallback
+                Path filePath = Paths.get(latestFile.resolveFilePath()).toAbsolutePath().normalize();
 
                 if (!Files.exists(filePath) || !Files.isReadable(filePath)) {
                     log.warn("ZIP 다운로드: 파일 누락 - {} (fileId={})", filePath, latestFile.getId());
@@ -373,25 +478,56 @@ public class EvidenceFileService {
                 .build();
     }
 
+    /**
+     * 증빙 파일 삭제.
+     *
+     * <p>v18.6a 변경 — asset 채널과 옛 filePath 채널 분기:</p>
+     * <ul>
+     *   <li>asset != null → link 만 삭제, GC ({@link EvidenceAssetService#gcIfUnused})
+     *       위임. reference_count == 0 시 물리 + asset entity 자동 정리 (Q10)</li>
+     *   <li>asset == null (옛 데이터, transitional) → 옛 filePath 직접 삭제 + entity 삭제</li>
+     * </ul>
+     */
     @Transactional
     public void delete(Long fileId) {
         EvidenceFile file = evidenceFileRepository.findById(fileId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
 
-        try {
-            Path path = Paths.get(file.getFilePath());
-            Files.deleteIfExists(path);
-        } catch (IOException e) {
-            log.warn("물리 파일 삭제 실패: {}", file.getFilePath(), e);
+        // v18.6a — asset 채널과 옛 filePath 채널 분기
+        Long assetIdToGc = (file.getAsset() != null) ? file.getAsset().getId() : null;
+
+        if (assetIdToGc == null) {
+            // 옛 흐름 (transitional, asset 없는 데이터) — 옛 filePath 직접 삭제
+            try {
+                Path path = Paths.get(file.getFilePath());
+                Files.deleteIfExists(path);
+            } catch (IOException e) {
+                log.warn("물리 파일 삭제 실패 (옛 채널): {}", file.getFilePath(), e);
+            }
         }
+        // asset 채널은 link 삭제 후 GC 위임 (아래)
 
         evidenceFileRepository.delete(file);
+        log.info("증빙 파일 삭제: fileId={}, assetId={}", fileId, assetIdToGc);
+
+        // asset GC — reference_count == 0 시 물리 + entity 자동 정리 (Q10)
+        if (assetIdToGc != null) {
+            evidenceAssetService.gcIfUnused(assetIdToGc);
+        }
     }
 
     // ========================================
     // 내부 유틸
     // ========================================
 
+    /**
+     * 옛 저장 흐름 — {@code {storage}/evidence/{controlCode}/{etId}/UUID_{filename}}.
+     *
+     * @deprecated v18.6a 부터 {@link EvidenceAssetService#createNewAssetFromMultipart}
+     * 가 대체. v18.6b 마이그레이션 후 제거 예정. 본 method 는 호출처 없는 dead code 상태
+     * (upload 가 더 이상 사용 안 함). v18.6b 진입 시 안전하게 제거 가능.
+     */
+    @Deprecated
     private String saveFile(MultipartFile file, String controlCode, Long evidenceTypeId) {
         try {
             Path dir = Paths.get(storagePath, "evidence", controlCode, String.valueOf(evidenceTypeId))

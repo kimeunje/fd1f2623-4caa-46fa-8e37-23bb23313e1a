@@ -16,14 +16,20 @@
  *     · [승인] 원클릭
  *  5. 3탭 (파일 이력 / 수동 업로드 / 자동 수집)
  *     · 파일 이력: 버전별 테이블. pending 행은 파란 배경 강조
- *     · 수동 업로드: 드래그앤드롭 + 제출 메모 + 업로드 버튼
+ *     · 수동 업로드: 액션 분기 (새 파일 등록 / 기존 파일에서 선택) — v18.6a
  *     · 자동 수집: 증빙 유형에 연결된 작업 카드 + 즉시 실행 / 삭제 / 추가
  *
  * v15 Phase 5-15c (v15.7) 변경:
  *  - v15.6 LSP rename 잔존 fix: 옛 `controlsApi` (v15.6 에서 evidenceApi.ts 에서 제거됨)
- *    → `controlNodesApi.getDetail` 로 일괄 변경 — 본 phase 까지 컴파일 fail 상태였던
- *    파일을 v15.7 에서 함께 정리 (incidental cleanup, v15.6 backlog).
+ *    → `controlNodesApi.getDetail` 로 일괄 변경.
  *  - props.controlId → props.nodeId (Q3=B router param rename 정합)
+ *
+ * v18.6a — Evidence Asset 신규 채널:
+ *  - 수동 업로드 탭의 액션 분기: [새 파일 등록] / [기존 파일에서 선택]
+ *  - upload 응답 status="duplicate_detected" 시 confirm dialog 노출
+ *    → [기존 사용 (권장)] / [새로 등록] / [취소] 의 3 액션 (Q1=b)
+ *  - 기존 파일 선택 시 EvidenceAssetSearchDialog 검색 + asset 선택 → POST /link
+ *  - 새로 등록 선택 시 POST /upload?forceUpload=true 재호출 (Q9)
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -34,7 +40,10 @@ import type {
   EvidenceFileItem,
   CollectionJobItem,
   ReviewStatus,
+  EvidenceAsset,
 } from '@/types/evidence'
+import EvidenceAssetSearchDialog from '@/components/evidence/EvidenceAssetSearchDialog.vue'
+import EvidenceAssetDuplicateConfirmDialog from '@/components/evidence/EvidenceAssetDuplicateConfirmDialog.vue'
 
 // ========================================
 // Props — 라우트에서 전달
@@ -66,6 +75,21 @@ const uploadSubmitNote = ref('')
 const uploading = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const isDragging = ref(false)
+
+// v18.6a — 수동 업로드 탭의 액션 분기 모드
+type UploadMode = 'menu' | 'new'
+const uploadMode = ref<UploadMode>('menu')
+
+// v18.6a — 검색 다이얼로그
+const showSearchDialog = ref(false)
+
+// v18.6a — 중복 감지 confirm 다이얼로그
+const showDuplicateDialog = ref(false)
+const duplicateAsset = ref<EvidenceAsset | null>(null)
+
+// duplicate confirm 후 force/link 재호출 시 보존할 컨텍스트
+const pendingFile = ref<File | null>(null)
+const pendingSubmitNote = ref<string>('')
 
 // 검토 (최신 파일 대상)
 const rejectFormOpen = ref(false)
@@ -337,18 +361,36 @@ function clearUploadFile() {
   if (fileInputRef.value) fileInputRef.value.value = ''
 }
 
-async function handleUpload() {
+/**
+ * 수동 업로드 본문 — v18.6a 변경 (응답 status 분기).
+ *
+ * @param forceUpload true 시 중복 감지 무시하고 별도 asset 생성 (Q9).
+ */
+async function handleUpload(forceUpload = false) {
   if (!uploadFile.value || uploading.value) return
   uploading.value = true
   try {
-    await evidenceFilesApi.upload(
+    const note = uploadSubmitNote.value.trim() || undefined
+    const { data } = await evidenceFilesApi.upload(
       props.evidenceTypeId,
       uploadFile.value,
-      uploadSubmitNote.value.trim() || undefined
+      note,
+      forceUpload,
     )
+
+    if (data.success && data.data.status === 'duplicate_detected') {
+      // 중복 감지 — confirm dialog 노출, 사용자 선택 대기
+      duplicateAsset.value = data.data.existingAsset ?? null
+      pendingFile.value = uploadFile.value
+      pendingSubmitNote.value = uploadSubmitNote.value
+      showDuplicateDialog.value = true
+      uploading.value = false
+      return
+    }
+
+    // created — 정상 신규 등록
     showToast('파일이 업로드되었습니다.', 'success')
-    clearUploadFile()
-    uploadSubmitNote.value = ''
+    resetUploadState()
     await loadAll()
     activeTab.value = 'history'
   } catch (e: any) {
@@ -356,6 +398,98 @@ async function handleUpload() {
   } finally {
     uploading.value = false
   }
+}
+
+// ========================================
+// v18.6a — 중복 감지 confirm 다이얼로그 핸들러
+// ========================================
+
+/**
+ * [기존 사용 (권장)] — POST /evidence-files/link 호출.
+ */
+async function handleUseExisting() {
+  if (!duplicateAsset.value) return
+  uploading.value = true
+  try {
+    await evidenceFilesApi.link({
+      evidenceTypeId: props.evidenceTypeId,
+      assetId: duplicateAsset.value.id,
+      fileName: pendingFile.value?.name,
+      submitNote: pendingSubmitNote.value.trim() || undefined,
+    })
+    showToast('기존 파일이 연결되었습니다.', 'success')
+    resetUploadState()
+    await loadAll()
+    activeTab.value = 'history'
+  } catch (e: any) {
+    showToast(e?.response?.data?.message ?? '연결에 실패했습니다.', 'error')
+  } finally {
+    uploading.value = false
+  }
+}
+
+/**
+ * [새로 등록] — POST /upload?forceUpload=true 재호출 (Q9 — 같은 sha 의 별도 asset).
+ */
+async function handleForceNew() {
+  if (!pendingFile.value) return
+  // pendingFile 을 uploadFile 로 복원 + handleUpload(true) 재호출
+  uploadFile.value = pendingFile.value
+  uploadSubmitNote.value = pendingSubmitNote.value
+  showDuplicateDialog.value = false
+  duplicateAsset.value = null
+  await handleUpload(true)   // forceUpload=true
+}
+
+/**
+ * [취소] — 다이얼로그 닫고 상태 reset (uploadFile 은 유지 — 사용자 재시도 가능).
+ */
+function handleCancelDuplicate() {
+  showDuplicateDialog.value = false
+  duplicateAsset.value = null
+  pendingFile.value = null
+  pendingSubmitNote.value = ''
+}
+
+// ========================================
+// v18.6a — 검색 다이얼로그 핸들러
+// ========================================
+
+/**
+ * 검색 다이얼로그에서 asset 선택 → POST /evidence-files/link 호출.
+ */
+async function handleSelectAsset(asset: EvidenceAsset) {
+  showSearchDialog.value = false
+  uploading.value = true
+  try {
+    await evidenceFilesApi.link({
+      evidenceTypeId: props.evidenceTypeId,
+      assetId: asset.id,
+      submitNote: uploadSubmitNote.value.trim() || undefined,
+    })
+    showToast('기존 파일이 연결되었습니다.', 'success')
+    resetUploadState()
+    await loadAll()
+    activeTab.value = 'history'
+  } catch (e: any) {
+    showToast(e?.response?.data?.message ?? '연결에 실패했습니다.', 'error')
+  } finally {
+    uploading.value = false
+  }
+}
+
+/**
+ * 업로드 모드 reset — 액션 분기 menu 로 복귀 + 상태 정리.
+ */
+function resetUploadState() {
+  uploadFile.value = null
+  uploadSubmitNote.value = ''
+  uploadMode.value = 'menu'
+  showDuplicateDialog.value = false
+  duplicateAsset.value = null
+  pendingFile.value = null
+  pendingSubmitNote.value = ''
+  if (fileInputRef.value) fileInputRef.value.value = ''
 }
 
 // ========================================
@@ -776,6 +910,13 @@ function executionDotCls(status?: string): string {
                   :class="reviewStatusBadge(file.reviewStatus)!.cls">
                   {{ reviewStatusBadge(file.reviewStatus)!.label }}
                 </span>
+                <!-- v18.6a — 공유 자산 배지 (asset 매핑 시) -->
+                <span
+                  v-if="file.assetId"
+                  class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded shrink-0 bg-blue-50 text-blue-700"
+                  title="다른 증빙에서도 사용 중일 수 있는 공유 자산">
+                  공유
+                </span>
                 <span class="font-mono text-[11px] truncate" :title="file.fileName">
                   {{ file.fileName }}
                 </span>
@@ -805,74 +946,117 @@ function executionDotCls(status?: string): string {
       </div>
 
       <!-- ======================================
-           탭 2: 수동 업로드
+           탭 2: 수동 업로드 (v18.6a 액션 분기)
            ====================================== -->
       <div v-show="activeTab === 'upload'" class="py-5">
-        <!-- 드래그앤드롭 영역 -->
-        <label
-          :for="uploadFile ? undefined : 'file-input'"
-          @dragover="handleDragOver"
-          @dragleave="handleDragLeave"
-          @drop="handleDrop"
-          class="block border-2 border-dashed rounded-lg py-10 px-4 text-center cursor-pointer transition-colors"
-          :class="[
-            isDragging
-              ? 'border-blue-400 bg-blue-50'
-              : uploadFile
-                ? 'border-green-300 bg-green-50'
-                : 'border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100'
-          ]">
-          <i class="pi mb-2 text-2xl"
-             :class="uploadFile ? 'pi-check-circle text-green-500' : 'pi-cloud-upload text-gray-400'"></i>
-          <template v-if="uploadFile">
-            <p class="text-sm text-gray-900 font-medium mb-1">{{ uploadFile.name }}</p>
-            <p class="text-[11px] text-gray-500">
-              {{ formatFileSize(uploadFile.size) }} · 업로드 준비 완료
-            </p>
-            <button
-              @click.prevent="clearUploadFile"
-              class="mt-2 text-[11px] text-gray-500 hover:text-red-600 underline">
-              파일 변경 / 삭제
-            </button>
-          </template>
-          <template v-else>
-            <p class="text-sm text-gray-600 mb-1">파일을 드래그하거나 클릭해서 업로드</p>
-            <p class="text-[11px] text-gray-400">PDF, DOCX, XLSX, PNG, JPG · 최대 50 MB</p>
-          </template>
-          <input
-            v-if="!uploadFile"
-            id="file-input"
-            ref="fileInputRef"
-            type="file"
-            class="hidden"
-            @change="handleFileSelect" />
-        </label>
 
-        <!-- 제출 메모 -->
-        <div class="mt-4">
-          <label class="block text-xs font-medium text-gray-700 mb-1.5">제출 메모 (선택)</label>
-          <textarea
-            v-model="uploadSubmitNote"
-            rows="2"
-            placeholder="이 파일에 대한 설명·변경사항을 간단히 적어주세요"
-            class="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none"></textarea>
-        </div>
-
-        <!-- 업로드 버튼 -->
-        <div class="mt-4">
+        <!-- 모드 1: 액션 분기 menu -->
+        <div v-if="uploadMode === 'menu'" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <!-- [새 파일 등록] -->
           <button
-            @click="handleUpload"
-            :disabled="!uploadFile || uploading"
-            class="h-9 px-4 text-sm bg-gray-900 text-white rounded-md hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed inline-flex items-center gap-1.5">
-            <i v-if="uploading" class="pi pi-spin pi-spinner text-xs"></i>
-            {{ uploading ? '업로드 중…' : '업로드' }}
+            @click="uploadMode = 'new'"
+            class="border-2 border-gray-200 rounded-lg p-5 text-left hover:border-gray-900 hover:bg-gray-50 transition-colors">
+            <div class="flex items-center gap-2 mb-1.5">
+              <i class="pi pi-cloud-upload text-gray-700 text-base"></i>
+              <span class="text-sm font-medium text-gray-900">새 파일 등록</span>
+            </div>
+            <p class="text-[11px] text-gray-500">
+              새 파일을 업로드합니다. 같은 내용이 이미 등록된 경우 사용자에게 선택을 묻습니다.
+            </p>
+          </button>
+
+          <!-- [기존 파일에서 선택] -->
+          <button
+            @click="showSearchDialog = true"
+            class="border-2 border-gray-200 rounded-lg p-5 text-left hover:border-gray-900 hover:bg-gray-50 transition-colors">
+            <div class="flex items-center gap-2 mb-1.5">
+              <i class="pi pi-search text-gray-700 text-base"></i>
+              <span class="text-sm font-medium text-gray-900">기존 파일에서 선택</span>
+            </div>
+            <p class="text-[11px] text-gray-500">
+              이미 등록된 파일을 검색해 이 증빙 유형에 연결합니다.
+            </p>
           </button>
         </div>
 
-        <!-- 안내 -->
-        <div class="mt-4 p-3 bg-green-50 border border-green-100 rounded-md text-[11px] text-green-800 flex gap-2 items-start">
-          <i class="pi pi-check-circle shrink-0 mt-0.5 text-[11px]"></i>
-          <span>관리자 업로드는 자동 승인됩니다. 담당자 업로드는 검토 대기 상태로 전환됩니다.</span>
+        <!-- 모드 2: 새 파일 등록 (드래그앤드롭 + 메모 + 업로드 버튼) -->
+        <div v-else-if="uploadMode === 'new'">
+          <!-- 뒤로 -->
+          <button
+            @click="resetUploadState"
+            class="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 mb-3">
+            <i class="pi pi-chevron-left text-[10px]"></i>
+            업로드 방식 다시 선택
+          </button>
+
+          <!-- 드래그앤드롭 영역 -->
+          <label
+            :for="uploadFile ? undefined : 'file-input'"
+            @dragover="handleDragOver"
+            @dragleave="handleDragLeave"
+            @drop="handleDrop"
+            class="block border-2 border-dashed rounded-lg py-10 px-4 text-center cursor-pointer transition-colors"
+            :class="[
+              isDragging
+                ? 'border-blue-400 bg-blue-50'
+                : uploadFile
+                  ? 'border-green-300 bg-green-50'
+                  : 'border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100'
+            ]">
+            <i class="pi mb-2 text-2xl"
+               :class="uploadFile ? 'pi-check-circle text-green-500' : 'pi-cloud-upload text-gray-400'"></i>
+            <template v-if="uploadFile">
+              <p class="text-sm text-gray-900 font-medium mb-1">{{ uploadFile.name }}</p>
+              <p class="text-[11px] text-gray-500">
+                {{ formatFileSize(uploadFile.size) }} · 업로드 준비 완료
+              </p>
+              <button
+                @click.prevent="clearUploadFile"
+                class="mt-2 text-[11px] text-gray-500 hover:text-red-600 underline">
+                파일 변경 / 삭제
+              </button>
+            </template>
+            <template v-else>
+              <p class="text-sm text-gray-600 mb-1">파일을 드래그하거나 클릭해서 업로드</p>
+              <p class="text-[11px] text-gray-400">PDF, DOCX, XLSX, PNG, JPG · 최대 50 MB</p>
+            </template>
+            <input
+              v-if="!uploadFile"
+              id="file-input"
+              ref="fileInputRef"
+              type="file"
+              class="hidden"
+              @change="handleFileSelect" />
+          </label>
+
+          <!-- 제출 메모 -->
+          <div class="mt-4">
+            <label class="block text-xs font-medium text-gray-700 mb-1.5">제출 메모 (선택)</label>
+            <textarea
+              v-model="uploadSubmitNote"
+              rows="2"
+              placeholder="이 파일에 대한 설명·변경사항을 간단히 적어주세요"
+              class="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none"></textarea>
+          </div>
+
+          <!-- 업로드 버튼 -->
+          <div class="mt-4">
+            <button
+              @click="handleUpload(false)"
+              :disabled="!uploadFile || uploading"
+              class="h-9 px-4 text-sm bg-gray-900 text-white rounded-md hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed inline-flex items-center gap-1.5">
+              <i v-if="uploading" class="pi pi-spin pi-spinner text-xs"></i>
+              {{ uploading ? '업로드 중…' : '업로드' }}
+            </button>
+          </div>
+
+          <!-- 안내 -->
+          <div class="mt-4 p-3 bg-green-50 border border-green-100 rounded-md text-[11px] text-green-800 flex gap-2 items-start">
+            <i class="pi pi-check-circle shrink-0 mt-0.5 text-[11px]"></i>
+            <span>
+              관리자 업로드는 자동 승인됩니다. 같은 내용의 파일이 이미 등록된 경우 사용자에게 확인을 묻습니다.
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1044,6 +1228,24 @@ function executionDotCls(status?: string): string {
         </div>
       </div>
     </div>
+
+    <!-- ======================================
+         v18.6a — Evidence Asset 검색 다이얼로그
+         ====================================== -->
+    <EvidenceAssetSearchDialog
+      :open="showSearchDialog"
+      @select="handleSelectAsset"
+      @close="showSearchDialog = false" />
+
+    <!-- ======================================
+         v18.6a — 중복 감지 confirm 다이얼로그
+         ====================================== -->
+    <EvidenceAssetDuplicateConfirmDialog
+      :open="showDuplicateDialog"
+      :existing-asset="duplicateAsset"
+      @use-existing="handleUseExisting"
+      @force-new="handleForceNew"
+      @cancel="handleCancelDuplicate" />
   </div>
 </template>
 

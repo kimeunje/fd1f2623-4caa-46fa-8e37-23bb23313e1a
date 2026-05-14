@@ -22,6 +22,8 @@ import type {
   TreePatchPayload,
   TreePatchSuccessResponse,
   ImpactSummary,
+  UploadResponse,   // ← v18.6a
+  LinkRequest,      // ← v18.6a
 } from '@/types/evidence'
 
 /**
@@ -237,21 +239,42 @@ export const evidenceFilesApi = {
   },
 
   /**
-   * 증빙 파일 업로드 (Phase 5-2 / 5-4 확장)
+   * 증빙 파일 업로드 (Phase 5-2 / 5-4 / v18.6a 확장)
    *
    * admin 업로드 → review_status=auto_approved,
    * 담당자 업로드 → review_status=pending.
+   *
+   * v18.6a — 응답 shape 변경 ({@link UploadResponse}):
+   * - status="created" → 정상 신규 등록 (evidenceFile 필드 사용)
+   * - status="duplicate_detected" → sha256 일치, link 미생성, FE 가 confirm dialog
+   *   노출 후 사용자 선택 (existingAsset 필드 사용)
+   *
+   * @param forceUpload true 시 중복 감지 무시하고 별도 asset 생성 (Q9 — 같은 sha
+   *                    의 별도 asset)
    */
-  upload(evidenceTypeId: number, file: File, submitNote?: string) {
+  upload(evidenceTypeId: number, file: File, submitNote?: string, forceUpload?: boolean) {
     const formData = new FormData()
     formData.append('evidenceTypeId', String(evidenceTypeId))
     formData.append('file', file)
     if (submitNote) {
       formData.append('submitNote', submitNote)
     }
-    return api.post<ApiResponse<EvidenceFileItem>>('/evidence-files/upload', formData, {
+    if (forceUpload) {
+      formData.append('forceUpload', 'true')
+    }
+    return api.post<ApiResponse<UploadResponse>>('/evidence-files/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
+  },
+
+  /**
+   * v18.6a — 기존 asset 에 link 만 생성 (multipart 없음).
+   *
+   * 화면 mockup [기존 파일에서 선택] 또는 [중복 감지 → 기존 사용] 결과.
+   * 권한 — assertCanAccessEvidenceType (본인 EvidenceType 만 link 가능).
+   */
+  link(payload: LinkRequest) {
+    return api.post<ApiResponse<EvidenceFileItem>>('/evidence-files/link', payload)
   },
 
   delete(id: number) {

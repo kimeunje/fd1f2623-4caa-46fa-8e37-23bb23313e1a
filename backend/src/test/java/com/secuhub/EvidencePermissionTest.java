@@ -56,6 +56,7 @@ class EvidencePermissionTest {
     @Autowired private ControlNodeRepository controlNodeRepository;   // ← 5-14f
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
+    @Autowired private EvidenceAssetRepository evidenceAssetRepository;
 
     // 테스트 고정값
     private User admin;
@@ -79,6 +80,7 @@ class EvidencePermissionTest {
     void setUp() {
         // 기존 데이터 정리 (FK 역순)
         evidenceFileRepository.deleteAll();
+        evidenceAssetRepository.deleteAll();   // ← v18.6a 신규 (user FK 정합)
         evidenceTypeRepository.deleteAll();
         controlNodeRepository.deleteAll();   // ← 5-14f
         frameworkRepository.deleteAll();
@@ -155,7 +157,7 @@ class EvidencePermissionTest {
 
     @Test
     @Order(1)
-    @DisplayName("[Upload] admin 업로드 → 200 + review_status=auto_approved")
+    @DisplayName("[Upload] admin 업로드 → 200 + review_status=auto_approved + asset 등록")
     void testAdminUpload_autoApproved() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
                 "file", "admin_upload.pdf", "application/pdf", "dummy".getBytes());
@@ -165,20 +167,30 @@ class EvidencePermissionTest {
                         .param("evidenceTypeId", ownedType.getId().toString())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
+                .andExpect(jsonPath("$.success").value(true))
+                // v18.6a — 응답 shape 변경 (status + evidenceFile nested)
+                .andExpect(jsonPath("$.data.status").value("created"))
+                .andExpect(jsonPath("$.data.evidenceFile.id").exists())
+                .andExpect(jsonPath("$.data.evidenceFile.assetId").exists());
 
-        // DB 확인: 가장 최근 파일의 reviewStatus 가 auto_approved
         EvidenceFile saved = evidenceFileRepository
                 .findByEvidenceTypeIdOrderByVersionDesc(ownedType.getId()).get(0);
         assertThat(saved.getReviewStatus()).isEqualTo(ReviewStatus.auto_approved);
         assertThat(saved.getUploadedBy().getId()).isEqualTo(admin.getId());
 
-        System.out.println("✅ [Upload] admin → auto_approved 정상");
+        // v18.6a — asset 채널 검증 (LazyInit 회피: proxy id 만 접근 + 별도 fetch)
+        assertThat(saved.getAsset()).isNotNull();
+        Long assetId = saved.getAsset().getId();   // proxy id 는 lazy 없이 접근 가능
+        EvidenceAsset assetEntity = evidenceAssetRepository.findById(assetId).orElseThrow();
+        assertThat(assetEntity.getSha256()).hasSize(64);
+        assertThat(assetEntity.getFilePath()).contains("assets");
+        
+        System.out.println("✅ [Upload] admin → auto_approved + asset 등록 정상");
     }
 
     @Test
     @Order(2)
-    @DisplayName("[Upload] 담당자(소유·permission_evidence=true) → 200 + review_status=pending")
+    @DisplayName("[Upload] 담당자(소유·permission_evidence=true) → 200 + review_status=pending + asset 등록")
     void testOwnerUpload_pending() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
                 "file", "owner_upload.pdf", "application/pdf", "dummy".getBytes());
@@ -189,7 +201,11 @@ class EvidencePermissionTest {
                         .param("submitNote", "분기 교육 수료증 제출합니다")
                         .header("Authorization", "Bearer " + ownerWithPermToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
+                .andExpect(jsonPath("$.success").value(true))
+                // v18.6a — 응답 shape 변경
+                .andExpect(jsonPath("$.data.status").value("created"))
+                .andExpect(jsonPath("$.data.evidenceFile.id").exists())
+                .andExpect(jsonPath("$.data.evidenceFile.assetId").exists());
 
         EvidenceFile saved = evidenceFileRepository
                 .findByEvidenceTypeIdOrderByVersionDesc(ownedType.getId()).get(0);
@@ -197,7 +213,13 @@ class EvidencePermissionTest {
         assertThat(saved.getUploadedBy().getId()).isEqualTo(ownerWithPerm.getId());
         assertThat(saved.getSubmitNote()).contains("교육");
 
-        System.out.println("✅ [Upload] 담당자(소유) → pending 정상 + submit_note 기록");
+        // v18.6a — asset 채널 검증 (LazyInit 회피)
+        assertThat(saved.getAsset()).isNotNull();
+        Long assetId = saved.getAsset().getId();
+        EvidenceAsset assetEntity = evidenceAssetRepository.findById(assetId).orElseThrow();
+        assertThat(assetEntity.getSha256()).hasSize(64);
+
+        System.out.println("✅ [Upload] 담당자(소유) → pending + asset 등록 정상");
     }
 
     @Test

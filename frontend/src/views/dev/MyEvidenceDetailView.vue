@@ -1,8 +1,27 @@
 <script setup lang="ts">
+/**
+ * 담당자(dev) "내 할 일 — 증빙 상세" 페이지 (v11 Phase 5-5).
+ *
+ * 진입 경로: /my-tasks/:evidenceTypeId
+ * 흐름: 본인 EvidenceType 의 검토 상태 + 제출 이력 + 재제출 폼.
+ *
+ * v18.6a — Evidence Asset 신규 채널:
+ *  - 업로드 영역의 액션 분기: [새 파일 등록] / [기존 파일에서 선택]
+ *  - upload 응답 status="duplicate_detected" 시 confirm dialog 노출
+ *    → [기존 사용 (권장)] / [새로 등록] / [취소] 의 3 액션 (Q1=b)
+ *  - 검색 다이얼로그 권한 = isAuthenticated (Q8) — dev 도 검색 가능
+ *  - 본인 EvidenceType 만 link 가능 (BE assertCanAccessEvidenceType 검증)
+ */
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { myTasksApi, evidenceFilesApi } from '@/services/evidenceApi'
-import type { MyTaskDetail, MyTaskFileHistoryEntry } from '@/types/evidence'
+import type {
+  MyTaskDetail,
+  MyTaskFileHistoryEntry,
+  EvidenceAsset,
+} from '@/types/evidence'
+import EvidenceAssetSearchDialog from '@/components/evidence/EvidenceAssetSearchDialog.vue'
+import EvidenceAssetDuplicateConfirmDialog from '@/components/evidence/EvidenceAssetDuplicateConfirmDialog.vue'
 
 const props = defineProps<{
   evidenceTypeId: number
@@ -21,6 +40,21 @@ const uploading = ref(false)
 const uploadSuccess = ref(false)
 const uploadError = ref<string | null>(null)
 const isDragOver = ref(false)
+
+// v18.6a — 업로드 영역의 액션 분기 모드
+type UploadMode = 'menu' | 'new'
+const uploadMode = ref<UploadMode>('menu')
+
+// v18.6a — 검색 다이얼로그
+const showSearchDialog = ref(false)
+
+// v18.6a — 중복 감지 confirm 다이얼로그
+const showDuplicateDialog = ref(false)
+const duplicateAsset = ref<EvidenceAsset | null>(null)
+
+// duplicate confirm 후 force/link 재호출 시 보존할 컨텍스트
+const pendingFile = ref<File | null>(null)
+const pendingSubmitNote = ref<string>('')
 
 // 토스트
 const toast = ref({ show: false, message: '', type: 'success' as 'success' | 'error' })
@@ -61,8 +95,7 @@ onMounted(load)
 // 라우트 props 가 바뀌면 다시 로드
 watch(() => props.evidenceTypeId, (newId) => {
   if (newId != null) {
-    uploadFile.value = null
-    submitNote.value = ''
+    resetUploadState()
     uploadSuccess.value = false
     uploadError.value = null
     load()
@@ -93,22 +126,39 @@ function onDrop(e: DragEvent) {
 
 const canSubmit = computed(() => !!uploadFile.value && !uploading.value)
 
-async function handleSubmit() {
+/**
+ * 증빙 제출/재제출 — v18.6a 변경 (응답 status 분기).
+ *
+ * @param forceUpload true 시 중복 감지 무시하고 별도 asset 생성 (Q9).
+ */
+async function handleSubmit(forceUpload = false) {
   if (!uploadFile.value) return
   uploading.value = true
   uploadError.value = null
   uploadSuccess.value = false
   try {
-    await evidenceFilesApi.upload(
+    const note = submitNote.value.trim() || undefined
+    const { data } = await evidenceFilesApi.upload(
       props.evidenceTypeId,
       uploadFile.value,
-      submitNote.value.trim() || undefined,
+      note,
+      forceUpload,
     )
+
+    if (data.success && data.data.status === 'duplicate_detected') {
+      // 중복 감지 — confirm dialog 노출, 사용자 선택 대기
+      duplicateAsset.value = data.data.existingAsset ?? null
+      pendingFile.value = uploadFile.value
+      pendingSubmitNote.value = submitNote.value
+      showDuplicateDialog.value = true
+      uploading.value = false
+      return
+    }
+
+    // created — 정상 제출
     uploadSuccess.value = true
     showToast('증빙이 제출되었습니다. 관리자 검토를 기다려주세요.', 'success')
-    // 폼 리셋 & 상세 재조회
-    uploadFile.value = null
-    submitNote.value = ''
+    resetUploadState()
     await load()
   } catch (e: any) {
     const msg = e?.response?.data?.message ?? '제출에 실패했습니다. 잠시 후 다시 시도해주세요.'
@@ -117,6 +167,102 @@ async function handleSubmit() {
   } finally {
     uploading.value = false
   }
+}
+
+// ========================================
+// v18.6a — 중복 감지 confirm 다이얼로그 핸들러
+// ========================================
+
+/**
+ * [기존 사용 (권장)] — POST /evidence-files/link 호출.
+ */
+async function handleUseExisting() {
+  if (!duplicateAsset.value) return
+  uploading.value = true
+  try {
+    await evidenceFilesApi.link({
+      evidenceTypeId: props.evidenceTypeId,
+      assetId: duplicateAsset.value.id,
+      fileName: pendingFile.value?.name,
+      submitNote: pendingSubmitNote.value.trim() || undefined,
+    })
+    uploadSuccess.value = true
+    showToast('기존 파일이 연결되었습니다.', 'success')
+    resetUploadState()
+    await load()
+  } catch (e: any) {
+    const msg = e?.response?.data?.message ?? '연결에 실패했습니다.'
+    uploadError.value = msg
+    showToast(msg, 'error')
+  } finally {
+    uploading.value = false
+  }
+}
+
+/**
+ * [새로 등록] — POST /upload?forceUpload=true 재호출 (Q9 — 같은 sha 의 별도 asset).
+ */
+async function handleForceNew() {
+  if (!pendingFile.value) return
+  uploadFile.value = pendingFile.value
+  submitNote.value = pendingSubmitNote.value
+  showDuplicateDialog.value = false
+  duplicateAsset.value = null
+  await handleSubmit(true)   // forceUpload=true
+}
+
+/**
+ * [취소] — 다이얼로그 닫고 상태 reset (uploadFile 은 유지 — 사용자 재시도 가능).
+ */
+function handleCancelDuplicate() {
+  showDuplicateDialog.value = false
+  duplicateAsset.value = null
+  pendingFile.value = null
+  pendingSubmitNote.value = ''
+}
+
+// ========================================
+// v18.6a — 검색 다이얼로그 핸들러
+// ========================================
+
+/**
+ * 검색 다이얼로그에서 asset 선택 → POST /evidence-files/link 호출.
+ */
+async function handleSelectAsset(asset: EvidenceAsset) {
+  showSearchDialog.value = false
+  uploading.value = true
+  uploadError.value = null
+  uploadSuccess.value = false
+  try {
+    await evidenceFilesApi.link({
+      evidenceTypeId: props.evidenceTypeId,
+      assetId: asset.id,
+      submitNote: submitNote.value.trim() || undefined,
+    })
+    uploadSuccess.value = true
+    showToast('기존 파일이 연결되었습니다.', 'success')
+    resetUploadState()
+    await load()
+  } catch (e: any) {
+    const msg = e?.response?.data?.message ?? '연결에 실패했습니다.'
+    uploadError.value = msg
+    showToast(msg, 'error')
+  } finally {
+    uploading.value = false
+  }
+}
+
+/**
+ * 업로드 모드 reset — 액션 분기 menu 로 복귀 + 상태 정리.
+ */
+function resetUploadState() {
+  uploadFile.value = null
+  submitNote.value = ''
+  uploadMode.value = 'menu'
+  showDuplicateDialog.value = false
+  duplicateAsset.value = null
+  pendingFile.value = null
+  pendingSubmitNote.value = ''
 }
 
 async function handleDownload(entry: MyTaskFileHistoryEntry) {
@@ -297,7 +443,7 @@ const statusSummary = computed(() => {
       </div>
 
       <!-- ========================================
-           업로드 폼
+           업로드 폼 (v18.6a — 액션 분기)
            ======================================== -->
       <div class="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
         <div class="flex items-center gap-2">
@@ -311,67 +457,107 @@ const statusSummary = computed(() => {
           </span>
         </div>
 
-        <!-- 드래그 앤 드롭 영역 -->
-        <div
-          @dragover.prevent="isDragOver = true"
-          @dragleave.prevent="isDragOver = false"
-          @drop="onDrop"
-          :class="['border-2 border-dashed rounded-lg p-6 text-center transition-colors',
-            isDragOver
-              ? 'border-blue-500 bg-blue-50/50'
-              : (uploadFile ? 'border-green-300 bg-green-50/30' : 'border-gray-300 bg-gray-50/40 hover:border-blue-400')]">
-          <template v-if="!uploadFile">
-            <i class="pi pi-cloud-upload text-3xl text-gray-400 mb-2"></i>
-            <p class="text-sm text-gray-600 mb-3">
-              파일을 여기로 드래그하거나
-              <label class="text-blue-600 hover:underline cursor-pointer font-medium">
-                선택하여 업로드
-                <input type="file" class="hidden" @change="onFileChange" />
-              </label>
-            </p>
-            <p class="text-[11px] text-gray-400">단일 파일만 선택할 수 있습니다.</p>
-          </template>
-          <template v-else>
-            <i class="pi pi-file text-green-600 text-2xl mb-2"></i>
-            <p class="text-sm font-medium text-gray-900">{{ uploadFile.name }}</p>
-            <p class="text-xs text-gray-500 mt-0.5">{{ formatFileSize(uploadFile.size) }}</p>
-            <button
-              @click.stop="uploadFile = null; uploadError = null"
-              class="mt-3 text-[11px] text-red-600 hover:underline">
-              선택 해제
-            </button>
-          </template>
-        </div>
-
-        <!-- 제출 메모 -->
-        <div>
-          <label class="block text-xs font-medium text-gray-700 mb-1">
-            제출 메모 <span class="text-gray-400 font-normal">(선택)</span>
-          </label>
-          <textarea
-            v-model="submitNote"
-            rows="2"
-            class="w-full px-3 py-2 text-sm border border-gray-200 rounded-md resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-            placeholder="관리자가 검토할 때 참고할 내용이 있으면 입력해주세요. (예: 반려 사유에 따라 수정한 부분 요약)"></textarea>
-        </div>
-
-        <!-- 에러 -->
-        <p v-if="uploadError" class="text-xs text-red-600 flex items-center gap-1">
-          <i class="pi pi-exclamation-circle text-[11px]"></i>
-          {{ uploadError }}
-        </p>
-
-        <!-- 버튼 -->
-        <div class="flex justify-end">
+        <!-- 모드 1: 액션 분기 menu -->
+        <div v-if="uploadMode === 'menu'" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <!-- [새 파일 등록] -->
           <button
-            @click="handleSubmit"
-            :disabled="!canSubmit"
-            class="h-9 px-4 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5 font-medium">
-            <i v-if="uploading" class="pi pi-spin pi-spinner text-xs"></i>
-            <i v-else class="pi pi-send text-xs"></i>
-            {{ uploading ? '제출 중...' : '제출' }}
+            @click="uploadMode = 'new'"
+            class="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-blue-400 hover:bg-blue-50/30 transition-colors">
+            <div class="flex items-center gap-2 mb-1.5">
+              <i class="pi pi-cloud-upload text-blue-600 text-base"></i>
+              <span class="text-sm font-medium text-gray-900">새 파일 등록</span>
+            </div>
+            <p class="text-[11px] text-gray-500">
+              새 파일을 업로드합니다. 같은 내용이 이미 등록된 경우 사용자에게 선택을 묻습니다.
+            </p>
+          </button>
+
+          <!-- [기존 파일에서 선택] -->
+          <button
+            @click="showSearchDialog = true"
+            class="border-2 border-gray-200 rounded-lg p-4 text-left hover:border-blue-400 hover:bg-blue-50/30 transition-colors">
+            <div class="flex items-center gap-2 mb-1.5">
+              <i class="pi pi-search text-blue-600 text-base"></i>
+              <span class="text-sm font-medium text-gray-900">기존 파일에서 선택</span>
+            </div>
+            <p class="text-[11px] text-gray-500">
+              이미 등록된 파일을 검색해 이 증빙에 연결합니다.
+            </p>
           </button>
         </div>
+
+        <!-- 모드 2: 새 파일 등록 (드래그앤드롭 + 메모 + 제출 버튼) -->
+        <template v-else-if="uploadMode === 'new'">
+          <!-- 뒤로 -->
+          <button
+            @click="resetUploadState"
+            class="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900">
+            <i class="pi pi-chevron-left text-[10px]"></i>
+            제출 방식 다시 선택
+          </button>
+
+          <!-- 드래그 앤 드롭 영역 -->
+          <div
+            @dragover.prevent="isDragOver = true"
+            @dragleave.prevent="isDragOver = false"
+            @drop="onDrop"
+            :class="['border-2 border-dashed rounded-lg p-6 text-center transition-colors',
+              isDragOver
+                ? 'border-blue-500 bg-blue-50/50'
+                : (uploadFile ? 'border-green-300 bg-green-50/30' : 'border-gray-300 bg-gray-50/40 hover:border-blue-400')]">
+            <template v-if="!uploadFile">
+              <i class="pi pi-cloud-upload text-3xl text-gray-400 mb-2"></i>
+              <p class="text-sm text-gray-600 mb-3">
+                파일을 여기로 드래그하거나
+                <label class="text-blue-600 hover:underline cursor-pointer font-medium">
+                  선택하여 업로드
+                  <input type="file" class="hidden" @change="onFileChange" />
+                </label>
+              </p>
+              <p class="text-[11px] text-gray-400">단일 파일만 선택할 수 있습니다.</p>
+            </template>
+            <template v-else>
+              <i class="pi pi-file text-green-600 text-2xl mb-2"></i>
+              <p class="text-sm font-medium text-gray-900">{{ uploadFile.name }}</p>
+              <p class="text-xs text-gray-500 mt-0.5">{{ formatFileSize(uploadFile.size) }}</p>
+              <button
+                @click.stop="uploadFile = null; uploadError = null"
+                class="mt-3 text-[11px] text-red-600 hover:underline">
+                선택 해제
+              </button>
+            </template>
+          </div>
+
+          <!-- 제출 메모 -->
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">
+              제출 메모 <span class="text-gray-400 font-normal">(선택)</span>
+            </label>
+            <textarea
+              v-model="submitNote"
+              rows="2"
+              class="w-full px-3 py-2 text-sm border border-gray-200 rounded-md resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              placeholder="관리자가 검토할 때 참고할 내용이 있으면 입력해주세요. (예: 반려 사유에 따라 수정한 부분 요약)"></textarea>
+          </div>
+
+          <!-- 에러 -->
+          <p v-if="uploadError" class="text-xs text-red-600 flex items-center gap-1">
+            <i class="pi pi-exclamation-circle text-[11px]"></i>
+            {{ uploadError }}
+          </p>
+
+          <!-- 버튼 -->
+          <div class="flex justify-end">
+            <button
+              @click="handleSubmit(false)"
+              :disabled="!canSubmit"
+              class="h-9 px-4 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5 font-medium">
+              <i v-if="uploading" class="pi pi-spin pi-spinner text-xs"></i>
+              <i v-else class="pi pi-send text-xs"></i>
+              {{ uploading ? '제출 중...' : '제출' }}
+            </button>
+          </div>
+        </template>
       </div>
 
       <!-- ========================================
@@ -432,6 +618,24 @@ const statusSummary = computed(() => {
         </div>
       </div>
     </template>
+
+    <!-- ======================================
+         v18.6a — Evidence Asset 검색 다이얼로그
+         ====================================== -->
+    <EvidenceAssetSearchDialog
+      :open="showSearchDialog"
+      @select="handleSelectAsset"
+      @close="showSearchDialog = false" />
+
+    <!-- ======================================
+         v18.6a — 중복 감지 confirm 다이얼로그
+         ====================================== -->
+    <EvidenceAssetDuplicateConfirmDialog
+      :open="showDuplicateDialog"
+      :existing-asset="duplicateAsset"
+      @use-existing="handleUseExisting"
+      @force-new="handleForceNew"
+      @cancel="handleCancelDuplicate" />
   </div>
 </template>
 

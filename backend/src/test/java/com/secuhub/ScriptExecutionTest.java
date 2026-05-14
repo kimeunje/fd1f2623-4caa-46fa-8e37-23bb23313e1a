@@ -210,7 +210,6 @@ class ScriptExecutionTest {
         assertThat(saved.getStatus()).isEqualTo(ExecutionStatus.success);
         assertThat(saved.getFinishedAt()).isNotNull();
 
-        // flush로 영속성 컨텍스트 동기화
         evidenceFileRepository.flush();
         List<EvidenceFile> files = evidenceFileRepository.findByEvidenceTypeIdOrderByVersionDesc(et.getId());
 
@@ -220,7 +219,8 @@ class ScriptExecutionTest {
         allFiles.forEach(f -> System.out.println("     -> id=" + f.getId()
                 + " etId=" + f.getEvidenceType().getId()
                 + " method=" + f.getCollectionMethod()
-                + " name=" + f.getFileName()));
+                + " name=" + f.getFileName()
+                + " assetId=" + (f.getAsset() != null ? f.getAsset().getId() : "null")));
         System.out.println("   ET " + et.getId() + " 파일 수: " + files.size());
 
         assertThat(files).hasSize(1);
@@ -229,7 +229,17 @@ class ScriptExecutionTest {
         assertThat(files.get(0).getVersion()).isEqualTo(1);
         assertThat(files.get(0).getExecution()).isNotNull();
 
-        System.out.println("✅ [Script] 성공 스크립트 실행 + 파일 자동 수집 정상");
+        // v18.6a — Asset 채널 검증 (Q7 자동 reuse)
+        assertThat(files.get(0).getAsset()).isNotNull();
+        assertThat(files.get(0).getAsset().getSha256()).hasSize(64);
+        assertThat(files.get(0).getAsset().getFilePath()).contains("assets");
+        assertThat(files.get(0).getAsset().getFilePath())
+                .contains(String.valueOf(files.get(0).getAsset().getId()));
+
+        System.out.println("✅ [Script] 성공 스크립트 실행 + asset 자동 수집 정상");
+        System.out.println("   수집 파일: " + files.get(0).getFileName()
+                + " (v" + files.get(0).getVersion()
+                + ", assetId=" + files.get(0).getAsset().getId() + ")");
         System.out.println("   수집 파일: " + files.get(0).getFileName() + " (v" + files.get(0).getVersion() + ")");
 
         Files.deleteIfExists(testScript);

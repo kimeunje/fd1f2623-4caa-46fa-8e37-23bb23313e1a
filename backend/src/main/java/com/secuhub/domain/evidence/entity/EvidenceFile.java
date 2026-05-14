@@ -17,6 +17,12 @@ import java.time.LocalDateTime;
  * 레벨 매핑이고, DB FK 자체는 default RESTRICT 였음 (v18.2 부산 발견). Hibernate
  * cascade graph 가 silent skip 되는 사례 (L_HIBERNATE_CASCADE_SILENT) 에서는 DB FK
  * 가 정공 — native SQL DELETE 가 cascade chain 처리.</p>
+ *
+ * <h3>v18.6a — Evidence Asset 신규 채널 (§2.4 진입)</h3>
+ * <p>새 {@code asset_id} FK 추가 (transitional NULLABLE). 운영 검증 중 발견된 silent
+ * risk 2건 (중복 파일 / Framework 복사 dangling) 대응. {@code filePath} 컬럼은
+ * transitional 보존 (v18.6b 마이그레이션 후 폐기). 자세한 정책은 {@link EvidenceAsset}
+ * 참조.</p>
  */
 @Entity
 @Table(name = "evidence_files", indexes = {
@@ -42,6 +48,25 @@ public class EvidenceFile extends BaseEntity {
     @JoinColumn(name = "evidence_type_id", nullable = false)
     @OnDelete(action = OnDeleteAction.CASCADE)
     private EvidenceType evidenceType;
+
+    /**
+     * v18.6a — Evidence Asset 신규 채널 (§2.4 진입).
+     *
+     * <p>같은 asset 을 여러 EvidenceFile 이 참조 (N:M). transitional NULLABLE
+     * (v18.6b 마이그레이션 후 NOT NULL ALTER 예정). asset_id NULL 시 옛
+     * {@link #filePath} 컬럼 fallback ({@link #resolveFilePath()} 참조).</p>
+     *
+     * <p>DB FK ON DELETE RESTRICT (Flyway V2) — asset 사용 중 직접 삭제 차단.
+     * GC 는 service 레벨 ({@code EvidenceFileService.delete} 의 reference_count
+     * 검사, Q10). entity 에서 {@code @OnDelete} 명시 안 함 — Hibernate default
+     * (NO ACTION) 와 DB RESTRICT 동작 같음.</p>
+     *
+     * <p>v18.3 의 EvidenceType cascade chain 영향 없음 — EvidenceType 삭제 →
+     * EvidenceFile cascade 삭제는 본 link 만 정리, asset 자체는 별도 GC.</p>
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "asset_id")
+    private EvidenceAsset asset;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "execution_id")
@@ -139,5 +164,27 @@ public class EvidenceFile extends BaseEntity {
         this.reviewedBy = reviewer;
         this.reviewNote = note;          // 반려 시 필수 (서비스에서 검증)
         this.reviewedAt = LocalDateTime.now();
+    }
+
+    // ========================================================================
+    // v18.6a — Asset 우선 / filePath fallback helper
+    // ========================================================================
+
+    /**
+     * 물리 파일 경로 — asset_id 있으면 asset.filePath, 없으면 옛 filePath (transitional).
+     *
+     * <p>v18.6a 시점 양쪽 모두 운영:</p>
+     * <ul>
+     *   <li>신규 업로드 (FE upload + Script auto collect) = asset != null → asset.filePath</li>
+     *   <li>옛 데이터 (v18.5 시점 등록) = asset == null + filePath 유지 → 옛 filePath</li>
+     * </ul>
+     *
+     * <p>v18.6b 마이그레이션 후: 모든 EvidenceFile 이 asset != null, filePath 컬럼 폐기.
+     * 본 helper 와 filePath 필드 모두 제거 예정.</p>
+     *
+     * @return 절대 경로 (asset 우선, 옛 filePath fallback)
+     */
+    public String resolveFilePath() {
+        return (asset != null) ? asset.getFilePath() : filePath;
     }
 }

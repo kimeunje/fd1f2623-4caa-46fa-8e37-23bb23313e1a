@@ -33,7 +33,7 @@ import java.util.List;
  * <ul>
  *   <li>관리자 전용: list, stats, downloadZip, delete,
  *       <b>approve, reject, pending</b> (Phase 5-4)</li>
- *   <li>관리자 + 소유 담당자: listByType, upload, download</li>
+ *   <li>관리자 + 소유 담당자: listByType, upload, download, <b>link</b> (v18.6a)</li>
  * </ul>
  *
  * <h3>v15 Phase 5-15c (v15.7) — Q3=B URL path variable rename</h3>
@@ -41,6 +41,14 @@ import java.util.List;
  * {@code "/zip/{nodeId}"} + {@code @PathVariable Long controlId} →
  * {@code Long nodeId} + 본문 변수 사용 4 곳 일괄 갱신. BC 0 — 같은 phase 안 FE 의
  * downloadZip 호출 (evidenceApi.ts) 도 동기 변경. 외부 통합 0 가정.</p>
+ *
+ * <h3>v18.6a — Evidence Asset 신규 채널 (§2.4 진입)</h3>
+ * <ul>
+ *   <li>{@link #upload} — 응답 shape 변경 ({@code Response} → {@code UploadResponse}).
+ *       {@code ?forceUpload=true} 쿼리 추가 (default false). status="duplicate_detected"
+ *       시 FE 가 confirm dialog 노출</li>
+ *   <li>{@link #link} — POST /link 신규. 기존 asset 에 link 만 생성 (multipart 없음)</li>
+ * </ul>
  */
 @RestController
 @RequestMapping("/api/v1/evidence-files")
@@ -148,24 +156,71 @@ public class EvidenceFileController {
     }
 
     /**
-     * 증빙 파일 수동 업로드 — 관리자 또는 소유 담당자
+     * 파일 업로드 — v18.6a 변경 (sha256 기반 중복 감지 + asset 채널).
      * POST /api/v1/evidence-files/upload
      *
      * <p>admin 업로드 → review_status=auto_approved,
      * 담당자 업로드 → review_status=pending. uploaded_by 항상 기록.</p>
+     *
+     * <p>응답 status 분기 (Q1=b / Q4=a):</p>
+     * <ul>
+     *   <li>{@code "created"} — 신규 업로드 (forceUpload=true 또는 sha256 unique)</li>
+     *   <li>{@code "duplicate_detected"} — 같은 sha256 발견. FE 가 confirm dialog 노출 후
+     *       사용자 선택:
+     *     <ul>
+     *       <li>[기존 사용] → POST /link (link only, multipart 없음)</li>
+     *       <li>[새로 등록] → POST /upload?forceUpload=true (multipart 재전송)</li>
+     *     </ul>
+     *   </li>
+     * </ul>
+     *
+     * <p>응답 toast 메시지 분기 — FE 가 status 따라 다르게 표시 (Chat 4).</p>
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<ApiResponse<EvidenceFileDto.Response>> upload(
+    public ResponseEntity<ApiResponse<EvidenceFileDto.UploadResponse>> upload(
             @RequestParam("evidenceTypeId") Long evidenceTypeId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "submitNote", required = false) String submitNote,
+            @RequestParam(value = "forceUpload", defaultValue = "false") boolean forceUpload,
             @AuthenticationPrincipal UserPrincipal principal) {
         evidenceAuthService.assertCanAccessEvidenceType(evidenceTypeId, principal);
 
-        EvidenceFileDto.Response response =
-                evidenceFileService.upload(evidenceTypeId, file, principal, submitNote);
+        EvidenceFileDto.UploadResponse response =
+                evidenceFileService.upload(evidenceTypeId, file, principal, submitNote, forceUpload);
+
+        String message;
+        if ("duplicate_detected".equals(response.getStatus())) {
+            message = "기존 파일과 동일한 파일이 발견되었습니다. 선택해주세요.";
+        } else {
+            message = "파일이 업로드되었습니다. (v" + response.getEvidenceFile().getVersion() + ")";
+        }
+        return ResponseEntity.ok(ApiResponse.ok(message, response));
+    }
+
+    /**
+     * 기존 asset link 생성 — POST /api/v1/evidence-files/link (v18.6a 신규).
+     *
+     * <p>화면 mockup [기존 파일에서 선택] 흐름 또는 [중복 감지 confirm] 의 [기존 사용]
+     * 결과. Multipart 없이 body 로 evidenceTypeId + assetId + (옵션) fileName + submitNote.</p>
+     *
+     * <p>권한 — {@link EvidenceAuthService#assertCanAccessEvidenceType} 으로 본인
+     * EvidenceType 만 link 가능. EvidenceAssetController 의 검색 권한 (Q8 = read-only
+     * broad) 과 정합 분리: 검색은 broad, link 생성은 fine-grained.</p>
+     */
+    @PostMapping("/link")
+    public ResponseEntity<ApiResponse<EvidenceFileDto.Response>> link(
+            @RequestBody EvidenceFileDto.LinkRequest req,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        evidenceAuthService.assertCanAccessEvidenceType(req.getEvidenceTypeId(), principal);
+
+        EvidenceFileDto.Response response = evidenceFileService.linkExistingAsset(
+                req.getEvidenceTypeId(),
+                req.getAssetId(),
+                req.getFileName(),
+                req.getSubmitNote(),
+                principal);
         return ResponseEntity.ok(ApiResponse.ok(
-                "파일이 업로드되었습니다. (v" + response.getVersion() + ")", response));
+                "기존 파일에서 연결되었습니다. (v" + response.getVersion() + ")", response));
     }
 
     /**
