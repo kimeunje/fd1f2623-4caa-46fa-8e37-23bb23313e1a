@@ -388,12 +388,7 @@ export const jobsApi = {
 
   /**
    * v18.7 — 실패 시점 스크린샷 URL builder.
-   *
-   * <p>fetch 호출 없음 — URL 만 산출. {@code <img :src="..." />} 또는
-   * {@code <a :href="...">} 에 직접 활용.</p>
-   *
-   * <p>BE: GET /api/v1/admin/job-executions/{id}/diagnosis/screenshot →
-   * image/png 스트리밍. 권한 = hasRole('ADMIN').</p>
+   * fetch 호출 없음 — URL 만 산출. <img :src="..." /> 또는 <a :href="..."> 에 활용.
    */
   getDiagnosisScreenshotUrl(executionId: number): string {
     return `/api/v1/admin/job-executions/${executionId}/diagnosis/screenshot`
@@ -401,12 +396,7 @@ export const jobsApi = {
 
   /**
    * v18.7 — 실패 시점 페이지 소스 URL builder.
-   *
-   * <p>{@code window.open(url, '_blank')} 활용 — 새 탭에서 파일 다운로드
-   * (Content-Disposition: attachment).</p>
-   *
-   * <p>BE: GET /api/v1/admin/job-executions/{id}/diagnosis/page-source →
-   * text/html 응답. 권한 = hasRole('ADMIN').</p>
+   * window.open(url, '_blank') 활용 — 새 탭에서 파일 다운로드.
    */
   getDiagnosisPageSourceUrl(executionId: number): string {
     return `/api/v1/admin/job-executions/${executionId}/diagnosis/page-source`
@@ -414,20 +404,12 @@ export const jobsApi = {
 }
 
 // ========================================
-// v18.7 — 진단 JSON 파싱 helper (L_USER_NEEDS_REDIRECT)
+// v18.7 — 진단 JSON 파싱 helper
 // ========================================
 
 /**
  * JobExecution.errorDiagnosis 의 JSON String 을 DiagnosisJson 객체로 파싱.
- *
- * <p>null / undefined / 파싱 실패 시 null 반환 (FE 가 graceful 처리).
- * 사용 패턴:</p>
- *
- * <pre>
- *   import { parseDiagnosis } from '@/services/evidenceApi'
- *   const diagnosis = parseDiagnosis(execution.errorDiagnosis)
- *   // → DiagnosisJson | null
- * </pre>
+ * null/undefined/파싱 실패 시 null 반환 (FE graceful 처리).
  */
 export function parseDiagnosis(rawJson: string | null | undefined): DiagnosisJson | null {
   if (!rawJson) return null
@@ -437,6 +419,62 @@ export function parseDiagnosis(rawJson: string | null | undefined): DiagnosisJso
     console.warn('진단 JSON 파싱 실패:', e)
     return null
   }
+}
+
+// ========================================
+// v18.8 — 스크립트 관리 API (admin 한정)
+//
+// 어드민 UI 만으로 Python 스크립트 등록/수정. SSH 없이 진단 패널 → 수정 → 재실행 흐름.
+// 모든 endpoint = hasRole('ADMIN').
+// ========================================
+export const scriptsApi = {
+  /** base-dir 의 .py 스크립트 목록 조회 */
+  list() {
+    return api.get<ApiResponse<{ scripts: ScriptInfo[] }>>('/admin/scripts')
+  },
+
+  /** 신규 업로드 — 충돌 시 400 거부 (Q4) */
+  upload(payload: ScriptUploadRequest) {
+    return api.post<ApiResponse<ScriptContent>>('/admin/scripts', payload)
+  },
+
+  /** 기존 스크립트 내용 조회 — 편집 모드 진입 시 */
+  getContent(filename: string) {
+    return api.get<ApiResponse<ScriptContent>>(`/admin/scripts/${encodeURIComponent(filename)}`)
+  },
+
+  /** 기존 스크립트 수정 (덮어쓰기). scriptPath 유지 → 재실행 시 수정 내용 반영 */
+  update(filename: string, payload: ScriptUpdateRequest) {
+    return api.put<ApiResponse<ScriptContent>>(
+      `/admin/scripts/${encodeURIComponent(filename)}`,
+      payload,
+    )
+  },
+}
+
+// ────── v18.8 타입 정의 ──────
+
+export interface ScriptInfo {
+  filename: string
+  size: number
+  lastModified: string   // ISO-8601
+  scriptPath: string
+}
+
+export interface ScriptContent {
+  filename: string
+  content: string
+  size: number
+  lastModified: string
+}
+
+export interface ScriptUploadRequest {
+  filename: string       // 예: "policy_crawl.py", 영문/숫자/언더스코어/하이픈/점만
+  content: string        // UTF-8 Python 소스 (최대 1MB)
+}
+
+export interface ScriptUpdateRequest {
+  content: string
 }
 
 // ========================================

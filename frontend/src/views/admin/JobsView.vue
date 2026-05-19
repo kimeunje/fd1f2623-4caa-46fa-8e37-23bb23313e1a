@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { jobsApi } from '@/services/evidenceApi'
 import type { CollectionJobItem, CollectionJobDetail, ExecutionSummary } from '@/types/evidence'
 import FailureDiagnosisPanel from '@/components/admin/FailureDiagnosisPanel.vue'
+import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
 
 const jobs = ref<CollectionJobItem[]>([])
 const loading = ref(false)
@@ -14,6 +15,10 @@ const newJob = ref({ name: '', description: '', jobType: 'web_scraping', scriptP
 
 // v18.7 — 진단 패널 진입 상태 (풀폭 swap)
 const selectedExecution = ref<ExecutionSummary | null>(null)
+
+// v18.8 — 스크립트 편집 dialog 상태
+const scriptEditorMode = ref<'create' | 'edit' | null>(null)
+const editingScriptFilename = ref<string | null>(null)
 
 const jobTypeLabels: Record<string, { label: string; color: string }> = {
   web_scraping: { label: '웹 스크래핑', color: 'bg-purple-100 text-purple-700' },
@@ -135,6 +140,40 @@ function openDiagnosisPanel(exec: ExecutionSummary) {
 // v18.7 — 풀폭 swap 상태 (목록 + 상세 숨김 여부)
 const showDiagnosisPanel = computed(() => selectedExecution.value !== null)
 
+// v18.8 — 스크립트 신규 작성 다이얼로그 열기
+function openScriptCreateDialog() {
+  scriptEditorMode.value = 'create'
+  editingScriptFilename.value = null
+}
+
+// v18.8 — 진단 패널의 "수정 스크립트 업로드" 버튼 → 스크립트 수정 dialog 열기
+function openScriptEditDialog(scriptPath: string) {
+  // scriptPath = "/home/scripts/login_flow_demo.py" → filename 만 추출
+  const filename = scriptPath.split(/[/\\]/).pop() ?? scriptPath
+  editingScriptFilename.value = filename
+  scriptEditorMode.value = 'edit'
+}
+
+function closeScriptEditor() {
+  scriptEditorMode.value = null
+  editingScriptFilename.value = null
+}
+
+// v18.8 — 스크립트 저장 완료 시
+async function onScriptSaved(payload: { filename: string; scriptPath: string }) {
+  closeScriptEditor()
+
+  // 신규 작성이면 작업 등록 dialog 의 scriptPath 에 자동 채움
+  if (showCreateDialog.value && !newJob.value.scriptPath) {
+    newJob.value.scriptPath = payload.scriptPath
+  }
+
+  // 작업 상세 패널이 열려 있으면 다시 로드 (수정 후 재실행 흐름)
+  if (selectedJob.value) {
+    await openDetail(selectedJob.value.id)
+  }
+}
+
 onMounted(loadJobs)
 </script>
 
@@ -165,7 +204,9 @@ onMounted(loadJobs)
       <FailureDiagnosisPanel
         :execution="selectedExecution"
         :job-name="selectedJob?.name"
+        :script-path="selectedJob?.scriptPath"
         @close="selectedExecution = null"
+        @upload-script="openScriptEditDialog"
       />
     </div>
 
@@ -373,9 +414,18 @@ onMounted(loadJobs)
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">스크립트 경로</label>
-            <input v-model="newJob.scriptPath" class="w-full px-3 py-2 border rounded-lg text-sm font-mono"
-              placeholder="/scripts/access_rights.py" />
+            <label class="block text-sm font-medium text-gray-700 mb-1">스크립트 파일명</label>
+            <div class="flex gap-2">
+              <input v-model="newJob.scriptPath" class="flex-1 px-3 py-2 border rounded-lg text-sm font-mono"
+                placeholder="policy_crawl.py" />
+              <button type="button" @click="openScriptCreateDialog"
+                class="px-3 py-2 text-xs bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 inline-flex items-center gap-1 whitespace-nowrap">
+                <i class="pi pi-pencil text-xs"></i> 작성
+              </button>
+            </div>
+            <p class="mt-1 text-xs text-gray-400">
+              "작성" 버튼으로 신규 등록 또는 기존 스크립트 파일명 직접 입력. 경로는 자동으로 처리됩니다.
+            </p>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">스케줄 (Cron)</label>
@@ -390,5 +440,16 @@ onMounted(loadJobs)
         </div>
       </div>
     </div>
+
+    <!-- ════════════════════════════════════════════════════════════
+         v18.8 — 스크립트 작성/편집 dialog
+         ════════════════════════════════════════════════════════════ -->
+    <ScriptEditorDialog
+      v-if="scriptEditorMode"
+      :mode="scriptEditorMode"
+      :filename="editingScriptFilename ?? undefined"
+      @close="closeScriptEditor"
+      @saved="onScriptSaved"
+    />
   </div>
 </template>

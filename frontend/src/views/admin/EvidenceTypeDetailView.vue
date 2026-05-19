@@ -44,6 +44,7 @@ import type {
 } from '@/types/evidence'
 import EvidenceAssetSearchDialog from '@/components/evidence/EvidenceAssetSearchDialog.vue'
 import EvidenceAssetDuplicateConfirmDialog from '@/components/evidence/EvidenceAssetDuplicateConfirmDialog.vue'
+import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
 
 // ========================================
 // Props — 라우트에서 전달
@@ -537,6 +538,30 @@ function openAddJobDialog() {
     scheduleCron: '',
   }
   showAddJobDialog.value = true
+}
+
+// ========================================
+// v18.8 — 스크립트 작성/편집 dialog 연계
+// ========================================
+const scriptEditorMode = ref<'create' | 'edit' | null>(null)
+const editingScriptFilename = ref<string | null>(null)
+
+function openScriptCreateDialog() {
+  scriptEditorMode.value = 'create'
+  editingScriptFilename.value = null
+}
+
+function closeScriptEditor() {
+  scriptEditorMode.value = null
+  editingScriptFilename.value = null
+}
+
+function onScriptSaved(payload: { filename: string; scriptPath: string }) {
+  closeScriptEditor()
+  // 작업 등록 dialog 의 scriptPath 자동 채움
+  if (showAddJobDialog.value && !newJob.value.scriptPath) {
+    newJob.value.scriptPath = payload.scriptPath
+  }
 }
 
 async function handleCreateJob() {
@@ -1196,11 +1221,22 @@ function executionDotCls(status?: string): string {
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">스크립트 경로</label>
-            <input
-              v-model="newJob.scriptPath"
-              placeholder="/opt/secuhub/scripts/policy_crawl.sh"
-              class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono" />
+            <label class="block text-sm font-medium text-gray-700 mb-1">스크립트 파일명</label>
+            <div class="flex gap-2">
+              <input
+                v-model="newJob.scriptPath"
+                placeholder="policy_crawl.py"
+                class="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono" />
+              <button
+                type="button"
+                @click="openScriptCreateDialog"
+                class="px-3 py-2 text-xs bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 inline-flex items-center gap-1 whitespace-nowrap">
+                <i class="pi pi-pencil text-xs"></i> 작성
+              </button>
+            </div>
+            <p class="text-[11px] text-gray-400 mt-1">
+              "작성" 버튼으로 신규 등록 또는 기존 스크립트 파일명 직접 입력. 경로는 자동으로 처리됩니다.
+            </p>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">스케줄 (Cron)</label>
@@ -1246,6 +1282,16 @@ function executionDotCls(status?: string): string {
       @use-existing="handleUseExisting"
       @force-new="handleForceNew"
       @cancel="handleCancelDuplicate" />
+
+    <!-- ======================================
+         v18.8 — 스크립트 작성/편집 dialog
+         ====================================== -->
+    <ScriptEditorDialog
+      v-if="scriptEditorMode"
+      :mode="scriptEditorMode"
+      :filename="editingScriptFilename ?? undefined"
+      @close="closeScriptEditor"
+      @saved="onScriptSaved" />
   </div>
 </template>
 
