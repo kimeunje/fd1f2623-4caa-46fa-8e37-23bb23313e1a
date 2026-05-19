@@ -471,7 +471,7 @@ class ScriptExecutionTest {
         System.out.println("✅ [LineEnding] " + shFiles.size() + "개 .sh 파일 모두 LF only 확인");
     }
 
-	// ========================================
+    // ========================================
     // 10. 회귀 보호 — Linux 환경에서 .ps1 등록 시 BusinessException
     //     (v18.5-platform-b — .ps1 은 Windows 한정 운영 정책)
     // ========================================
@@ -518,5 +518,93 @@ class ScriptExecutionTest {
         System.out.println("✅ [Script] Linux 환경에서 .ps1 거부 정상 (BusinessException → JobExecution.failed)");
 
         Files.deleteIfExists(ps1Script);
+    }
+
+    // ========================================
+    // 11. v18.7 — 자동 수집 실패 진단 JSON 자동 보관
+    //     (L_USER_NEEDS_REDIRECT 결과물)
+    // ========================================
+    @Test
+    @Order(11)
+    @DisplayName("[Diagnosis] v18.7 — output 디렉토리의 _diagnosis.json 자동 보관 + errorDiagnosis 갱신")
+    @Transactional
+    void testCollectsDiagnosisJsonIntoJobExecution() throws IOException {
+        // ── 1. 테스트 스크립트 작성 — output 디렉토리에 _diagnosis.json 떨어뜨리고 exit 0 ──
+        Path scriptDir = Paths.get(scriptsBaseDir).toAbsolutePath().normalize();
+        Files.createDirectories(scriptDir);
+
+        Path testScript;
+        if (IS_WINDOWS) {
+            testScript = scriptDir.resolve("test_diagnosis.bat");
+            Files.writeString(testScript,
+                    "@echo off\r\n" +
+                    "set \"OUTPUT_DIR=%~1\"\r\n" +
+                    "if \"%OUTPUT_DIR%\"==\"\" set \"OUTPUT_DIR=%SECUHUB_OUTPUT_DIR%\"\r\n" +
+                    "(\r\n" +
+                    "echo {\r\n" +
+                    "echo   \"schema_version\": \"1.0\",\r\n" +
+                    "echo   \"execution\": {\"status\": \"failed\", \"duration_sec\": 1.4},\r\n" +
+                    "echo   \"scenario\": {\"name\": \"테스트 시나리오\", \"total_steps\": 3},\r\n" +
+                    "echo   \"steps\": [],\r\n" +
+                    "echo   \"diagnosis\": {\"primary_cause\": \"button.login-submit 가 변경됨\"}\r\n" +
+                    "echo }\r\n" +
+                    ") > \"%OUTPUT_DIR%\\_diagnosis.json\"\r\n" +
+                    "exit /b 0\r\n");
+        } else {
+            testScript = scriptDir.resolve("test_diagnosis.sh");
+            Files.writeString(testScript,
+                    "#!/bin/bash\n" +
+                    "OUTPUT_DIR=\"$1\"\n" +
+                    "cat > \"$OUTPUT_DIR/_diagnosis.json\" << 'EOF'\n" +
+                    "{\n" +
+                    "  \"schema_version\": \"1.0\",\n" +
+                    "  \"execution\": {\"status\": \"failed\", \"duration_sec\": 1.4},\n" +
+                    "  \"scenario\": {\"name\": \"테스트 시나리오\", \"total_steps\": 3},\n" +
+                    "  \"steps\": [],\n" +
+                    "  \"diagnosis\": {\"primary_cause\": \"button.login-submit 가 변경됨\"}\n" +
+                    "}\n" +
+                    "EOF\n" +
+                    "exit 0\n");
+            testScript.toFile().setExecutable(true);
+        }
+
+        // ── 2. CollectionJob + JobExecution 셋업 ──
+        Framework fw = frameworkRepository.save(Framework.builder().name("진단 테스트 FW").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("DG-01").name("진단 테스트 항목")
+                .displayOrder(0).depth(1).build());
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(ctrl).name("진단 증빙").build());
+
+        CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
+                .name("진단 보관 테스트")
+                .jobType(JobType.web_scraping)
+                .scriptPath(testScript.getFileName().toString())
+                .evidenceType(et)
+                .build());
+
+        JobExecution execution = jobExecutionRepository.save(JobExecution.builder()
+                .job(job)
+                .status(ExecutionStatus.running)
+                .startedAt(LocalDateTime.now())
+                .build());
+
+        // ── 3. 실행 ──
+        scriptExecutionService.executeSync(job, execution);
+
+        // ── 4. 검증 — JobExecution.errorDiagnosis 가 _diagnosis.json 내용으로 채워졌는지 ──
+        JobExecution saved = jobExecutionRepository.findById(execution.getId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(ExecutionStatus.success);  // exit 0 이라 성공
+        assertThat(saved.getErrorDiagnosis())
+                .as("v18.7 — _diagnosis.json 의 내용이 errorDiagnosis 에 보관되어야 함")
+                .isNotNull()
+                .contains("\"schema_version\": \"1.0\"")
+                .contains("button.login-submit 가 변경됨");
+
+        System.out.println("✅ [Diagnosis] v18.7 진단 JSON 자동 보관 정상 — bytes=" +
+                saved.getErrorDiagnosis().length());
+
+        Files.deleteIfExists(testScript);
     }
 }

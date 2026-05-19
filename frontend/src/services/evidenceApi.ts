@@ -24,6 +24,7 @@ import type {
   ImpactSummary,
   UploadResponse,   // ← v18.6a
   LinkRequest,      // ← v18.6a
+  DiagnosisJson,
 } from '@/types/evidence'
 
 /**
@@ -382,6 +383,60 @@ export const jobsApi = {
   execute(id: number) {
     return api.post<ApiResponse<ExecutionSummary>>(`/jobs/${id}/execute`)
   },
+
+  // ────── v18.7 자동 수집 실패 진단 (L_USER_NEEDS_REDIRECT) ──────
+
+  /**
+   * v18.7 — 실패 시점 스크린샷 URL builder.
+   *
+   * <p>fetch 호출 없음 — URL 만 산출. {@code <img :src="..." />} 또는
+   * {@code <a :href="...">} 에 직접 활용.</p>
+   *
+   * <p>BE: GET /api/v1/admin/job-executions/{id}/diagnosis/screenshot →
+   * image/png 스트리밍. 권한 = hasRole('ADMIN').</p>
+   */
+  getDiagnosisScreenshotUrl(executionId: number): string {
+    return `/api/v1/admin/job-executions/${executionId}/diagnosis/screenshot`
+  },
+
+  /**
+   * v18.7 — 실패 시점 페이지 소스 URL builder.
+   *
+   * <p>{@code window.open(url, '_blank')} 활용 — 새 탭에서 파일 다운로드
+   * (Content-Disposition: attachment).</p>
+   *
+   * <p>BE: GET /api/v1/admin/job-executions/{id}/diagnosis/page-source →
+   * text/html 응답. 권한 = hasRole('ADMIN').</p>
+   */
+  getDiagnosisPageSourceUrl(executionId: number): string {
+    return `/api/v1/admin/job-executions/${executionId}/diagnosis/page-source`
+  },
+}
+
+// ========================================
+// v18.7 — 진단 JSON 파싱 helper (L_USER_NEEDS_REDIRECT)
+// ========================================
+
+/**
+ * JobExecution.errorDiagnosis 의 JSON String 을 DiagnosisJson 객체로 파싱.
+ *
+ * <p>null / undefined / 파싱 실패 시 null 반환 (FE 가 graceful 처리).
+ * 사용 패턴:</p>
+ *
+ * <pre>
+ *   import { parseDiagnosis } from '@/services/evidenceApi'
+ *   const diagnosis = parseDiagnosis(execution.errorDiagnosis)
+ *   // → DiagnosisJson | null
+ * </pre>
+ */
+export function parseDiagnosis(rawJson: string | null | undefined): DiagnosisJson | null {
+  if (!rawJson) return null
+  try {
+    return JSON.parse(rawJson) as DiagnosisJson
+  } catch (e) {
+    console.warn('진단 JSON 파싱 실패:', e)
+    return null
+  }
 }
 
 // ========================================

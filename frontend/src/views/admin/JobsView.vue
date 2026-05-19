@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { jobsApi } from '@/services/evidenceApi'
-import type { CollectionJobItem, CollectionJobDetail } from '@/types/evidence'
+import type { CollectionJobItem, CollectionJobDetail, ExecutionSummary } from '@/types/evidence'
+import FailureDiagnosisPanel from '@/components/admin/FailureDiagnosisPanel.vue'
 
 const jobs = ref<CollectionJobItem[]>([])
 const loading = ref(false)
@@ -10,6 +11,9 @@ const showDetailPanel = ref(false)
 const showCreateDialog = ref(false)
 const detailLoading = ref(false)
 const newJob = ref({ name: '', description: '', jobType: 'web_scraping', scriptPath: '', scheduleCron: '' })
+
+// v18.7 — 진단 패널 진입 상태 (풀폭 swap)
+const selectedExecution = ref<ExecutionSummary | null>(null)
 
 const jobTypeLabels: Record<string, { label: string; color: string }> = {
   web_scraping: { label: '웹 스크래핑', color: 'bg-purple-100 text-purple-700' },
@@ -84,6 +88,26 @@ function formatDate(dateStr?: string) {
   return new Date(dateStr).toLocaleString('ko')
 }
 
+// v18.7 — mockup 화면 1 정합 (실행 이력 row 의 시간 mono 표기)
+function formatDateMono(dateStr?: string) {
+  if (!dateStr) return '-'
+  const d = new Date(dateStr)
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${mm}-${dd} ${hh}:${mi}`
+}
+
+// v18.7 — 실행 소요 시간 계산 (mockup row 의 "1.4초" 정합)
+function formatDuration(exec: ExecutionSummary): string {
+  if (!exec.startedAt || !exec.finishedAt) return '-'
+  const start = new Date(exec.startedAt).getTime()
+  const end = new Date(exec.finishedAt).getTime()
+  const sec = (end - start) / 1000
+  return `${sec.toFixed(1)}초`
+}
+
 function execStatusColor(status: string) {
   switch (status) {
     case 'success': return 'bg-green-100 text-green-700'
@@ -102,6 +126,15 @@ function execStatusLabel(status: string) {
   }
 }
 
+// v18.7 — 실패 row 클릭 시 진단 패널 풀폭 진입
+function openDiagnosisPanel(exec: ExecutionSummary) {
+  if (exec.status !== 'failed') return
+  selectedExecution.value = exec
+}
+
+// v18.7 — 풀폭 swap 상태 (목록 + 상세 숨김 여부)
+const showDiagnosisPanel = computed(() => selectedExecution.value !== null)
+
 onMounted(loadJobs)
 </script>
 
@@ -113,13 +146,33 @@ onMounted(loadJobs)
         <h1 class="text-xl font-bold text-gray-900">수집 작업</h1>
         <p class="text-sm text-gray-500 mt-1">증빙 자료 자동 수집 작업을 관리합니다.</p>
       </div>
-      <button @click="showCreateDialog = true"
+      <!-- v18.7 — 진단 패널 표시 중이면 작업 등록 버튼 숨김 (mockup 정합) -->
+      <button v-if="!showDiagnosisPanel" @click="showCreateDialog = true"
         class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2">
         <i class="pi pi-plus text-sm"></i> 작업 등록
       </button>
+      <!-- v18.7 — 진단 패널 표시 중이면 뒤로가기 표기 -->
+      <button v-else @click="selectedExecution = null"
+        class="px-4 py-2 bg-white border border-stone-300 text-stone-700 rounded-lg text-sm font-medium hover:bg-stone-50 flex items-center gap-2">
+        <i class="pi pi-arrow-left text-sm"></i> 작업 목록으로
+      </button>
     </div>
 
-    <div class="flex gap-6">
+    <!-- ════════════════════════════════════════════════════════════
+         v18.7 — 진단 패널 (풀폭 swap, 실패 row 클릭 시)
+         ════════════════════════════════════════════════════════════ -->
+    <div v-if="showDiagnosisPanel && selectedExecution">
+      <FailureDiagnosisPanel
+        :execution="selectedExecution"
+        :job-name="selectedJob?.name"
+        @close="selectedExecution = null"
+      />
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════
+         기본 화면 — 작업 목록 + 상세 패널 (진단 패널 표시 중이면 숨김)
+         ════════════════════════════════════════════════════════════ -->
+    <div v-else class="flex gap-6">
       <!-- 작업 목록 -->
       <div :class="['flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden', showDetailPanel ? '' : '']">
         <table class="w-full">
@@ -222,26 +275,74 @@ onMounted(loadJobs)
             <p class="text-xs font-mono text-gray-600 bg-gray-50 px-2 py-1 rounded">{{ selectedJob.scriptPath }}</p>
           </div>
 
-          <!-- 실행 이력 -->
+          <!--
+            v18.7 — 실행 이력 (mockup 화면 1 정합).
+            row layout: 4 column grid (시간 mono | 상태+추가정보 | 소요시간 | 진단 보기 →).
+            실패 row = 빨간 배경 + border + cursor-pointer + 클릭 시 진단 패널 풀폭 진입.
+          -->
           <div>
             <p class="text-xs text-gray-400 mb-2">실행 이력</p>
             <div v-if="selectedJob.executions.length === 0" class="text-xs text-gray-400">실행 이력이 없습니다.</div>
-            <div v-else class="space-y-2 max-h-60 overflow-y-auto">
+            <div v-else class="space-y-1 max-h-80 overflow-y-auto">
+
+              <!--
+                v18.7 — 좁은 폭 (w-96 작업 상세 패널) 정합 3 줄 layout.
+                  1줄: 시간 mono (좌) + 상태 배지 (우)
+                  2줄: 소요시간 (shrink-0) + errorMessage truncate (실패 시만)
+                  3줄: 진단 보기 → (실패 시만, 우측 정렬, 별도 줄)
+                풀폭 진단 패널 swap 진입은 그대로 (mockup 화면 2/3).
+              -->
               <div v-for="exec in selectedJob.executions" :key="exec.id"
-                class="p-2.5 bg-gray-50 rounded-lg">
-                <div class="flex items-center justify-between mb-1">
-                  <span :class="['px-1.5 py-0.5 rounded text-xs font-medium', execStatusColor(exec.status)]">
-                    {{ execStatusLabel(exec.status) }}
+                :class="[
+                  'px-2.5 py-2 rounded text-[11px]',
+                  exec.status === 'failed'
+                    ? 'bg-red-50 border border-red-300 cursor-pointer hover:bg-red-100 transition-colors'
+                    : 'bg-stone-100'
+                ]"
+                @click="openDiagnosisPanel(exec)">
+
+                <!-- 1줄: 시간 mono + 상태 배지 -->
+                <div class="flex items-center justify-between mb-1 gap-2">
+                  <span :class="['font-mono text-[11px] whitespace-nowrap',
+                    exec.status === 'failed' ? 'text-red-700' : 'text-stone-600'
+                  ]">
+                    {{ formatDateMono(exec.startedAt) }}
                   </span>
-                  <span class="text-xs text-gray-400">{{ formatDate(exec.startedAt) }}</span>
+                  <span class="flex items-center gap-1 whitespace-nowrap shrink-0">
+                    <i v-if="exec.status === 'success'" class="pi pi-check-circle text-green-700 text-[12px]"></i>
+                    <i v-else-if="exec.status === 'failed'" class="pi pi-times-circle text-red-700 text-[12px]"></i>
+                    <i v-else class="pi pi-spin pi-spinner text-blue-700 text-[12px]"></i>
+                    <span :class="['font-medium',
+                      exec.status === 'success' ? 'text-green-700' :
+                      exec.status === 'failed' ? 'text-red-700' :
+                      'text-blue-700'
+                    ]">
+                      {{ execStatusLabel(exec.status) }}
+                    </span>
+                  </span>
                 </div>
-                <div v-if="exec.finishedAt" class="text-xs text-gray-500">
-                  종료: {{ formatDate(exec.finishedAt) }}
+
+                <!-- 2줄: 소요시간 (shrink-0) + 메시지 (실패만, truncate) -->
+                <div class="flex items-center gap-2 min-w-0">
+                  <span :class="['text-[10px] whitespace-nowrap shrink-0',
+                    exec.status === 'failed' ? 'text-red-700' : 'text-stone-500'
+                  ]">
+                    {{ formatDuration(exec) }}
+                  </span>
+                  <span v-if="exec.status === 'failed' && exec.errorMessage"
+                    class="text-red-700 text-[10px] truncate min-w-0 flex-1"
+                    :title="exec.errorMessage">
+                    — {{ exec.errorMessage.split('\n')[0] }}
+                  </span>
                 </div>
-                <div v-if="exec.errorMessage" class="mt-1 text-xs text-red-500 bg-red-50 p-1.5 rounded">
-                  {{ exec.errorMessage }}
+
+                <!-- 3줄: 진단 보기 → (실패만, 우측 정렬, 별도 줄) -->
+                <div v-if="exec.status === 'failed'"
+                  class="mt-1 text-right text-[10px] text-red-700 font-medium">
+                  진단 보기 →
                 </div>
               </div>
+
             </div>
           </div>
         </div>

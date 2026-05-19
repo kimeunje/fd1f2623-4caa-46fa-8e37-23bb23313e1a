@@ -91,6 +91,15 @@ public class CollectionJobDto {
         private String startedAt;
         private String finishedAt;
         private String errorMessage;
+        /**
+         * v18.7 — selenium wrapper 산출 _diagnosis.json 의 전체 내용 (JSON String).
+         *
+         * <p>FE 의 {@code parseDiagnosis(execution.errorDiagnosis)} helper 가 파싱해
+         * FailureDiagnosisPanel.vue 의 단계별 진행 / 에러 정보 / 스크린샷 / 추정 원인
+         * 영역에 렌더링. status=failed 시점에 채워지며 (성공도 단계별 시간 기록을 위해
+         * 채워질 수 있음), 진단 정보 없는 옛 실행은 null.</p>
+         */
+        private String errorDiagnosis;
         private String createdAt;
 
         public static ExecutionSummary from(JobExecution exec) {
@@ -100,6 +109,7 @@ public class CollectionJobDto {
                     .startedAt(exec.getStartedAt() != null ? exec.getStartedAt().toString() : null)
                     .finishedAt(exec.getFinishedAt() != null ? exec.getFinishedAt().toString() : null)
                     .errorMessage(exec.getErrorMessage())
+                    .errorDiagnosis(exec.getErrorDiagnosis())   // v18.7 — wrapper 산출 진단 JSON 노출
                     .createdAt(exec.getCreatedAt() != null ? exec.getCreatedAt().toString() : null)
                     .build();
         }

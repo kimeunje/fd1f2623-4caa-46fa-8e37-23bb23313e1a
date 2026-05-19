@@ -52,6 +52,16 @@ import java.util.stream.Stream;
  * {@link EvidenceAssetService#createNewAssetFromPath}). 자동 수집은 사용자 개입 0
  * 정책 = 같은 sha256 발견 시 자동 reuse (confirm 없음, L_HASH_DEDUP_UX 패턴 ④
  * 자동·수동 분리).</p>
+ *
+ * <h3>v18.7 — 자동 수집 실패 진단 (L_USER_NEEDS_REDIRECT 결과물)</h3>
+ * <p>{@link #collectDiagnosis} 신규 메서드 — output 디렉토리의 {@code _diagnosis.json}
+ * 자동 감지 + {@link JobExecution#setErrorDiagnosis} 갱신. collectOutputFiles 와 분리
+ * 이유 = collectOutputFiles 는 성공 시 (exitCode==0) 만 호출되는데 진단은 실패 시점이
+ * 본질. executeScript 의 모든 경로 (성공 / 실패 / 타임아웃 / 인터럽트) 에서 호출.</p>
+ *
+ * <p>스크린샷 / page_source 는 outputDir 안의 표준 파일명 (_diag_screenshot.png /
+ * _diag_page_source.html) 으로 보관. JobExecutionController 의 endpoint 가
+ * storagePath + jobId + executionId + 표준 파일명으로 도출하여 스트리밍.</p>
  */
 @Slf4j
 @Service
@@ -84,6 +94,7 @@ public class ScriptExecutionService {
      * 4. stdout/stderr 캡처
      * 5. 종료 코드 확인 후 성공/실패 마킹
      * 6. 성공 시 output 디렉토리에서 생성된 파일을 EvidenceFile로 자동 등록
+     * 7. v18.7 — 성공/실패 무관하게 _diagnosis.json 자동 보관 (실패 시 본질)
      */
     @Async("jobExecutor")
     @Transactional
@@ -174,6 +185,8 @@ public class ScriptExecutionService {
                 execution.markFailed("스크립트 실행 시간 초과 (" + timeoutSeconds + "초)");
                 jobExecutionRepository.save(execution);
                 log.error("스크립트 타임아웃: jobId={}", job.getId());
+                // v18.7 — 타임아웃 시점에도 wrapper 가 _diagnosis.json 을 미리 썼을 수 있음
+                collectDiagnosis(execution, outputDir);
                 return;
             }
 
@@ -207,15 +220,21 @@ public class ScriptExecutionService {
                 log.error("스크립트 실행 실패: exitCode={}, jobId={}, error={}", exitCode, job.getId(), errorMsg);
             }
 
+            // v18.7 — 성공/실패 무관하게 진단 JSON 보관 (성공도 단계별 시간 기록 가능)
+            collectDiagnosis(execution, outputDir);
+
         } catch (IOException e) {
             execution.markFailed("스크립트 시작 실패: " + e.getMessage());
             jobExecutionRepository.save(execution);
             log.error("ProcessBuilder 시작 실패: jobId={}", job.getId(), e);
+            // v18.7 — 시작 실패 시점에도 outputDir 가 prepared 됐으므로 진단 시도
+            collectDiagnosis(execution, outputDir);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             execution.markFailed("스크립트 실행이 인터럽트되었습니다.");
             jobExecutionRepository.save(execution);
             log.error("스크립트 인터럽트: jobId={}", job.getId(), e);
+            collectDiagnosis(execution, outputDir);
         } finally {
             if (process != null && process.isAlive()) {
                 process.destroyForcibly();
@@ -398,6 +417,9 @@ public class ScriptExecutionService {
      *       ({@link EvidenceAssetService#createNewAssetFromPath} = move)</li>
      *   <li>EvidenceFile (link) 생성 + asset 매핑</li>
      * </ol>
+     *
+     * <p><b>v18.7 보강</b>: {@code _diagnosis.json} 과 {@code _diag_*} 접두 파일은
+     * EvidenceFile 로 수집하지 않음 (진단 자산은 별도 책임 — collectDiagnosis 가 처리).</p>
      */
     private int collectOutputFiles(CollectionJob job, JobExecution execution, Path outputDir) {
         if (!Files.exists(outputDir) || !Files.isDirectory(outputDir)) {
@@ -425,6 +447,8 @@ public class ScriptExecutionService {
         try (Stream<Path> files = Files.list(outputDir)) {
             List<Path> fileList = files
                     .filter(Files::isRegularFile)
+                    // v18.7 — 진단 자산 (_diagnosis.json / _diag_*) 은 EvidenceFile 로 수집 안 함
+                    .filter(p -> !isDiagnosisArtifact(p.getFileName().toString()))
                     .collect(Collectors.toList());
 
             for (Path file : fileList) {
@@ -484,6 +508,62 @@ public class ScriptExecutionService {
         }
 
         return count;
+    }
+
+    // ========================================
+    // v18.7 — 자동 수집 실패 진단 (L_USER_NEEDS_REDIRECT 결과물)
+    // ========================================
+
+    /**
+     * v18.7 — output 디렉토리의 _diagnosis.json 자동 감지 + JobExecution.errorDiagnosis 보관.
+     *
+     * <p>호출 위치 (executeScript 의 모든 종료 경로):</p>
+     * <ul>
+     *   <li>exitCode == 0 (성공) — 성공도 단계별 시간 기록 가능</li>
+     *   <li>exitCode != 0 (실패) — 실패 본질, wrapper 가 진단 JSON 생성</li>
+     *   <li>timeout — wrapper 가 finally 안에서 진단 JSON 미리 쓸 수 있음</li>
+     *   <li>IOException / InterruptedException — outputDir 가 prepared 됐다면 시도</li>
+     * </ul>
+     *
+     * <p>graceful degradation — 진단 정보 누락이 본 흐름을 차단하지 않음. _diag_screenshot.png
+     * 와 _diag_page_source.html 은 outputDir 안에 그대로 보존됨 (JobExecutionController 의
+     * endpoint 가 storagePath + jobId + executionId + 표준 파일명으로 도출).</p>
+     *
+     * <p>L_RESPONSIBILITY_SEPARATION — EvidenceAsset / EvidenceFile 시스템 미관여.
+     * 진단 정보는 JobExecution 의 책임 (실행 수명과 동일).</p>
+     */
+    private void collectDiagnosis(JobExecution execution, Path outputDir) {
+        if (outputDir == null || !Files.exists(outputDir)) {
+            return;
+        }
+        Path diagnosisFile = outputDir.resolve("_diagnosis.json");
+        if (!Files.exists(diagnosisFile)) {
+            return;
+        }
+        try {
+            String diagnosisJson = Files.readString(diagnosisFile, StandardCharsets.UTF_8);
+            execution.setErrorDiagnosis(diagnosisJson);
+            jobExecutionRepository.save(execution);
+            log.info("v18.7 진단 JSON 보관 — executionId={}, bytes={}",
+                    execution.getId(), diagnosisJson.length());
+        } catch (IOException e) {
+            log.warn("v18.7 진단 JSON 읽기 실패. executionId={}, error={}",
+                    execution.getId(), e.getMessage());
+            // 진단 누락이 본 흐름을 차단하지 않음 (graceful degradation)
+        }
+    }
+
+    /**
+     * v18.7 — 진단 자산 파일명 패턴 검출. EvidenceFile 자동 수집 대상에서 제외.
+     *
+     * <p>패턴:</p>
+     * <ul>
+     *   <li>{@code _diagnosis.json} — 진단 JSON</li>
+     *   <li>{@code _diag_*} — 진단 부속 파일 (스크린샷, page_source, 향후 추가 가능)</li>
+     * </ul>
+     */
+    private boolean isDiagnosisArtifact(String fileName) {
+        return "_diagnosis.json".equals(fileName) || fileName.startsWith("_diag_");
     }
 
     // ========================================

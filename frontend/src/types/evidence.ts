@@ -211,6 +211,8 @@ export interface ExecutionSummary {
   startedAt?: string
   finishedAt?: string
   errorMessage?: string
+  /** v18.7 — selenium wrapper 산출 _diagnosis.json 전체 (JSON String). parseDiagnosis 로 DiagnosisJson 파싱. */
+  errorDiagnosis?: string
   createdAt?: string
 }
 
@@ -653,4 +655,57 @@ export interface AssetPage<T> {
   totalPages: number
   size: number
   number: number   // page index (0-based)
+}
+
+// ════════════════════════════════════════════════════════════════════
+// v18.7 — 자동 수집 실패 진단 (L_USER_NEEDS_REDIRECT 결과물)
+//
+// selenium wrapper template (`/scripts/templates/selenium_wrapper.py`) 가
+// 산출하는 _diagnosis.json 의 schema_version 1.0 정합.
+//
+// 사용 패턴:
+//   import { parseDiagnosis } from '@/services/evidenceApi'
+//   const diagnosis: DiagnosisJson | null = parseDiagnosis(execution.errorDiagnosis)
+// ════════════════════════════════════════════════════════════════════
+
+export type DiagnosisStepStatus = 'success' | 'failed' | 'not_run' | 'running'
+
+export interface DiagnosisError {
+  exception_class: string         // 예: "NoSuchElementException"
+  korean_message: string          // 한국어 해석 (wrapper 의 KOREAN_ERROR_MAP)
+  selector: string                // 실패한 selector
+  raw_message: string             // 원본 영문 메시지
+  current_url: string             // 실패 시점 driver.current_url
+}
+
+export interface DiagnosisStep {
+  order: number                   // 1-based step 순서
+  label: string                   // 예: "click button.login-submit"
+  selenium_cmd: string            // 예: "click"
+  target: string                  // 예: "button.login-submit"
+  status: DiagnosisStepStatus
+  started_at?: string             // ISO-8601 (KST)
+  ended_at?: string               // ISO-8601 (KST)
+  duration_sec?: number           // 소요 초 (소수점 2자리)
+  error?: DiagnosisError          // status='failed' 시점에만 존재
+}
+
+export interface DiagnosisJson {
+  schema_version: string          // "1.0"
+  execution: {
+    started_at: string            // ISO-8601 (KST)
+    ended_at: string              // ISO-8601 (KST)
+    duration_sec: number          // 전체 실행 소요 초
+    status: 'success' | 'failed'
+  }
+  scenario: {
+    name: string                  // 시나리오 함수명
+    total_steps: number           // 정의된 총 단계 수
+  }
+  steps: DiagnosisStep[]          // 모든 단계 (성공/실패/미실행)
+  diagnosis: {
+    primary_cause: string | null  // 자동 추론 1개 (wrapper 의 PRIMARY_CAUSE_MAP)
+    screenshot_path: string | null   // 실패 시 "_diag_screenshot.png", 성공 시 null
+    page_source_path: string | null  // 실패 시 "_diag_page_source.html", 성공 시 null
+  }
 }
