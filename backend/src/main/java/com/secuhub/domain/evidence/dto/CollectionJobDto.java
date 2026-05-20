@@ -17,6 +17,9 @@ public class CollectionJobDto {
         private String description;
         @jakarta.validation.constraints.NotBlank(message = "작업 유형은 필수입니다.")
         private String jobType;
+        /** v18.8.2 — 신규 작업은 scriptId 활용 (script 신규 작성 또는 기존 선택). */
+        private Long scriptId;
+        /** legacy — 옛 script_path 작업도 보존 (Q2=A). scriptId 없을 때만 사용. */
         private String scriptPath;
         private Long evidenceTypeId;
         private String scheduleCron;
@@ -28,6 +31,8 @@ public class CollectionJobDto {
     public static class UpdateRequest {
         private String name;
         private String description;
+        /** v18.8.2 — scriptId 또는 scriptPath 갱신 (둘 중 하나만 의미). */
+        private Long scriptId;
         private String scriptPath;
         private String scheduleCron;
     }
@@ -40,6 +45,9 @@ public class CollectionJobDto {
         private String name;
         private String description;
         private String jobType;
+        /** v18.8.2 — Script entity id (NULL 이면 legacy scriptPath 활용). */
+        private Long scriptId;
+        /** legacy — scriptId NULL 시 fallback. */
         private String scriptPath;
         private Long evidenceTypeId;
         private String evidenceTypeName;
@@ -54,6 +62,7 @@ public class CollectionJobDto {
                     .name(entity.getName())
                     .description(entity.getDescription())
                     .jobType(entity.getJobType().name())
+                    .scriptId(entity.getScript() != null ? entity.getScript().getId() : null)
                     .scriptPath(entity.getScriptPath())
                     .evidenceTypeId(entity.getEvidenceType() != null ? entity.getEvidenceType().getId() : null)
                     .evidenceTypeName(entity.getEvidenceType() != null ? entity.getEvidenceType().getName() : null)
@@ -73,6 +82,9 @@ public class CollectionJobDto {
         private String name;
         private String description;
         private String jobType;
+        /** v18.8.2 — Script entity id. */
+        private Long scriptId;
+        /** legacy. */
         private String scriptPath;
         private Long evidenceTypeId;
         private String evidenceTypeName;
@@ -93,11 +105,7 @@ public class CollectionJobDto {
         private String errorMessage;
         /**
          * v18.7 — selenium wrapper 산출 _diagnosis.json 의 전체 내용 (JSON String).
-         *
-         * <p>FE 의 {@code parseDiagnosis(execution.errorDiagnosis)} helper 가 파싱해
-         * FailureDiagnosisPanel.vue 의 단계별 진행 / 에러 정보 / 스크린샷 / 추정 원인
-         * 영역에 렌더링. status=failed 시점에 채워지며 (성공도 단계별 시간 기록을 위해
-         * 채워질 수 있음), 진단 정보 없는 옛 실행은 null.</p>
+         * FE 의 parseDiagnosis(execution.errorDiagnosis) helper 가 파싱.
          */
         private String errorDiagnosis;
         private String createdAt;
@@ -109,7 +117,7 @@ public class CollectionJobDto {
                     .startedAt(exec.getStartedAt() != null ? exec.getStartedAt().toString() : null)
                     .finishedAt(exec.getFinishedAt() != null ? exec.getFinishedAt().toString() : null)
                     .errorMessage(exec.getErrorMessage())
-                    .errorDiagnosis(exec.getErrorDiagnosis())   // v18.7 — wrapper 산출 진단 JSON 노출
+                    .errorDiagnosis(exec.getErrorDiagnosis())
                     .createdAt(exec.getCreatedAt() != null ? exec.getCreatedAt().toString() : null)
                     .build();
         }

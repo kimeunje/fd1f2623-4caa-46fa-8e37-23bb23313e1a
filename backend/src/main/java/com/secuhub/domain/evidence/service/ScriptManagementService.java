@@ -2,45 +2,49 @@ package com.secuhub.domain.evidence.service;
 
 import com.secuhub.common.exception.BusinessException;
 import com.secuhub.domain.evidence.dto.ScriptManagementDto;
+import com.secuhub.domain.evidence.entity.Script;
+import com.secuhub.domain.evidence.repository.ScriptRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.Comparator;
-import java.util.List;
-import java.util.stream.Stream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.UUID;
 
 /**
- * v18.8 — 어드민 UI 만으로 Python 스크립트 등록/수정 (L_USER_NEEDS_REDIRECT).
+ * v18.8.2 — Python 스크립트 UID 기반 관리.
  *
- * <p>운영 가설 — admin 이 SSH 없이 어드민 UI 만으로 수집 스크립트 관리.
- * v18.7 의 진단 패널에서 selector 깨짐 발견 → 즉시 수정 → 재실행 흐름 정합.</p>
+ * <p>사용자 의도: "스크립트 이름은 의미 없다. UID 로 관리." → filename 입력 제거,
+ * 시스템 자동 id 부여 + {@code {base-dir}/{id}.py} 파일 시스템 매핑.</p>
  *
  * <h3>책임</h3>
  * <ul>
- *   <li>파일 I/O 만 (Files.readString / writeString / list)</li>
- *   <li>검증 — 확장자 (.py) / path traversal / size 제한 (1MB)</li>
- *   <li>CollectionJob 의 scriptPath 매핑은 본 service 책임 아님 (ScriptExecutionService 정합)</li>
+ *   <li>Script entity CRUD (DB)</li>
+ *   <li>파일 시스템 I/O ({@code {base-dir}/{id}.py})</li>
+ *   <li>크기 제한 검증 (1MB)</li>
+ *   <li>path traversal 차단 (id 기반이므로 자연 차단, 추가 검증 불필요)</li>
  * </ul>
  *
- * <h3>보안</h3>
- * <ul>
- *   <li>base-dir 밖 path 차단 (resolveAndValidatePath)</li>
- *   <li>filename 검증 = DTO 의 @Pattern 으로 1차 + 본 service 의 normalize 로 2차</li>
- *   <li>Controller 가 @PreAuthorize("hasRole('ADMIN')") 으로 권한 차단</li>
- * </ul>
+ * <h3>호출 흐름</h3>
+ * <ol>
+ *   <li>create — content 받아 Script entity 저장 → id 부여 → {id}.py 파일 작성</li>
+ *   <li>update — id 로 entity 조회 → 같은 file_path 에 덮어쓰기 + content_size 갱신</li>
+ *   <li>getContent — id 로 entity 조회 → file_path 읽어 내용 반환</li>
+ * </ol>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ScriptManagementService {
+
+    private final ScriptRepository scriptRepository;
 
     @Value("${app.scripts.base-dir:./scripts}")
     private String scriptsBaseDir;
@@ -49,98 +53,94 @@ public class ScriptManagementService {
     private static final long MAX_SCRIPT_SIZE = 1024 * 1024L;
 
     /**
-     * 신규 업로드.
+     * 신규 작성 — UUID 부여 + {uuid}.py 파일 저장 + entity save.
      *
-     * <p>충돌 시 거부 (Q4 결정). 사용자가 다른 이름으로 재업로드.</p>
+     * <p>v18.8.3 — UUID 파일명으로 변경 (DB id 노출 방지, 추측 불가, 충돌 확률 0).
+     * DB id 는 PK 로 유지 (CollectionJob.script FK 관계 정합).</p>
      *
-     * @throws BusinessException 충돌 / size 초과 / I/O 실패
+     * <p>실패 시 정리 — 파일 작성 후 entity save 실패 시 파일 best-effort 삭제.</p>
      */
-    public ScriptManagementDto.ScriptContent upload(ScriptManagementDto.UploadRequest req) {
+    @Transactional
+    public ScriptManagementDto.ScriptResponse create(ScriptManagementDto.CreateRequest req) {
         validateContentSize(req.getContent());
-        Path target = resolveAndValidatePath(req.getFilename());
 
-        if (Files.exists(target)) {
-            throw new BusinessException("동일한 파일명의 스크립트가 이미 존재합니다: " + req.getFilename()
-                    + ". 다른 이름으로 등록하거나 기존 스크립트를 수정해주세요.");
-        }
+        // 1 단계 — UUID 부여 + filename 결정 (DB save 전에 미리 확정)
+        String uuid = UUID.randomUUID().toString();
+        String filename = uuid + ".py";
+        Path target = resolveTargetPath(filename);
 
+        // 2 단계 — 파일 작성 먼저
         try {
             Files.createDirectories(target.getParent());
             Files.writeString(target, req.getContent(), StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE_NEW);
-            log.info("v18.8 스크립트 신규 등록: filename={}, size={}", req.getFilename(), req.getContent().length());
-            return toScriptContent(target);
         } catch (IOException e) {
             throw new BusinessException("스크립트 파일 저장 실패: " + e.getMessage());
         }
+
+        // 3 단계 — entity save (실패 시 파일 정리)
+        try {
+            Script script = Script.builder()
+                    .filePath(filename)
+                    .contentSize((long) req.getContent().getBytes(StandardCharsets.UTF_8).length)
+                    .build();
+            Script saved = scriptRepository.save(script);
+            log.info("v18.8.3 스크립트 신규 등록: id={}, uuid={}, size={}",
+                    saved.getId(), uuid, saved.getContentSize());
+            return toResponse(saved, req.getContent());
+        } catch (Exception e) {
+            // entity save 실패 시 파일 best-effort 정리 (고아 파일 회피)
+            try { Files.deleteIfExists(target); } catch (IOException ignore) { }
+            throw new BusinessException("스크립트 entity 저장 실패: " + e.getMessage());
+        }
     }
 
     /**
-     * 기존 스크립트 수정 (덮어쓰기).
+     * 기존 스크립트 수정 — 같은 file_path 에 덮어쓰기.
      *
-     * <p>파일이 없으면 거부 (신규는 별도 upload). v18.7 진단 패널의 selector 수정 흐름 정합.</p>
+     * <p>v18.7 진단 패널의 selector 수정 흐름 정합. 같은 작업의 scriptId 유지 →
+     * 재실행 시 수정 반영 (Q6 정합).</p>
      */
-    public ScriptManagementDto.ScriptContent update(String filename, ScriptManagementDto.UpdateRequest req) {
+    @Transactional
+    public ScriptManagementDto.ScriptResponse update(Long id, ScriptManagementDto.UpdateRequest req) {
         validateContentSize(req.getContent());
-        Path target = resolveAndValidatePath(filename);
 
-        if (!Files.exists(target)) {
-            throw new BusinessException("수정 대상 스크립트가 존재하지 않습니다: " + filename
-                    + ". 신규 업로드 메뉴를 활용해주세요.");
-        }
+        Script script = scriptRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("스크립트가 존재하지 않습니다: id=" + id));
+
+        Path target = resolveTargetPath(script.getFilePath());
 
         try {
             Files.writeString(target, req.getContent(), StandardCharsets.UTF_8,
-                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
-            log.info("v18.8 스크립트 수정: filename={}, size={}", filename, req.getContent().length());
-            return toScriptContent(target);
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE,
+                    StandardOpenOption.CREATE);  // 파일이 없어졌으면 새로 작성
         } catch (IOException e) {
             throw new BusinessException("스크립트 파일 수정 실패: " + e.getMessage());
         }
+
+        script.setContentSize((long) req.getContent().getBytes(StandardCharsets.UTF_8).length);
+        Script saved = scriptRepository.save(script);
+        log.info("v18.8.2 스크립트 수정: id={}, size={}", id, saved.getContentSize());
+        return toResponse(saved, req.getContent());
     }
 
     /**
-     * 스크립트 내용 조회.
-     *
-     * <p>FE 의 ScriptEditorDialog 가 편집 모드 진입 시 호출.</p>
+     * 스크립트 내용 조회 — FE 의 ScriptEditorDialog 가 편집 모드 진입 시 호출.
      */
-    public ScriptManagementDto.ScriptContent getContent(String filename) {
-        Path target = resolveAndValidatePath(filename);
+    public ScriptManagementDto.ScriptResponse getContent(Long id) {
+        Script script = scriptRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("스크립트가 존재하지 않습니다: id=" + id));
 
+        Path target = resolveTargetPath(script.getFilePath());
         if (!Files.exists(target)) {
-            throw new BusinessException("스크립트 파일이 존재하지 않습니다: " + filename);
+            throw new BusinessException("스크립트 파일이 존재하지 않습니다: " + script.getFilePath());
         }
 
-        return toScriptContent(target);
-    }
-
-    /**
-     * base-dir 안의 .py 스크립트 목록.
-     *
-     * <p>templates/ 하위 디렉토리는 제외 (selenium_wrapper.py 같은 보조 모듈은 노출 안 함).</p>
-     */
-    public ScriptManagementDto.ListResponse list() {
-        Path baseDir = Paths.get(scriptsBaseDir).toAbsolutePath().normalize();
-
-        if (!Files.isDirectory(baseDir)) {
-            return ScriptManagementDto.ListResponse.builder()
-                    .scripts(List.of())
-                    .build();
-        }
-
-        try (Stream<Path> stream = Files.list(baseDir)) {
-            List<ScriptManagementDto.ScriptInfo> scripts = stream
-                    .filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().toLowerCase().endsWith(".py"))
-                    .sorted(Comparator.comparing(p -> p.getFileName().toString()))
-                    .map(this::toScriptInfo)
-                    .toList();
-
-            return ScriptManagementDto.ListResponse.builder()
-                    .scripts(scripts)
-                    .build();
+        try {
+            String content = Files.readString(target, StandardCharsets.UTF_8);
+            return toResponse(script, content);
         } catch (IOException e) {
-            throw new BusinessException("스크립트 디렉토리 조회 실패: " + e.getMessage());
+            throw new BusinessException("스크립트 파일 읽기 실패: " + e.getMessage());
         }
     }
 
@@ -148,37 +148,13 @@ public class ScriptManagementService {
     // 내부 helper
     // ========================================
 
-    /**
-     * 파일명 → base-dir 안의 절대 경로로 변환 + path traversal 검증.
-     *
-     * <p>filename 에 / \ .. 가 포함되어도 base-dir 밖으로 못 나가도록 차단.</p>
-     */
-    private Path resolveAndValidatePath(String filename) {
-        if (filename == null || filename.isBlank()) {
-            throw new BusinessException("파일명이 비어있습니다.");
-        }
-
+    private Path resolveTargetPath(String relativeFilename) {
         Path baseDir = Paths.get(scriptsBaseDir).toAbsolutePath().normalize();
-        // filename 의 path separator 제거 (path traversal 방지 — DTO @Pattern 외 2차 방어)
-        String safeFilename = Paths.get(filename).getFileName().toString();
-        Path resolved = baseDir.resolve(safeFilename).normalize();
-
-        if (!resolved.startsWith(baseDir)) {
-            log.warn("v18.8 path traversal 차단: filename={}, resolved={}, base={}",
-                    filename, resolved, baseDir);
-            throw new BusinessException("허용되지 않은 파일 경로입니다: " + filename);
-        }
-
-        if (!safeFilename.toLowerCase().endsWith(".py")) {
-            throw new BusinessException("Python 스크립트 (.py) 만 허용됩니다: " + filename);
-        }
-
-        return resolved;
+        // filename 만 사용 (path separator 제거로 안전성 확보)
+        String safeFilename = Paths.get(relativeFilename).getFileName().toString();
+        return baseDir.resolve(safeFilename).normalize();
     }
 
-    /**
-     * 내용 크기 검증 — UTF-8 byte 기준 1MB.
-     */
     private void validateContentSize(String content) {
         if (content == null) {
             throw new BusinessException("스크립트 내용이 null 입니다.");
@@ -191,34 +167,13 @@ public class ScriptManagementService {
         }
     }
 
-    private ScriptManagementDto.ScriptContent toScriptContent(Path target) {
-        try {
-            String content = Files.readString(target, StandardCharsets.UTF_8);
-            BasicFileAttributes attrs = Files.readAttributes(target, BasicFileAttributes.class);
-            return ScriptManagementDto.ScriptContent.builder()
-                    .filename(target.getFileName().toString())
-                    .content(content)
-                    .size(attrs.size())
-                    .lastModified(LocalDateTime.ofInstant(
-                            attrs.lastModifiedTime().toInstant(), ZoneId.systemDefault()))
-                    .build();
-        } catch (IOException e) {
-            throw new BusinessException("스크립트 파일 읽기 실패: " + e.getMessage());
-        }
-    }
-
-    private ScriptManagementDto.ScriptInfo toScriptInfo(Path target) {
-        try {
-            BasicFileAttributes attrs = Files.readAttributes(target, BasicFileAttributes.class);
-            return ScriptManagementDto.ScriptInfo.builder()
-                    .filename(target.getFileName().toString())
-                    .size(attrs.size())
-                    .lastModified(LocalDateTime.ofInstant(
-                            attrs.lastModifiedTime().toInstant(), ZoneId.systemDefault()))
-                    .scriptPath(target.toString())
-                    .build();
-        } catch (IOException e) {
-            throw new BusinessException("스크립트 파일 정보 조회 실패: " + e.getMessage());
-        }
+    private ScriptManagementDto.ScriptResponse toResponse(Script script, String content) {
+        return ScriptManagementDto.ScriptResponse.builder()
+                .id(script.getId())
+                .content(content)
+                .contentSize(script.getContentSize())
+                .createdAt(script.getCreatedAt())
+                .updatedAt(script.getUpdatedAt())
+                .build();
     }
 }

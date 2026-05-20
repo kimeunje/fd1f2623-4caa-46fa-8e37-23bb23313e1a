@@ -422,55 +422,41 @@ export function parseDiagnosis(rawJson: string | null | undefined): DiagnosisJso
 }
 
 // ========================================
-// v18.8 — 스크립트 관리 API (admin 한정)
+// v18.8.2 — 스크립트 관리 API (admin 한정, UID 기반)
 //
 // 어드민 UI 만으로 Python 스크립트 등록/수정. SSH 없이 진단 패널 → 수정 → 재실행 흐름.
+// 사용자 의도: "스크립트 이름은 의미 없다. UID 로 관리." → filename 제거, 자동 id 부여.
 // 모든 endpoint = hasRole('ADMIN').
 // ========================================
 export const scriptsApi = {
-  /** base-dir 의 .py 스크립트 목록 조회 */
-  list() {
-    return api.get<ApiResponse<{ scripts: ScriptInfo[] }>>('/admin/scripts')
-  },
-
-  /** 신규 업로드 — 충돌 시 400 거부 (Q4) */
-  upload(payload: ScriptUploadRequest) {
-    return api.post<ApiResponse<ScriptContent>>('/admin/scripts', payload)
+  /** 신규 작성 — content 만, 자동 id 부여 */
+  create(payload: ScriptCreateRequest) {
+    return api.post<ApiResponse<ScriptResponse>>('/admin/scripts', payload)
   },
 
   /** 기존 스크립트 내용 조회 — 편집 모드 진입 시 */
-  getContent(filename: string) {
-    return api.get<ApiResponse<ScriptContent>>(`/admin/scripts/${encodeURIComponent(filename)}`)
+  getContent(id: number) {
+    return api.get<ApiResponse<ScriptResponse>>(`/admin/scripts/${id}`)
   },
 
-  /** 기존 스크립트 수정 (덮어쓰기). scriptPath 유지 → 재실행 시 수정 내용 반영 */
-  update(filename: string, payload: ScriptUpdateRequest) {
-    return api.put<ApiResponse<ScriptContent>>(
-      `/admin/scripts/${encodeURIComponent(filename)}`,
-      payload,
-    )
+  /** 기존 스크립트 수정 (덮어쓰기). scriptId 유지 → 재실행 시 수정 반영 */
+  update(id: number, payload: ScriptUpdateRequest) {
+    return api.put<ApiResponse<ScriptResponse>>(`/admin/scripts/${id}`, payload)
   },
 }
 
-// ────── v18.8 타입 정의 ──────
+// ────── v18.8.2 타입 정의 ──────
 
-export interface ScriptInfo {
-  filename: string
-  size: number
-  lastModified: string   // ISO-8601
-  scriptPath: string
-}
-
-export interface ScriptContent {
-  filename: string
+export interface ScriptResponse {
+  id: number
   content: string
-  size: number
-  lastModified: string
+  contentSize: number
+  createdAt: string   // ISO-8601
+  updatedAt: string
 }
 
-export interface ScriptUploadRequest {
-  filename: string       // 예: "policy_crawl.py", 영문/숫자/언더스코어/하이픈/점만
-  content: string        // UTF-8 Python 소스 (최대 1MB)
+export interface ScriptCreateRequest {
+  content: string     // UTF-8 Python 소스 (최대 1MB)
 }
 
 export interface ScriptUpdateRequest {

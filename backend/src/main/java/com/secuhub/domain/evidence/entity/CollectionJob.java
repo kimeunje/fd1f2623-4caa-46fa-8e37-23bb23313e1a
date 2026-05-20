@@ -17,6 +17,10 @@ import java.util.List;
  * RESTRICT 였음. EvidenceType 삭제 시 매달린 CollectionJob cascade 삭제 필요.
  * {@code evidence_type_id} 컬럼 자체는 nullable (전역 작업 허용) — CASCADE 는 NULL
  * 행에 영향 없음 (FK 검사 자체가 skip).</p>
+ *
+ * <h3>v18.8.2 — Script entity 관계 추가</h3>
+ * <p>UID 기반 스크립트 관리 (Q1=A 1:N). 옛 {@code scriptPath} 유지 (Q2=A legacy fallback) —
+ * ScriptExecutionService 가 script 우선, script_path fallback.</p>
  */
 @Entity
 @Table(name = "collection_jobs")
@@ -40,6 +44,19 @@ public class CollectionJob extends BaseEntity {
     @Column(name = "job_type", nullable = false, length = 30)
     private JobType jobType;
 
+    /**
+     * v18.8.2 — Script entity FK.
+     * NULL 이면 legacy scriptPath 활용 (ScriptExecutionService 가 fallback).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "script_id")
+    @OnDelete(action = OnDeleteAction.SET_NULL)
+    private Script script;
+
+    /**
+     * legacy — v18.8.2 의 script 관계 추가 후 fallback 컬럼.
+     * 옛 작업은 그대로 동작 (Q2=A).
+     */
     @Column(name = "script_path", length = 1000)
     private String scriptPath;
 
@@ -68,6 +85,14 @@ public class CollectionJob extends BaseEntity {
         if (description != null) this.description = description;
         if (scriptPath != null) this.scriptPath = scriptPath;
         if (scheduleCron != null) this.scheduleCron = scheduleCron;
+    }
+
+    /**
+     * v18.8.2 — Script entity 연결 (CollectionJobService 가 호출).
+     * Lombok @Setter 미적용 클래스라 명시 setter 추가.
+     */
+    public void setScript(Script script) {
+        this.script = script;
     }
 
     public void activate() {

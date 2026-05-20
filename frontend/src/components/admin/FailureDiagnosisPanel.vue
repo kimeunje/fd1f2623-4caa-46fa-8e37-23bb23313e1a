@@ -24,12 +24,12 @@ import ActionGuideStrip from './ActionGuideStrip.vue'
 const props = defineProps<{
   execution: ExecutionSummary
   jobName?: string   // mockup 의 부제 — "정보자산 목록 수집 · 1.4초 만에 중단 · 5/7 단계"
-  scriptPath?: string  // v18.8 — 진단 패널에서 "수정 스크립트 업로드" 버튼 활성화에 필요
+  scriptId?: number  // v18.8.2 — 진단 패널의 "수정 스크립트 업로드" 버튼 활성화 (UID 기반)
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'upload-script', scriptPath: string): void   // v18.8 — JobsView 가 ScriptEditorDialog 열기
+  (e: 'upload-script', scriptId: number): void   // v18.8.2 — JobsView 가 ScriptEditorDialog 열기
 }>()
 
 const diagnosis = computed<DiagnosisJson | null>(() =>
@@ -77,13 +77,13 @@ function onDownloadPageSource() { window.open(pageSourceUrl.value, '_blank') }
 function onNotifyOwner() { alert('담당자 알림 기능은 v19.0+ EmailService 통합 후 활성화됩니다.') }
 function onRerun() { alert('재실행은 작업 목록 화면의 "실행" 버튼을 활용해주세요.') }
 
-// v18.8 — 진단 패널 안에서 스크립트 수정 진입. scriptPath 가 있어야 동작.
+// v18.8.2 — 진단 패널 안에서 스크립트 수정 진입. scriptId 가 있어야 동작.
 function onUploadScript() {
-  if (!props.scriptPath) {
-    alert('수정할 스크립트 경로가 없습니다. 작업 등록 시 스크립트 경로를 지정해주세요.')
+  if (props.scriptId === undefined || props.scriptId === null) {
+    alert('이 작업에는 등록된 스크립트가 없습니다 (legacy scriptPath 작업). 작업 등록 화면에서 신규 스크립트로 전환해주세요.')
     return
   }
-  emit('upload-script', props.scriptPath)
+  emit('upload-script', props.scriptId)
 }
 </script>
 

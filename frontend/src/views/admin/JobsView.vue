@@ -11,14 +11,21 @@ const selectedJob = ref<CollectionJobDetail | null>(null)
 const showDetailPanel = ref(false)
 const showCreateDialog = ref(false)
 const detailLoading = ref(false)
-const newJob = ref({ name: '', description: '', jobType: 'web_scraping', scriptPath: '', scheduleCron: '' })
+const newJob = ref<{
+  name: string
+  description: string
+  jobType: string
+  scriptId: number | null
+  scriptPath: string
+  scheduleCron: string
+}>({ name: '', description: '', jobType: 'web_scraping', scriptId: null, scriptPath: '', scheduleCron: '' })
 
 // v18.7 — 진단 패널 진입 상태 (풀폭 swap)
 const selectedExecution = ref<ExecutionSummary | null>(null)
 
-// v18.8 — 스크립트 편집 dialog 상태
+// v18.8.2 — 스크립트 편집 dialog 상태 (UID 기반)
 const scriptEditorMode = ref<'create' | 'edit' | null>(null)
-const editingScriptFilename = ref<string | null>(null)
+const editingScriptId = ref<number | null>(null)
 
 const jobTypeLabels: Record<string, { label: string; color: string }> = {
   web_scraping: { label: '웹 스크래핑', color: 'bg-purple-100 text-purple-700' },
@@ -51,11 +58,12 @@ async function handleCreate() {
       name: newJob.value.name,
       description: newJob.value.description || undefined,
       jobType: newJob.value.jobType,
-      scriptPath: newJob.value.scriptPath || undefined,
+      scriptId: newJob.value.scriptId ?? undefined,         // v18.8.2
+      scriptPath: newJob.value.scriptPath || undefined,     // legacy fallback
       scheduleCron: newJob.value.scheduleCron || undefined,
     })
     showCreateDialog.value = false
-    newJob.value = { name: '', description: '', jobType: 'web_scraping', scriptPath: '', scheduleCron: '' }
+    newJob.value = { name: '', description: '', jobType: 'web_scraping', scriptId: null, scriptPath: '', scheduleCron: '' }
     await loadJobs()
   } catch (e) { console.error(e) }
 }
@@ -141,32 +149,30 @@ function openDiagnosisPanel(exec: ExecutionSummary) {
 // v18.7 — 풀폭 swap 상태 (목록 + 상세 숨김 여부)
 const showDiagnosisPanel = computed(() => selectedExecution.value !== null)
 
-// v18.8 — 스크립트 신규 작성 다이얼로그 열기
+// v18.8.2 — 스크립트 신규 작성 다이얼로그 열기
 function openScriptCreateDialog() {
   scriptEditorMode.value = 'create'
-  editingScriptFilename.value = null
+  editingScriptId.value = null
 }
 
-// v18.8 — 진단 패널의 "수정 스크립트 업로드" 버튼 → 스크립트 수정 dialog 열기
-function openScriptEditDialog(scriptPath: string) {
-  // scriptPath = "/home/scripts/login_flow_demo.py" → filename 만 추출
-  const filename = scriptPath.split(/[/\\]/).pop() ?? scriptPath
-  editingScriptFilename.value = filename
+// v18.8.2 — 진단 패널의 "수정 스크립트 업로드" 버튼 → 스크립트 수정 dialog 열기
+function openScriptEditDialog(scriptId: number) {
+  editingScriptId.value = scriptId
   scriptEditorMode.value = 'edit'
 }
 
 function closeScriptEditor() {
   scriptEditorMode.value = null
-  editingScriptFilename.value = null
+  editingScriptId.value = null
 }
 
-// v18.8 — 스크립트 저장 완료 시
-async function onScriptSaved(payload: { filename: string; scriptPath: string }) {
+// v18.8.2 — 스크립트 저장 완료 시 — scriptId 자동 채움 (별도 필드)
+async function onScriptSaved(payload: { scriptId: number }) {
   closeScriptEditor()
 
-  // 신규 작성이면 작업 등록 dialog 의 scriptPath 에 자동 채움
-  if (showCreateDialog.value && !newJob.value.scriptPath) {
-    newJob.value.scriptPath = payload.scriptPath
+  // 신규 작성이면 작업 등록 dialog 의 scriptId 자동 채움
+  if (showCreateDialog.value && !newJob.value.scriptId) {
+    newJob.value.scriptId = payload.scriptId
   }
 
   // 작업 상세 패널이 열려 있으면 다시 로드 (수정 후 재실행 흐름)
@@ -205,7 +211,7 @@ onMounted(loadJobs)
       <FailureDiagnosisPanel
         :execution="selectedExecution"
         :job-name="selectedJob?.name"
-        :script-path="selectedJob?.scriptPath"
+        :script-id="selectedJob?.scriptId"
         @close="selectedExecution = null"
         @upload-script="openScriptEditDialog"
       />
@@ -419,18 +425,34 @@ onMounted(loadJobs)
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">스크립트 파일명</label>
-            <div class="flex gap-2">
-              <input v-model="newJob.scriptPath" class="flex-1 px-3 py-2 border rounded-lg text-sm font-mono"
-                placeholder="policy_crawl.py" />
-              <button type="button" @click="openScriptCreateDialog"
-                class="px-3 py-2 text-xs bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 inline-flex items-center gap-1 whitespace-nowrap">
-                <i class="pi pi-pencil text-xs"></i> 작성
-              </button>
+            <label class="block text-sm font-medium text-gray-700 mb-1">스크립트</label>
+
+            <!-- v18.8.2 — scriptId 있으면 "작성됨" 표기 + [재작성] / [수정] -->
+            <div v-if="newJob.scriptId" class="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+              <i class="pi pi-check-circle text-green-700"></i>
+              <span class="text-sm text-green-800">스크립트 #{{ newJob.scriptId }} 작성됨</span>
+              <div class="flex gap-1 ml-auto">
+                <button type="button" @click="openScriptEditDialog(newJob.scriptId!)"
+                  class="px-2 py-1 text-xs bg-white border border-stone-300 text-stone-700 rounded hover:bg-stone-50">
+                  수정
+                </button>
+                <button type="button" @click="newJob.scriptId = null"
+                  class="px-2 py-1 text-xs bg-white border border-red-300 text-red-700 rounded hover:bg-red-50">
+                  해제
+                </button>
+              </div>
             </div>
-            <p class="mt-1 text-xs text-gray-400">
-              "작성" 버튼으로 신규 등록 또는 기존 스크립트 파일명 직접 입력. 경로는 자동으로 처리됩니다.
-            </p>
+
+            <!-- 스크립트 미설정 시 — "작성" 버튼만 (UID 기반, 파일명 입력 없음) -->
+            <div v-else>
+              <button type="button" @click="openScriptCreateDialog"
+                class="w-full px-3 py-2 text-sm bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 inline-flex items-center justify-center gap-1.5">
+                <i class="pi pi-pencil text-xs"></i> 스크립트 작성
+              </button>
+              <p class="mt-1 text-xs text-gray-400">
+                "작성" 버튼으로 Python 스크립트를 등록하세요. 파일명은 자동 부여됩니다.
+              </p>
+            </div>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">스케줄 (Cron)</label>
@@ -447,12 +469,12 @@ onMounted(loadJobs)
     </div>
 
     <!-- ════════════════════════════════════════════════════════════
-         v18.8 — 스크립트 작성/편집 dialog
+         v18.8.2 — 스크립트 작성/편집 dialog (UID 기반)
          ════════════════════════════════════════════════════════════ -->
     <ScriptEditorDialog
       v-if="scriptEditorMode"
       :mode="scriptEditorMode"
-      :filename="editingScriptFilename ?? undefined"
+      :script-id="editingScriptId ?? undefined"
       @close="closeScriptEditor"
       @saved="onScriptSaved"
     />

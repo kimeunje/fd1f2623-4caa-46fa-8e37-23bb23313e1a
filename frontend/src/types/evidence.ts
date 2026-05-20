@@ -176,6 +176,9 @@ export interface CollectionJobItem {
   name: string
   description?: string
   jobType: string
+  /** v18.8.2 — Script entity id (NULL 이면 legacy scriptPath 활용) */
+  scriptId?: number
+  /** legacy — scriptId NULL 시 fallback */
   scriptPath?: string
   evidenceTypeId?: number
   evidenceTypeName?: string
@@ -193,6 +196,9 @@ export interface CollectionJobCreatePayload {
   name: string
   description?: string
   jobType: string
+  /** v18.8.2 — 신규 작업은 scriptId 활용 */
+  scriptId?: number
+  /** legacy — script_path fallback */
   scriptPath?: string
   evidenceTypeId?: number
   scheduleCron?: string
@@ -201,6 +207,8 @@ export interface CollectionJobCreatePayload {
 export interface CollectionJobUpdatePayload {
   name?: string
   description?: string
+  /** v18.8.2 — scriptId 갱신 */
+  scriptId?: number
   scriptPath?: string
   scheduleCron?: string
 }

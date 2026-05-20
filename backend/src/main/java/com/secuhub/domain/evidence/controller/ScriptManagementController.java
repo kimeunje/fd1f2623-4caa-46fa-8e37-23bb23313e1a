@@ -11,14 +11,16 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * v18.8 — 어드민 UI 만으로 Python 스크립트 등록/수정.
+ * v18.8.2 — 어드민 UI 만으로 Python 스크립트 등록/수정 (UID 기반).
  *
- * <p>모든 endpoint = admin 한정 (Python = 임의 코드 실행 → 보안 차단 필수).
- * CollectionJobController 패턴 정합 — class 레벨 @PreAuthorize + ApiResponse.ok.</p>
+ * <p>EvidenceAsset 패턴 정합 — 사용자가 보는 표면 (작업 name) 과 내부 저장 (script id) 분리.</p>
  *
- * <p>FE 의 ScriptEditorDialog.vue 가 본 endpoint 호출:</p>
+ * <p>모든 endpoint = admin 한정. CollectionJobController 정합 (class 레벨 @PreAuthorize +
+ * ApiResponse.ok).</p>
+ *
+ * <p>FE 의 ScriptEditorDialog.vue 호출:</p>
  * <ul>
- *   <li>JobsView 작업 등록 dialog 의 "작성" 버튼 → POST (upload)</li>
+ *   <li>JobsView / EvidenceTypeDetailView 의 "작성" 버튼 → POST (create)</li>
  *   <li>FailureDiagnosisPanel 의 "수정 스크립트 업로드" 버튼 → GET + PUT (조회 후 수정)</li>
  * </ul>
  */
@@ -31,45 +33,36 @@ public class ScriptManagementController {
     private final ScriptManagementService scriptManagementService;
 
     /**
-     * 스크립트 목록 조회
-     * GET /api/v1/admin/scripts
-     */
-    @GetMapping
-    public ResponseEntity<ApiResponse<ScriptManagementDto.ListResponse>> list() {
-        return ResponseEntity.ok(ApiResponse.ok(scriptManagementService.list()));
-    }
-
-    /**
-     * 신규 스크립트 업로드 — 충돌 시 400 거부 (Q4)
+     * 신규 스크립트 작성 — content 만 받아 자동 id 부여.
      * POST /api/v1/admin/scripts
      */
     @PostMapping
-    public ResponseEntity<ApiResponse<ScriptManagementDto.ScriptContent>> upload(
-            @Valid @RequestBody ScriptManagementDto.UploadRequest request) {
-        ScriptManagementDto.ScriptContent saved = scriptManagementService.upload(request);
+    public ResponseEntity<ApiResponse<ScriptManagementDto.ScriptResponse>> create(
+            @Valid @RequestBody ScriptManagementDto.CreateRequest request) {
+        ScriptManagementDto.ScriptResponse saved = scriptManagementService.create(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.ok("스크립트가 등록되었습니다.", saved));
     }
 
     /**
-     * 기존 스크립트 내용 조회 — 편집 모드 진입 시
-     * GET /api/v1/admin/scripts/{filename}
+     * 기존 스크립트 내용 조회.
+     * GET /api/v1/admin/scripts/{id}
      */
-    @GetMapping("/{filename}")
-    public ResponseEntity<ApiResponse<ScriptManagementDto.ScriptContent>> getContent(
-            @PathVariable String filename) {
-        return ResponseEntity.ok(ApiResponse.ok(scriptManagementService.getContent(filename)));
+    @GetMapping("/{id}")
+    public ResponseEntity<ApiResponse<ScriptManagementDto.ScriptResponse>> getContent(
+            @PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok(scriptManagementService.getContent(id)));
     }
 
     /**
-     * 기존 스크립트 수정 (덮어쓰기) — scriptPath 유지로 재실행 시 수정 반영 (Q6)
-     * PUT /api/v1/admin/scripts/{filename}
+     * 기존 스크립트 수정 (덮어쓰기) — 같은 작업의 scriptId 유지 → 재실행 시 반영 (Q6).
+     * PUT /api/v1/admin/scripts/{id}
      */
-    @PutMapping("/{filename}")
-    public ResponseEntity<ApiResponse<ScriptManagementDto.ScriptContent>> update(
-            @PathVariable String filename,
+    @PutMapping("/{id}")
+    public ResponseEntity<ApiResponse<ScriptManagementDto.ScriptResponse>> update(
+            @PathVariable Long id,
             @Valid @RequestBody ScriptManagementDto.UpdateRequest request) {
-        ScriptManagementDto.ScriptContent saved = scriptManagementService.update(filename, request);
+        ScriptManagementDto.ScriptResponse saved = scriptManagementService.update(id, request);
         return ResponseEntity.ok(ApiResponse.ok("스크립트가 수정되었습니다.", saved));
     }
 }

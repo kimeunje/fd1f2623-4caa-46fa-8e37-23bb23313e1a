@@ -21,6 +21,7 @@ public class CollectionJobService {
     private final CollectionJobRepository collectionJobRepository;
     private final JobExecutionRepository jobExecutionRepository;
     private final EvidenceTypeRepository evidenceTypeRepository;
+    private final ScriptRepository scriptRepository;            // v18.8.2 — Script entity 조회용
     private final ScriptExecutionService scriptExecutionService;
 
     @Transactional(readOnly = true)
@@ -49,6 +50,8 @@ public class CollectionJobService {
                 .name(job.getName())
                 .description(job.getDescription())
                 .jobType(job.getJobType().name())
+                // v18.8.2 — scriptId 노출 (NULL 이면 legacy scriptPath 활용)
+                .scriptId(job.getScript() != null ? job.getScript().getId() : null)
                 .scriptPath(job.getScriptPath())
                 .evidenceTypeId(job.getEvidenceType() != null ? job.getEvidenceType().getId() : null)
                 .evidenceTypeName(job.getEvidenceType() != null ? job.getEvidenceType().getName() : null)
@@ -74,11 +77,19 @@ public class CollectionJobService {
                     .orElseThrow(() -> new ResourceNotFoundException("증빙 유형", request.getEvidenceTypeId()));
         }
 
+        // v18.8.2 — scriptId 우선, 없으면 scriptPath fallback (Q2=A)
+        Script script = null;
+        if (request.getScriptId() != null) {
+            script = scriptRepository.findById(request.getScriptId())
+                    .orElseThrow(() -> new ResourceNotFoundException("스크립트", request.getScriptId()));
+        }
+
         CollectionJob job = CollectionJob.builder()
                 .name(request.getName())
                 .description(request.getDescription())
                 .jobType(jobType)
-                .scriptPath(request.getScriptPath())
+                .script(script)                            // v18.8.2
+                .scriptPath(request.getScriptPath())       // legacy fallback
                 .evidenceType(evidenceType)
                 .scheduleCron(request.getScheduleCron())
                 .build();
@@ -91,6 +102,14 @@ public class CollectionJobService {
     public CollectionJobDto.Response update(Long jobId, CollectionJobDto.UpdateRequest request) {
         CollectionJob job = collectionJobRepository.findById(jobId)
                 .orElseThrow(() -> new ResourceNotFoundException("수집 작업", jobId));
+
+        // v18.8.2 — scriptId 갱신 (있으면 새 Script 연결)
+        if (request.getScriptId() != null) {
+            Script script = scriptRepository.findById(request.getScriptId())
+                    .orElseThrow(() -> new ResourceNotFoundException("스크립트", request.getScriptId()));
+            job.setScript(script);
+        }
+
         job.update(request.getName(), request.getDescription(), request.getScriptPath(), request.getScheduleCron());
 
         List<JobExecution> execs = jobExecutionRepository.findByJobIdOrderByCreatedAtDesc(job.getId());
@@ -123,14 +142,18 @@ public class CollectionJobService {
      * 1. JobExecution을 running 상태로 생성
      * 2. ScriptExecutionService.executeAsync()로 비동기 위임
      * 3. 즉시 ExecutionSummary 반환 (실행 결과는 비동기로 업데이트)
+     *
+     * v18.8.2 — script 또는 scriptPath 중 하나라도 있어야 실행 가능.
      */
     @Transactional
     public CollectionJobDto.ExecutionSummary executeManually(Long jobId) {
         CollectionJob job = collectionJobRepository.findById(jobId)
                 .orElseThrow(() -> new ResourceNotFoundException("수집 작업", jobId));
 
-        // 스크립트 경로 검증
-        if (job.getScriptPath() == null || job.getScriptPath().isBlank()) {
+        // v18.8.2 — script 또는 scriptPath 둘 중 하나라도 있으면 실행 가능
+        boolean hasScript = job.getScript() != null;
+        boolean hasScriptPath = job.getScriptPath() != null && !job.getScriptPath().isBlank();
+        if (!hasScript && !hasScriptPath) {
             throw new BusinessException("스크립트 경로가 설정되지 않은 작업입니다. 작업 설정을 확인해주세요.");
         }
 

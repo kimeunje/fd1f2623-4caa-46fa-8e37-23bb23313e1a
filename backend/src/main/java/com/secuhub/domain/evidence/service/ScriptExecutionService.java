@@ -126,7 +126,14 @@ public class ScriptExecutionService {
      * 스크립트 실행 본체
      */
     private void executeScript(CollectionJob job, JobExecution execution) {
-        String scriptPath = job.getScriptPath();
+        // v18.8.2 — script_id 우선, 없으면 script_path fallback (Q2=A)
+        String scriptPath;
+        Script linkedScript = job.getScript();
+        if (linkedScript != null) {
+            scriptPath = linkedScript.getFilePath();
+        } else {
+            scriptPath = job.getScriptPath();
+        }
 
         // ── 1. 스크립트 경로 검증 ──
         if (scriptPath == null || scriptPath.isBlank()) {

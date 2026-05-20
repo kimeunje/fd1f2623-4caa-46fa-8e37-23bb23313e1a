@@ -21,6 +21,30 @@ spring:
     validate-on-migrate: true
     out-of-order: false
 
+# ============================================================================
+# v18.8.3 — 운영 환경 데이터 저장 위치 (Linux FHS 표준)
+# ============================================================================
+# jar 실행 디렉토리와 분리 — 백업/유지보수/권한 관리 정합.
+#
+# 디렉토리 구조:
+#   /var/lib/secuhub/
+#   ├── scripts/             ← Python 스크립트 (UUID 기반)
+#   │   ├── {uuid}.py        ← ScriptManagementService 가 생성
+#   │   └── templates/
+#   │       └── selenium_wrapper.py     ← 공통 helper (수동 배치)
+#   └── storage/             ← 증빙 자산 + 진단 산출
+#       ├── assets/{id%1000}/{id}      ← EvidenceAsset 파일
+#       └── output/{jobId}/{executionId}/   ← 실행 산출 + _diagnosis.json
+#
+# 백업: tar -czf backup-$(date +%F).tar.gz /var/lib/secuhub/
+# 권한: chown -R <jar-user>:<group> /var/lib/secuhub
+# ============================================================================
+app:
+  scripts:
+    base-dir: /home/scripts
+  storage:
+    path: /home/storage
+
 logging:
   level:
     com.secuhub: INFO

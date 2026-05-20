@@ -99,10 +99,18 @@ const reviewSubmitting = ref(false)
 
 // 자동 수집 작업 생성 다이얼로그
 const showAddJobDialog = ref(false)
-const newJob = ref({
+const newJob = ref<{
+  name: string
+  description: string
+  jobType: string
+  scriptId: number | null         // v18.8.2 — UID 기반
+  scriptPath: string              // legacy fallback
+  scheduleCron: string
+}>({
   name: '',
   description: '',
   jobType: 'web_scraping',   // ← BE JobType enum 정합
+  scriptId: null,
   scriptPath: '',
   scheduleCron: '',
 })
@@ -534,33 +542,39 @@ function openAddJobDialog() {
     name: '',
     description: '',
     jobType: 'web_scraping',   // ← BE JobType enum 정합
-    scriptPath: '',
+    scriptId: null,             // v18.8.2
+    scriptPath: '',             // legacy fallback
     scheduleCron: '',
   }
   showAddJobDialog.value = true
 }
 
 // ========================================
-// v18.8 — 스크립트 작성/편집 dialog 연계
+// v18.8.2 — 스크립트 작성/편집 dialog 연계 (UID 기반)
 // ========================================
 const scriptEditorMode = ref<'create' | 'edit' | null>(null)
-const editingScriptFilename = ref<string | null>(null)
+const editingScriptId = ref<number | null>(null)
 
 function openScriptCreateDialog() {
   scriptEditorMode.value = 'create'
-  editingScriptFilename.value = null
+  editingScriptId.value = null
+}
+
+function openScriptEditDialog(scriptId: number) {
+  editingScriptId.value = scriptId
+  scriptEditorMode.value = 'edit'
 }
 
 function closeScriptEditor() {
   scriptEditorMode.value = null
-  editingScriptFilename.value = null
+  editingScriptId.value = null
 }
 
-function onScriptSaved(payload: { filename: string; scriptPath: string }) {
+function onScriptSaved(payload: { scriptId: number }) {
   closeScriptEditor()
-  // 작업 등록 dialog 의 scriptPath 자동 채움
-  if (showAddJobDialog.value && !newJob.value.scriptPath) {
-    newJob.value.scriptPath = payload.scriptPath
+  // 작업 등록 dialog 의 scriptId 자동 채움
+  if (showAddJobDialog.value && !newJob.value.scriptId) {
+    newJob.value.scriptId = payload.scriptId
   }
 }
 
@@ -575,7 +589,8 @@ async function handleCreateJob() {
       name: newJob.value.name.trim(),
       description: newJob.value.description.trim() || undefined,
       jobType: newJob.value.jobType,
-      scriptPath: newJob.value.scriptPath.trim() || undefined,
+      scriptId: newJob.value.scriptId ?? undefined,           // v18.8.2
+      scriptPath: newJob.value.scriptPath.trim() || undefined, // legacy
       scheduleCron: newJob.value.scheduleCron.trim() || undefined,
       evidenceTypeId: props.evidenceTypeId,
     })
@@ -1221,22 +1236,34 @@ function executionDotCls(status?: string): string {
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">스크립트 파일명</label>
-            <div class="flex gap-2">
-              <input
-                v-model="newJob.scriptPath"
-                placeholder="policy_crawl.py"
-                class="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono" />
-              <button
-                type="button"
-                @click="openScriptCreateDialog"
-                class="px-3 py-2 text-xs bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 inline-flex items-center gap-1 whitespace-nowrap">
-                <i class="pi pi-pencil text-xs"></i> 작성
-              </button>
+            <label class="block text-sm font-medium text-gray-700 mb-1">스크립트</label>
+
+            <!-- v18.8.2 — scriptId 있으면 "작성됨" 표기 + [수정] / [해제] -->
+            <div v-if="newJob.scriptId" class="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+              <i class="pi pi-check-circle text-green-700"></i>
+              <span class="text-sm text-green-800">스크립트 #{{ newJob.scriptId }} 작성됨</span>
+              <div class="flex gap-1 ml-auto">
+                <button type="button" @click="openScriptEditDialog(newJob.scriptId!)"
+                  class="px-2 py-1 text-xs bg-white border border-stone-300 text-stone-700 rounded hover:bg-stone-50">
+                  수정
+                </button>
+                <button type="button" @click="newJob.scriptId = null"
+                  class="px-2 py-1 text-xs bg-white border border-red-300 text-red-700 rounded hover:bg-red-50">
+                  해제
+                </button>
+              </div>
             </div>
-            <p class="text-[11px] text-gray-400 mt-1">
-              "작성" 버튼으로 신규 등록 또는 기존 스크립트 파일명 직접 입력. 경로는 자동으로 처리됩니다.
-            </p>
+
+            <!-- 스크립트 미설정 시 — "작성" 버튼만 -->
+            <div v-else>
+              <button type="button" @click="openScriptCreateDialog"
+                class="w-full px-3 py-2 text-sm bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 inline-flex items-center justify-center gap-1.5">
+                <i class="pi pi-pencil text-xs"></i> 스크립트 작성
+              </button>
+              <p class="text-[11px] text-gray-400 mt-1">
+                "작성" 버튼으로 Python 스크립트를 등록하세요. 파일명은 자동 부여됩니다.
+              </p>
+            </div>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">스케줄 (Cron)</label>
@@ -1284,12 +1311,12 @@ function executionDotCls(status?: string): string {
       @cancel="handleCancelDuplicate" />
 
     <!-- ======================================
-         v18.8 — 스크립트 작성/편집 dialog
+         v18.8.2 — 스크립트 작성/편집 dialog (UID 기반)
          ====================================== -->
     <ScriptEditorDialog
       v-if="scriptEditorMode"
       :mode="scriptEditorMode"
-      :filename="editingScriptFilename ?? undefined"
+      :script-id="editingScriptId ?? undefined"
       @close="closeScriptEditor"
       @saved="onScriptSaved" />
   </div>
