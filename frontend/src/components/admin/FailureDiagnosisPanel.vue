@@ -49,19 +49,25 @@ const stepsProgress = computed(() => {
 
 const durationLabel = computed(() => {
   if (!diagnosis.value) return ''
-  return `${diagnosis.value.execution.duration_sec.toFixed(1)}초 만에 중단`
+  const sec = diagnosis.value.execution.duration_sec.toFixed(1)
+  // v18.8 — 성공/실패 분기. 성공도 진단 패널 진입 가능.
+  return diagnosis.value.execution.status === 'success'
+    ? `${sec}초 만에 완료`
+    : `${sec}초 만에 중단`
 })
 
 const headerTitle = computed(() => {
-  // mockup 정합 — "2026-05-12 06:00 실행 진단"
-  if (!props.execution.startedAt) return '실행 진단'
+  // mockup 정합 — "2026-05-12 06:00 실행 진단" / "실행 상세" (성공)
+  if (!props.execution.startedAt) return '실행'
   const d = new Date(props.execution.startedAt)
   const yyyy = d.getFullYear()
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   const hh = String(d.getHours()).padStart(2, '0')
   const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi} 실행 진단`
+  // v18.8 — 성공 = "실행 상세", 실패 = "실행 진단"
+  const suffix = props.execution.status === 'success' ? '실행 상세' : '실행 진단'
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi} ${suffix}`
 })
 
 const screenshotUrl = computed(() => jobsApi.getDiagnosisScreenshotUrl(props.execution.id))
@@ -188,42 +194,64 @@ function onUploadScript() {
         </div>
       </div>
 
-      <!-- ── 우측: 에러 정보 + 스크린샷 + 추정 원인 ── -->
+      <!-- ── 우측: 에러 정보 + 스크린샷 + 추정 원인 (실패) / 실행 결과 (성공) ── -->
       <div>
-        <!-- 에러 정보 -->
-        <template v-if="failedStep?.error">
-          <div class="text-[10px] text-stone-400 uppercase tracking-wide font-medium mb-1.5">에러 정보</div>
-          <div class="bg-red-50 p-2.5 rounded mb-2.5">
-            <div class="text-[10px] text-red-700 mb-1">한국어 해석</div>
-            <div class="text-[11px] text-red-700 font-medium leading-snug">
-              {{ failedStep.error.korean_message }}
+        <!-- v18.8 — 성공 시 우측 = 단순 안내 -->
+        <template v-if="diagnosis.execution.status === 'success'">
+          <div class="text-[10px] text-stone-400 uppercase tracking-wide font-medium mb-1.5">
+            실행 결과
+          </div>
+          <div class="bg-green-50 border border-green-200 p-3 rounded">
+            <div class="flex items-center gap-1.5 text-green-700 font-medium text-[11px]">
+              <i class="pi pi-check-circle text-[14px]"></i>
+              모든 단계가 정상 완료되었습니다.
             </div>
-            <div class="text-[10px] text-red-700 mt-1.5 font-mono break-all">
-              {{ failedStep.error.selector }}
-            </div>
+            <p class="text-[10px] text-green-700 mt-2 leading-snug">
+              총 {{ diagnosis.scenario.total_steps }} 단계, {{ diagnosis.execution.duration_sec.toFixed(1) }}초 소요.
+            </p>
+            <p class="text-[10px] text-stone-500 mt-2 leading-snug">
+              수집된 산출 파일은 작업의 증빙 자료 화면에서 확인할 수 있습니다.
+            </p>
           </div>
         </template>
 
-        <!-- 스크린샷 -->
-        <div class="text-[10px] text-stone-400 uppercase tracking-wide font-medium mb-1.5">
-          실패 시점 스크린샷
-        </div>
-        <div class="bg-stone-100 rounded p-2 mb-2.5">
-          <a :href="screenshotUrl" target="_blank" rel="noopener" class="block">
-            <img :src="screenshotUrl" alt="실패 시점 스크린샷"
-              class="w-full border border-stone-300 rounded"
-              @error="(e: any) => { e.target.style.display = 'none' }" />
-          </a>
-          <div class="text-[10px] text-stone-400 mt-1 text-center">클릭하여 원본 확대</div>
-        </div>
+        <!-- 실패 시 — 기존 정보 영역 -->
+        <template v-else>
+          <!-- 에러 정보 -->
+          <template v-if="failedStep?.error">
+            <div class="text-[10px] text-stone-400 uppercase tracking-wide font-medium mb-1.5">에러 정보</div>
+            <div class="bg-red-50 p-2.5 rounded mb-2.5">
+              <div class="text-[10px] text-red-700 mb-1">한국어 해석</div>
+              <div class="text-[11px] text-red-700 font-medium leading-snug">
+                {{ failedStep.error.korean_message }}
+              </div>
+              <div class="text-[10px] text-red-700 mt-1.5 font-mono break-all">
+                {{ failedStep.error.selector }}
+              </div>
+            </div>
+          </template>
 
-        <!-- 추정 원인 -->
-        <template v-if="diagnosis.diagnosis.primary_cause">
-          <div class="text-[10px] text-stone-400 uppercase tracking-wide font-medium mb-1.5">추정 원인</div>
-          <div class="bg-yellow-50 p-2.5 rounded text-[11px] text-yellow-800 leading-relaxed">
-            <i class="pi pi-lightbulb text-[13px] align-text-bottom mr-1"></i>
-            {{ diagnosis.diagnosis.primary_cause }}
+          <!-- 스크린샷 — 실패 시점만 -->
+          <div class="text-[10px] text-stone-400 uppercase tracking-wide font-medium mb-1.5">
+            실패 시점 스크린샷
           </div>
+          <div class="bg-stone-100 rounded p-2 mb-2.5">
+            <a :href="screenshotUrl" target="_blank" rel="noopener" class="block">
+              <img :src="screenshotUrl" alt="실패 시점 스크린샷"
+                class="w-full border border-stone-300 rounded"
+                @error="(e: any) => { e.target.style.display = 'none' }" />
+            </a>
+            <div class="text-[10px] text-stone-400 mt-1 text-center">클릭하여 원본 확대</div>
+          </div>
+
+          <!-- 추정 원인 -->
+          <template v-if="diagnosis.diagnosis.primary_cause">
+            <div class="text-[10px] text-stone-400 uppercase tracking-wide font-medium mb-1.5">추정 원인</div>
+            <div class="bg-yellow-50 p-2.5 rounded text-[11px] text-yellow-800 leading-relaxed">
+              <i class="pi pi-lightbulb text-[13px] align-text-bottom mr-1"></i>
+              {{ diagnosis.diagnosis.primary_cause }}
+            </div>
+          </template>
         </template>
       </div>
     </div>

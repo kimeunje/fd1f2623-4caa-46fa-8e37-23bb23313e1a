@@ -131,9 +131,10 @@ function execStatusLabel(status: string) {
   }
 }
 
-// v18.7 — 실패 row 클릭 시 진단 패널 풀폭 진입
+// v18.7+ — 실행 row 클릭 시 진단/상세 패널 풀폭 진입
+// v18.8 — 성공도 진입 가능 (단계별 시간 추적). running 만 차단 (진단 JSON 미생성).
 function openDiagnosisPanel(exec: ExecutionSummary) {
-  if (exec.status !== 'failed') return
+  if (exec.status === 'running') return
   selectedExecution.value = exec
 }
 
@@ -330,14 +331,16 @@ onMounted(loadJobs)
                 v18.7 — 좁은 폭 (w-96 작업 상세 패널) 정합 3 줄 layout.
                   1줄: 시간 mono (좌) + 상태 배지 (우)
                   2줄: 소요시간 (shrink-0) + errorMessage truncate (실패 시만)
-                  3줄: 진단 보기 → (실패 시만, 우측 정렬, 별도 줄)
-                풀폭 진단 패널 swap 진입은 그대로 (mockup 화면 2/3).
+                  3줄: 진단/상세 보기 → (실행중 외 모두, 우측 정렬, 별도 줄)
+                v18.8 — 성공 row 도 클릭 → 풀폭 패널 진입 (단계별 시간 추적).
               -->
               <div v-for="exec in selectedJob.executions" :key="exec.id"
                 :class="[
                   'px-2.5 py-2 rounded text-[11px]',
                   exec.status === 'failed'
                     ? 'bg-red-50 border border-red-300 cursor-pointer hover:bg-red-100 transition-colors'
+                    : exec.status === 'success'
+                    ? 'bg-stone-100 cursor-pointer hover:bg-stone-200 transition-colors'
                     : 'bg-stone-100'
                 ]"
                 @click="openDiagnosisPanel(exec)">
@@ -377,10 +380,12 @@ onMounted(loadJobs)
                   </span>
                 </div>
 
-                <!-- 3줄: 진단 보기 → (실패만, 우측 정렬, 별도 줄) -->
-                <div v-if="exec.status === 'failed'"
-                  class="mt-1 text-right text-[10px] text-red-700 font-medium">
-                  진단 보기 →
+                <!-- 3줄: 진단/상세 보기 → (실행중 외 모두, 우측 정렬, 별도 줄) -->
+                <div v-if="exec.status !== 'running'"
+                  :class="['mt-1 text-right text-[10px] font-medium',
+                    exec.status === 'failed' ? 'text-red-700' : 'text-stone-500'
+                  ]">
+                  {{ exec.status === 'failed' ? '진단 보기' : '상세 보기' }} →
                 </div>
               </div>
 
