@@ -76,7 +76,8 @@ async function toggleActive(job: CollectionJobItem) {
 }
 
 async function executeJob(jobId: number) {
-  if (!confirm('이 작업을 즉시 실행하시겠습니까?')) return
+  if (!confirm('이 작업을 즉시 실행하시겠습니까?'))
+    return
   try {
     await jobsApi.execute(jobId)
     await loadJobs()
@@ -181,6 +182,22 @@ async function onScriptSaved(payload: { scriptId: number }) {
   }
 }
 
+// v18.8.4 — 진단 패널의 "재실행" 버튼 → jobsApi.execute + 패널 close + 작업 상세 reload.
+// BE 의 executeManually (v18.8.2) 는 script (UID) 또는 scriptPath (legacy) 둘 다 지원 — 별도 분기 불요.
+// 흐름: confirm → API → 새 running execution 생성 → 패널 close → openDetail (새 row 표시).
+async function handleRerunFromDiagnosis() {
+  if (!selectedJob.value) return
+  if (!confirm('이 작업을 즉시 재실행하시겠습니까?')) return
+  const jobId = selectedJob.value.id   // selectedExecution null 처리 전 미리 캡처
+  try {
+    await jobsApi.execute(jobId)
+    selectedExecution.value = null      // 진단 패널 close (풀폭 swap 해제)
+    await openDetail(jobId)              // 새 running execution 이 실행 이력 최상단에 표시
+  } catch (e: any) {
+    alert(e?.response?.data?.message ?? '재실행에 실패했습니다.')
+  }
+}
+
 onMounted(loadJobs)
 </script>
 
@@ -206,6 +223,7 @@ onMounted(loadJobs)
 
     <!-- ════════════════════════════════════════════════════════════
          v18.7 — 진단 패널 (풀폭 swap, 실패 row 클릭 시)
+         v18.8.4 — @rerun 리스너 추가 (재실행 버튼 활성화)
          ════════════════════════════════════════════════════════════ -->
     <div v-if="showDiagnosisPanel && selectedExecution">
       <FailureDiagnosisPanel
@@ -214,6 +232,7 @@ onMounted(loadJobs)
         :script-id="selectedJob?.scriptId"
         @close="selectedExecution = null"
         @upload-script="openScriptEditDialog"
+        @rerun="handleRerunFromDiagnosis"
       />
     </div>
 
@@ -427,7 +446,7 @@ onMounted(loadJobs)
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">스크립트</label>
 
-            <!-- v18.8.2 — scriptId 있으면 "작성됨" 표기 + [재작성] / [수정] -->
+            <!-- v18.8.2 — scriptId 있으면 "작성됨" 표기 + [수정] / [해제] -->
             <div v-if="newJob.scriptId" class="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
               <i class="pi pi-check-circle text-green-700"></i>
               <span class="text-sm text-green-800">스크립트 #{{ newJob.scriptId }} 작성됨</span>

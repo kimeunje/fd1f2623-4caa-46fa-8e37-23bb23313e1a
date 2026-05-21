@@ -1,5 +1,8 @@
 <!--
   v18.7 — 자동 수집 실패 진단 패널 (mockup 정합 in-page 풀폭 패널)
+  v18.8.1 — 성공 실행도 진입 가능 (status 분기)
+  v18.8.2 — "수정 스크립트 업로드" 버튼 (scriptId 기반)
+  v18.8.4 — "재실행" 버튼 활성화 (emit 'rerun' → 부모가 jobsApi.execute 호출)
 
   사용자 mockup (v18_7_failure_diagnosis_layout.html) 의 화면 2 정합.
 
@@ -9,7 +12,10 @@
         v-if="selectedExecution !== null"
         :execution="selectedExecution"
         :job-name="selectedJob?.name"
+        :script-id="selectedJob?.scriptId"
         @close="selectedExecution = null"
+        @upload-script="openScriptEditDialog"
+        @rerun="handleRerunFromDiagnosis"
       />
 
   스타일: mockup 의 CSS 변수 색상값을 TailwindCSS 색상으로 매핑
@@ -30,6 +36,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'upload-script', scriptId: number): void   // v18.8.2 — JobsView 가 ScriptEditorDialog 열기
+  (e: 'rerun'): void                              // v18.8.4 — JobsView 가 jobsApi.execute 호출
 }>()
 
 const diagnosis = computed<DiagnosisJson | null>(() =>
@@ -75,7 +82,9 @@ const pageSourceUrl = computed(() => jobsApi.getDiagnosisPageSourceUrl(props.exe
 
 function onDownloadPageSource() { window.open(pageSourceUrl.value, '_blank') }
 function onNotifyOwner() { alert('담당자 알림 기능은 v19.0+ EmailService 통합 후 활성화됩니다.') }
-function onRerun() { alert('재실행은 작업 목록 화면의 "실행" 버튼을 활용해주세요.') }
+
+// v18.8.4 — 재실행 emit. 부모 (JobsView) 가 confirm + jobsApi.execute + 패널 close + 작업 상세 reload.
+function onRerun() { emit('rerun') }
 
 // v18.8.2 — 진단 패널 안에서 스크립트 수정 진입. scriptId 가 있어야 동작.
 function onUploadScript() {
