@@ -3,6 +3,7 @@ package com.secuhub.domain.evidence.service;
 import com.secuhub.common.exception.BusinessException;
 import com.secuhub.domain.evidence.dto.ScriptManagementDto;
 import com.secuhub.domain.evidence.entity.Script;
+import com.secuhub.domain.evidence.repository.CollectionJobRepository;
 import com.secuhub.domain.evidence.repository.ScriptRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +38,17 @@ import java.util.UUID;
  *   <li>create — content 받아 Script entity 저장 → id 부여 → {id}.py 파일 작성</li>
  *   <li>update — id 로 entity 조회 → 같은 file_path 에 덮어쓰기 + content_size 갱신</li>
  *   <li>getContent — id 로 entity 조회 → file_path 읽어 내용 반환</li>
+ *   <li><b>v18.8.7</b> — delete — id 로 entity 조회 → 사용 중 검사 → 파일 삭제 + entity 삭제</li>
  * </ol>
+ *
+ * <h3>v18.8.7 — 스크립트 삭제</h3>
+ * <p>Hard delete (DB row + 물리 파일) — Q1=Hard. v18.8.2 의 {@code @OnDelete(SET_NULL)}
+ * 정책 활용 — 옛 CollectionJob 들은 script_id=NULL 됨 (legacy scriptPath 와 동일 fallback).
+ * Soft delete 는 versioning(⑤) 의 일부로 다음 phase.</p>
+ *
+ * <p>사용 중 검사 (Q2=안전): {@link CollectionJobRepository#existsByScriptId} 로 active
+ * CollectionJob 이 참조 중이면 {@link BusinessException}. 운영자가 의도하지 않은 다중 job
+ * 영향 방지 — 먼저 작업에서 스크립트 해제/삭제 후 스크립트 삭제 가능.</p>
  */
 @Slf4j
 @Service
@@ -45,6 +56,7 @@ import java.util.UUID;
 public class ScriptManagementService {
 
     private final ScriptRepository scriptRepository;
+    private final CollectionJobRepository collectionJobRepository;  // v18.8.7 — 사용 중 검사용
 
     @Value("${app.scripts.base-dir:./scripts}")
     private String scriptsBaseDir;
@@ -144,6 +156,53 @@ public class ScriptManagementService {
         }
     }
 
+    /**
+     * v18.8.7 — 스크립트 삭제 (Hard delete).
+     *
+     * <p>흐름:</p>
+     * <ol>
+     *   <li>id 로 Script entity 조회 (없으면 ResourceNotFound 대신 BusinessException — 다른 메서드 정합)</li>
+     *   <li>사용 중 검사 — {@link CollectionJobRepository#existsByScriptId} 로 active job 확인.
+     *       있으면 BusinessException (Q2=안전 정책)</li>
+     *   <li>물리 파일 삭제 (best-effort — 파일이 이미 없어도 entity 는 계속 삭제)</li>
+     *   <li>entity 삭제 ({@code scriptRepository.deleteById})</li>
+     * </ol>
+     *
+     * <p>운영 흐름: FE 의 ScriptEditorDialog 의 [삭제] 버튼이 본 endpoint 호출 → BusinessException
+     * 시 alert 으로 "사용 중인 작업 있음" 안내 → 운영자가 먼저 작업에서 스크립트 해제 후 재시도.</p>
+     */
+    @Transactional
+    public void delete(Long id) {
+        Script script = scriptRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("스크립트가 존재하지 않습니다: id=" + id));
+
+        // 사용 중 검사 (Q2=안전) — active job 이 참조 중이면 거부
+        if (collectionJobRepository.existsByScriptId(id)) {
+            throw new BusinessException(
+                    "이 스크립트를 사용 중인 수집 작업이 있습니다. " +
+                    "먼저 작업에서 스크립트를 해제하거나 작업을 삭제한 후 다시 시도해주세요.");
+        }
+
+        // 물리 파일 삭제 (best-effort — entity 삭제 차단 안 함)
+        Path target = resolveTargetPath(script.getFilePath());
+        try {
+            boolean deleted = Files.deleteIfExists(target);
+            if (deleted) {
+                log.info("v18.8.7 스크립트 파일 삭제: {} (id={})", target, id);
+            } else {
+                log.warn("v18.8.7 스크립트 파일 부재 (entity 만 삭제 진행): {} (id={})", target, id);
+            }
+        } catch (IOException e) {
+            // 파일 삭제 실패해도 entity 는 계속 삭제 (운영자가 직접 정리 가능)
+            log.warn("v18.8.7 스크립트 파일 삭제 실패 (entity 는 계속 삭제): id={}, path={}, error={}",
+                    id, target, e.getMessage());
+        }
+
+        // entity 삭제 — @OnDelete(SET_NULL) 로 옛 CollectionJob 들의 script_id 자동 NULL 처리
+        scriptRepository.deleteById(id);
+        log.info("v18.8.7 스크립트 entity 삭제 완료: id={}", id);
+    }
+
     // ========================================
     // 내부 helper
     // ========================================
@@ -162,12 +221,13 @@ public class ScriptManagementService {
         long byteSize = content.getBytes(StandardCharsets.UTF_8).length;
         if (byteSize > MAX_SCRIPT_SIZE) {
             throw new BusinessException(
-                    String.format("스크립트 크기가 너무 큽니다: %d bytes (최대 %d bytes / 1MB)",
-                            byteSize, MAX_SCRIPT_SIZE));
+                    "스크립트 크기가 1MB 를 초과합니다: " + byteSize + " bytes (최대 " + MAX_SCRIPT_SIZE + ")");
         }
     }
 
     private ScriptManagementDto.ScriptResponse toResponse(Script script, String content) {
+        // ScriptManagementDto.ScriptResponse.createdAt / updatedAt 의 type 은 LocalDateTime.
+        // Spring Boot 의 Jackson 이 자동으로 ISO-8601 string 으로 직렬화 → FE 의 string 타입 정합.
         return ScriptManagementDto.ScriptResponse.builder()
                 .id(script.getId())
                 .content(content)

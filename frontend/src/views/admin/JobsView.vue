@@ -198,6 +198,31 @@ async function handleRerunFromDiagnosis() {
   }
 }
 
+// v18.8.7 — 스크립트 삭제 완료 시 stale state 정리.
+//
+// 부모의 책임: ScriptEditorDialog 에서 삭제 emit 받으면
+//   1) dialog close
+//   2) 작업 등록 dialog 의 newJob.scriptId 가 삭제된 스크립트면 null 리셋
+//      (stale 참조로 작업 등록 시 BE 의 ResourceNotFoundException 회피)
+//   3) 작업 상세 패널이 열려 있고 그 작업이 삭제된 script 를 가리키면 reload
+//      (script_id 가 NULL 로 SET_NULL 됐을 것 — legacy scriptPath fallback 분기로 정합)
+async function onScriptDeleted(payload: { scriptId: number }) {
+  closeScriptEditor()
+
+  // 작업 등록 dialog 안의 stale scriptId 리셋
+  if (newJob.value.scriptId === payload.scriptId) {
+    newJob.value.scriptId = null
+  }
+
+  // 작업 상세 패널이 열려 있고 그 작업이 삭제된 script 를 가리키면 reload
+  if (selectedJob.value?.scriptId === payload.scriptId) {
+    await openDetail(selectedJob.value.id)
+  }
+
+  // 작업 목록도 reload — script_id 가 NULL 로 SET_NULL 됐을 작업들의 표시 갱신
+  await loadJobs()
+}
+
 onMounted(loadJobs)
 </script>
 
@@ -489,6 +514,7 @@ onMounted(loadJobs)
 
     <!-- ════════════════════════════════════════════════════════════
          v18.8.2 — 스크립트 작성/편집 dialog (UID 기반)
+         v18.8.7 — @deleted 리스너 추가 (편집 모드 [삭제] 버튼 정합)
          ════════════════════════════════════════════════════════════ -->
     <ScriptEditorDialog
       v-if="scriptEditorMode"
@@ -496,6 +522,7 @@ onMounted(loadJobs)
       :script-id="editingScriptId ?? undefined"
       @close="closeScriptEditor"
       @saved="onScriptSaved"
+      @deleted="onScriptDeleted"
     />
   </div>
 </template>

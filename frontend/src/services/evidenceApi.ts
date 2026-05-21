@@ -423,8 +423,9 @@ export function parseDiagnosis(rawJson: string | null | undefined): DiagnosisJso
 
 // ========================================
 // v18.8.2 — 스크립트 관리 API (admin 한정, UID 기반)
+// v18.8.7 — delete 메서드 추가 (Hard delete + 사용 중 검사 BE 처리)
 //
-// 어드민 UI 만으로 Python 스크립트 등록/수정. SSH 없이 진단 패널 → 수정 → 재실행 흐름.
+// 어드민 UI 만으로 Python 스크립트 등록/수정/삭제. SSH 없이 진단 패널 → 수정 → 재실행 흐름.
 // 사용자 의도: "스크립트 이름은 의미 없다. UID 로 관리." → filename 제거, 자동 id 부여.
 // 모든 endpoint = hasRole('ADMIN').
 // ========================================
@@ -442,6 +443,17 @@ export const scriptsApi = {
   /** 기존 스크립트 수정 (덮어쓰기). scriptId 유지 → 재실행 시 수정 반영 */
   update(id: number, payload: ScriptUpdateRequest) {
     return api.put<ApiResponse<ScriptResponse>>(`/admin/scripts/${id}`, payload)
+  },
+
+  /**
+   * v18.8.7 — 스크립트 삭제 (Hard delete).
+   *
+   * BE 가 사용 중 검사 (active CollectionJob 의 script_id FK 참조 여부) 후 거부 / 진행.
+   * 거부 시 BusinessException → axios reject → FE 의 catch 에서 e.response.data.message 노출.
+   * 진행 시 물리 파일 + entity 삭제 + 옛 작업의 script_id 자동 NULL (@OnDelete(SET_NULL)).
+   */
+  delete(id: number) {
+    return api.delete<ApiResponse<void>>(`/admin/scripts/${id}`)
   },
 }
 

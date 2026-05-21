@@ -1,8 +1,9 @@
 <!--
   v18.8.2 — Python 스크립트 작성/편집 dialog (UID 기반).
+  v18.8.7 — 편집 모드에서 [삭제] 버튼 추가 (사용 중 검사 BE 처리).
 
   사용자 의도: "스크립트 이름은 의미 없다. 내용만." → filename input 제거.
-  시스템이 자동 id 부여 + {id}.py 파일 저장.
+  시스템이 자동 id 부여 + {uuid}.py 파일 저장 (v18.8.3 UUID).
 
   사용 패턴:
     [신규 작성]
@@ -20,9 +21,13 @@
         :script-id="editingScriptId"
         @close="editingScriptId = null"
         @saved="onScriptSaved"
+        @deleted="onScriptDeleted"
       />
 
-  @saved event payload = { scriptId: number }
+  emit:
+    @saved   payload = { scriptId: number } — 신규 작성 or 수정 완료
+    @deleted payload = { scriptId: number } — v18.8.7 삭제 완료 (편집 모드 한정)
+    @close                                  — dialog 닫기
 -->
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
@@ -36,18 +41,28 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'saved', payload: { scriptId: number }): void
+  (e: 'deleted', payload: { scriptId: number }): void   // v18.8.7
 }>()
 
 const content = ref('')
 const loading = ref(false)
 const saving = ref(false)
+const deleting = ref(false)         // v18.8.7
 const error = ref<string | null>(null)
 
 const isEdit = computed(() => props.mode === 'edit')
 
 const canSave = computed(() => {
-  if (saving.value) return false
+  if (saving.value || deleting.value) return false
   if (!content.value.trim()) return false
+  return true
+})
+
+const canDelete = computed(() => {
+  // v18.8.7 — 편집 모드 + scriptId 있을 때만 활성
+  if (!isEdit.value) return false
+  if (props.scriptId === undefined || props.scriptId === null) return false
+  if (saving.value || deleting.value || loading.value) return false
   return true
 })
 
@@ -128,6 +143,28 @@ async function handleSave() {
     error.value = e?.response?.data?.message ?? e?.message ?? '저장 실패'
   } finally {
     saving.value = false
+  }
+}
+
+// v18.8.7 — 스크립트 삭제 흐름
+async function handleDelete() {
+  if (!canDelete.value || props.scriptId === undefined) return
+  if (!confirm(
+    '이 스크립트를 삭제하시겠습니까?\n\n' +
+    '• 물리 파일과 DB 항목이 모두 삭제됩니다.\n' +
+    '• 이 스크립트를 사용 중인 수집 작업이 있으면 거부됩니다.\n' +
+    '• 옛 작업들은 자동으로 스크립트 연결이 해제됩니다.'
+  )) return
+
+  deleting.value = true
+  error.value = null
+  try {
+    await scriptsApi.delete(props.scriptId)
+    emit('deleted', { scriptId: props.scriptId })
+  } catch (e: any) {
+    error.value = e?.response?.data?.message ?? e?.message ?? '삭제 실패'
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -220,18 +257,35 @@ async function handleFileImport(event: Event) {
         </p>
       </div>
 
-      <!-- Footer -->
-      <div class="flex justify-end gap-2 p-4 border-t border-stone-200">
-        <button @click="emit('close')"
-          class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
-          취소
-        </button>
-        <button @click="handleSave" :disabled="!canSave"
-          class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 inline-flex items-center gap-1.5">
-          <i v-if="saving" class="pi pi-spin pi-spinner text-xs"></i>
-          <i v-else class="pi pi-save text-xs"></i>
-          {{ isEdit ? '수정 저장' : '신규 등록' }}
-        </button>
+      <!--
+        Footer
+        v18.8.7 — 편집 모드 한정 좌측에 [삭제] 버튼.
+        flex 의 좌-우 분리 : justify-between + 좌측 그룹 + 우측 그룹.
+      -->
+      <div class="flex items-center justify-between gap-2 p-4 border-t border-stone-200">
+        <!-- 좌측: 편집 모드만 [삭제] -->
+        <div>
+          <button v-if="isEdit" @click="handleDelete" :disabled="!canDelete"
+            class="px-4 py-2 text-sm bg-white border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-40 inline-flex items-center gap-1.5">
+            <i v-if="deleting" class="pi pi-spin pi-spinner text-xs"></i>
+            <i v-else class="pi pi-trash text-xs"></i>
+            {{ deleting ? '삭제 중...' : '삭제' }}
+          </button>
+        </div>
+
+        <!-- 우측: 취소 + 저장 -->
+        <div class="flex gap-2">
+          <button @click="emit('close')"
+            class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
+            취소
+          </button>
+          <button @click="handleSave" :disabled="!canSave"
+            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 inline-flex items-center gap-1.5">
+            <i v-if="saving" class="pi pi-spin pi-spinner text-xs"></i>
+            <i v-else class="pi pi-save text-xs"></i>
+            {{ isEdit ? '수정 저장' : '신규 등록' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>

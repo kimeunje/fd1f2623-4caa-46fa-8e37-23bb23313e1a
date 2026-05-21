@@ -22,10 +22,25 @@ import java.util.List;
  *   <li>@Param 명: {@code controlId} → {@code controlNodeId} / {@code controlIds}
  *       → {@code controlNodeIds}</li>
  * </ul>
+ *
+ * <h3>v18.8.7 — 스크립트 삭제 시 사용 중 검사용</h3>
+ * <p>{@link #existsByScriptId(Long)} 추가. {@link ScriptManagementService#delete} 가
+ * 본 메서드로 "사용 중인 작업이 있으면 거부" 정책 구현 (Q2=안전).</p>
  */
 public interface CollectionJobRepository extends JpaRepository<CollectionJob, Long> {
 
     List<CollectionJob> findByIsActiveTrueAndScheduleCronIsNotNull();
+
+    /**
+     * v18.8.7 — 특정 Script 를 참조하는 CollectionJob 이 있는지 검사.
+     *
+     * <p>스크립트 삭제 시 "사용 중이면 거부" 정책 (Q2=안전) 구현용. legacy scriptPath 만
+     * 쓰는 작업은 무관, script_id FK 가 NOT NULL 인 row 만 체크.</p>
+     *
+     * <p>Spring Data JPA derived query — `Script script` 필드 (`@ManyToOne`) 의 id 자동 매칭.
+     * EXISTS 1 LIMIT 1 식으로 최적화됨.</p>
+     */
+    boolean existsByScriptId(Long scriptId);
 
     /**
      * Framework 단위 수집 작업 수 — Phase 5-3 FrameworkListView 집계용.

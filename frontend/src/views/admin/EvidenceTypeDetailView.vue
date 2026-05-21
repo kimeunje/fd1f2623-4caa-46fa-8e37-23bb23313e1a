@@ -578,6 +578,26 @@ function onScriptSaved(payload: { scriptId: number }) {
   }
 }
 
+// v18.8.7 — 스크립트 삭제 완료 시 stale state 정리.
+//
+// JobsView 의 동일 핸들러와 정합. EvidenceTypeDetailView 의 책임:
+//   1) dialog close
+//   2) 작업 등록 dialog 의 newJob.scriptId 가 삭제된 스크립트면 null 리셋
+//      (stale 참조로 작업 등록 시 BE 의 ResourceNotFoundException 회피)
+//   3) 본 view 의 작업 목록 reload — 본 ET 에 연결된 작업 중 삭제된 script 를
+//      가리키던 작업의 script_id 가 NULL 로 SET_NULL 됐을 것 → loadAll 로 표시 갱신
+async function onScriptDeleted(payload: { scriptId: number }) {
+  closeScriptEditor()
+
+  // 작업 등록 dialog 안의 stale scriptId 리셋
+  if (newJob.value.scriptId === payload.scriptId) {
+    newJob.value.scriptId = null
+  }
+
+  // 본 view 의 작업 목록 reload — script_id 가 NULL 로 SET_NULL 된 작업들의 표시 갱신
+  await loadAll()
+}
+
 async function handleCreateJob() {
   if (!newJob.value.name.trim() || !newJob.value.jobType) {
     showToast('작업명과 작업 유형은 필수입니다.', 'error')
@@ -1312,13 +1332,15 @@ function executionDotCls(status?: string): string {
 
     <!-- ======================================
          v18.8.2 — 스크립트 작성/편집 dialog (UID 기반)
+         v18.8.7 — @deleted 리스너 추가 (편집 모드 [삭제] 버튼 정합)
          ====================================== -->
     <ScriptEditorDialog
       v-if="scriptEditorMode"
       :mode="scriptEditorMode"
       :script-id="editingScriptId ?? undefined"
       @close="closeScriptEditor"
-      @saved="onScriptSaved" />
+      @saved="onScriptSaved"
+      @deleted="onScriptDeleted" />
   </div>
 </template>
 
