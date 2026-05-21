@@ -4,6 +4,7 @@ import com.secuhub.domain.evidence.entity.*;
 import com.secuhub.domain.evidence.repository.*;
 import com.secuhub.domain.evidence.service.EvidenceFileService;
 import com.secuhub.domain.evidence.service.ScriptExecutionService;
+import com.secuhub.domain.evidence.service.SchedulerService;
 import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledOnOs;
@@ -37,14 +38,19 @@ class ScriptExecutionTest {
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
     @Autowired private JobExecutionRepository jobExecutionRepository;
+    @Autowired private ScriptRepository scriptRepository;             // v18.8.5 — Script entity (UID) 검증용
     @Autowired private ScriptExecutionService scriptExecutionService;
     @Autowired private EvidenceFileService evidenceFileService;
+    @Autowired private SchedulerService schedulerService;             // v18.8.6 — 좀비 정리 검증용
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
 
     @Value("${app.scripts.base-dir:./scripts}")
     private String scriptsBaseDir;
+
+    @Value("${app.scripts.timeout-seconds:300}")
+    private long scriptTimeoutSeconds;
 
     /** Windows 환경 여부 */
     private static final boolean IS_WINDOWS =
@@ -432,7 +438,7 @@ class ScriptExecutionTest {
         Files.deleteIfExists(xlsxFile);
     }
 
-	// ========================================
+    // ========================================
     // 9. 회귀 보호 — git checkout 된 .sh 파일은 LF only 여야 함
     //    (v18.5-platform-b — .gitattributes 의 "*.sh text eol=lf" 규칙 위반 사전 차단)
     // ========================================
@@ -606,5 +612,187 @@ class ScriptExecutionTest {
                 saved.getErrorDiagnosis().length());
 
         Files.deleteIfExists(testScript);
+    }
+
+    // ========================================
+    // 12. v18.8.5 — Script entity (UID) 기반 작업 실행 정상
+    //     (v18.8.2 LAZY proxy cross-thread 회귀 보호)
+    // ========================================
+    /**
+     * v18.8.5 — v18.8.2 가 도입한 {@code CollectionJob.script} (`@ManyToOne(fetch = LAZY)`)
+     * entity 가 {@code executeScript} 의 {@code job.getScript()} 분기에서 정상 resolve 되는지 검증.
+     *
+     * <p>옛 회귀 = async 컨텍스트 (executeAsync) 에서 부모 transaction 의 attached entity 가
+     * cross-thread session 폐쇄 후 LAZY proxy 접근 시 "Session/EntityManager is closed".
+     * v18.8.5 의 정공 fix = {@code executeAsync(Long, Long)} 시그니처 변경 — async 안에서 fresh
+     * fetch. 본 테스트는 {@code executeSync} 로 동일 코드 경로 ({@code job.getScript()} LAZY 분기)
+     * 의 정상 동작 검증.</p>
+     *
+     * <p>async 직접 검증은 단위 테스트에서 어려움 (executor 스레드 + 완료 대기 + 트랜잭션 격리).
+     * 시그니처 변경 자체로 구조적 보호 — entity 가 아닌 ID 만 받음.</p>
+     */
+    @Test
+    @Order(12)
+    @DisplayName("[Script-UID] v18.8.5 — Script entity (UID) 기반 작업 실행 정상 (LAZY proxy 회귀 보호)")
+    @Transactional
+    void testExecuteWithScriptEntity() throws IOException {
+        // ── 1. 테스트 스크립트 파일 작성 ──
+        Path scriptDir = Paths.get(scriptsBaseDir).toAbsolutePath().normalize();
+        Files.createDirectories(scriptDir);
+
+        String fileName = "uid_test_" + System.currentTimeMillis() + scriptExt();
+        Path testScript = scriptDir.resolve(fileName);
+
+        if (IS_WINDOWS) {
+            Files.writeString(testScript,
+                    "@echo off\r\n" +
+                    "set \"OUTPUT_DIR=%~1\"\r\n" +
+                    "if \"%OUTPUT_DIR%\"==\"\" set \"OUTPUT_DIR=%SECUHUB_OUTPUT_DIR%\"\r\n" +
+                    "echo uid-test result > \"%OUTPUT_DIR%\\uid_result.txt\"\r\n" +
+                    "exit /b 0\r\n");
+        } else {
+            Files.writeString(testScript,
+                    "#!/bin/bash\n" +
+                    "OUTPUT_DIR=\"$1\"\n" +
+                    "echo \"uid-test result\" > \"$OUTPUT_DIR/uid_result.txt\"\n" +
+                    "exit 0\n");
+            testScript.toFile().setExecutable(true);
+        }
+
+        // ── 2. Script entity 생성 (UID 기반) ──
+        Script script = scriptRepository.save(Script.builder()
+                .filePath(fileName)                       // 파일명만 (base-dir 기준 resolve)
+                .contentSize((long) Files.size(testScript))
+                .build());
+
+        // ── 3. CollectionJob — script (entity, NOT scriptPath) 만 설정 ──
+        Framework fw = frameworkRepository.save(Framework.builder().name("UID 테스트 FW").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("UID-01").name("UID 기반 작업 검증")
+                .displayOrder(0).depth(1).build());
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(ctrl).name("UID 증빙").build());
+
+        CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
+                .name("UID 기반 수집 작업")
+                .jobType(JobType.log_extract)
+                .script(script)                            // v18.8.2 — UID 분기 (scriptPath = null)
+                .scriptPath(null)
+                .evidenceType(et)
+                .build());
+
+        JobExecution execution = jobExecutionRepository.save(JobExecution.builder()
+                .job(job)
+                .status(ExecutionStatus.running)
+                .startedAt(LocalDateTime.now())
+                .build());
+
+        // ── 4. 실행 — executeScript 의 job.getScript() LAZY 분기 검증 ──
+        scriptExecutionService.executeSync(job, execution);
+
+        // ── 5. 검증 ──
+        JobExecution saved = jobExecutionRepository.findById(execution.getId()).orElseThrow();
+        assertThat(saved.getStatus())
+                .as("v18.8.5 — Script entity (UID) 기반 작업이 성공해야 함 (옛 v18.8.2 까지의 LAZY 회귀 fix)")
+                .isEqualTo(ExecutionStatus.success);
+        assertThat(saved.getFinishedAt()).isNotNull();
+        assertThat(saved.getErrorMessage()).isNull();
+
+        System.out.println("✅ [Script-UID] v18.8.5 Script entity (UID) 기반 실행 정상 — scriptId=" + script.getId());
+
+        Files.deleteIfExists(testScript);
+    }
+
+    // ========================================
+    // 13. v18.8.6 — 좀비 실행 정리 (운영 무재부팅 환경 안전망)
+    //     (v18.8.5 commit timing race + BE 비정상 종료 등의 좀비 패턴 종결)
+    // ========================================
+    /**
+     * v18.8.6 — SchedulerService 의 좀비 정리 메서드 회귀 보호.
+     *
+     * <p><b>검증 시나리오</b>:</p>
+     * <ol>
+     *   <li>현재 시각 기준 (timeout × 2 + 1분) 이전의 started_at 으로 running JobExecution 생성
+     *       — "좀비" 시뮬레이션</li>
+     *   <li>비교 대조군 — 방금 시작된 running JobExecution 생성 (정상 실행 중)</li>
+     *   <li>{@code cleanupZombieExecutionsInternal} 직접 호출</li>
+     *   <li>좀비는 status=failed + errorMessage 채워짐, 정상 실행은 status=running 그대로 유지</li>
+     * </ol>
+     *
+     * <p>운영 환경 추정 좀비 발생 패턴:</p>
+     * <ul>
+     *   <li>BE 가 OOM / SIGKILL / 정전 으로 markFailed 호출 못 한 채 종료</li>
+     *   <li>ProcessBuilder 가 hang 후 waitFor timeout 도 우회 (드물지만 가능)</li>
+     *   <li>async 의 catch 안에서 markFailed 자체가 또 예외 → status 갱신 실패</li>
+     *   <li>v18.8.5 의 commit timing race (v18.8.6 의 afterCommit 패턴으로 종결됐지만 안전망)</li>
+     * </ul>
+     *
+     * <p>본 테스트는 startup hook + 정기 검사 양쪽이 의존하는 공용 helper
+     * ({@link SchedulerService#cleanupZombieExecutionsInternal}) 의 단위 검증.</p>
+     */
+    @Test
+    @Order(13)
+    @DisplayName("[Zombie] v18.8.6 — 좀비 실행 자동 정리 (timeout × 2 임계값)")
+    @Transactional
+    void testZombieExecutionCleanup() {
+        long zombieThresholdSec = scriptTimeoutSeconds * 2;
+
+        // ── 1. 좀비 시뮬레이션 — started_at 을 임계값보다 더 옛 시각으로 ──
+        Framework fw = frameworkRepository.save(Framework.builder().name("좀비 테스트 FW").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("ZB-01").name("좀비 정리 항목")
+                .displayOrder(0).depth(1).build());
+
+        CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
+                .name("좀비 정리 검증 작업")
+                .jobType(JobType.log_extract)
+                .scriptPath("dummy.sh")
+                .build());
+
+        LocalDateTime zombieStartedAt = LocalDateTime.now().minusSeconds(zombieThresholdSec + 60);
+        JobExecution zombie = jobExecutionRepository.save(JobExecution.builder()
+                .job(job)
+                .status(ExecutionStatus.running)
+                .startedAt(zombieStartedAt)
+                .build());
+
+        // ── 2. 대조군 — 방금 시작된 정상 실행 (좀비 아님) ──
+        JobExecution fresh = jobExecutionRepository.save(JobExecution.builder()
+                .job(job)
+                .status(ExecutionStatus.running)
+                .startedAt(LocalDateTime.now())
+                .build());
+
+        // ── 3. 좀비 정리 호출 (startup / scheduled 공용 helper) ──
+        long cleaned = schedulerService.cleanupZombieExecutionsInternal("test");
+
+        // ── 4. 검증 ──
+        assertThat(cleaned)
+                .as("v18.8.6 — 좀비 1건 검출되어야 함 (fresh 는 임계값 안이라 제외)")
+                .isGreaterThanOrEqualTo(1);
+
+        JobExecution zombieAfter = jobExecutionRepository.findById(zombie.getId()).orElseThrow();
+        assertThat(zombieAfter.getStatus())
+                .as("좀비는 failed 로 markFailed 되어야 함")
+                .isEqualTo(ExecutionStatus.failed);
+        assertThat(zombieAfter.getFinishedAt()).isNotNull();
+        assertThat(zombieAfter.getErrorMessage())
+                .as("좀비 정리 사유가 errorMessage 에 기록되어야 함")
+                .contains("좀비 실행 자동 정리")
+                .contains("test")
+                .contains(String.valueOf(zombieThresholdSec));
+
+        JobExecution freshAfter = jobExecutionRepository.findById(fresh.getId()).orElseThrow();
+        assertThat(freshAfter.getStatus())
+                .as("임계값 안의 정상 실행은 건드리지 않아야 함")
+                .isEqualTo(ExecutionStatus.running);
+        assertThat(freshAfter.getFinishedAt())
+                .as("정상 실행의 finished_at 은 그대로 NULL 유지")
+                .isNull();
+
+        System.out.println("✅ [Zombie] v18.8.6 좀비 정리 정상 — 정리 " + cleaned +
+                "건, 임계값=" + zombieThresholdSec + "초");
     }
 }

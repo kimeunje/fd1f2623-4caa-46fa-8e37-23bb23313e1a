@@ -1,6 +1,7 @@
 package com.secuhub.domain.evidence.service;
 
 import com.secuhub.common.exception.BusinessException;
+import com.secuhub.common.exception.ResourceNotFoundException;
 import com.secuhub.domain.evidence.entity.*;
 import com.secuhub.domain.evidence.repository.CollectionJobRepository;
 import com.secuhub.domain.evidence.repository.EvidenceFileRepository;
@@ -62,6 +63,20 @@ import java.util.stream.Stream;
  * <p>스크린샷 / page_source 는 outputDir 안의 표준 파일명 (_diag_screenshot.png /
  * _diag_page_source.html) 으로 보관. JobExecutionController 의 endpoint 가
  * storagePath + jobId + executionId + 표준 파일명으로 도출하여 스트리밍.</p>
+ *
+ * <h3>v18.8.5 — async 영속성 컨텍스트 회귀 fix (v18.8.2 carry-over)</h3>
+ * <p><b>회귀 원인</b>: v18.8.2 가 {@link CollectionJob#getScript()} (LAZY ManyToOne) 도입.
+ * 옛 {@code executeAsync(CollectionJob, JobExecution)} 시그니처는 호출 측 (CollectionJobService)
+ * 의 transaction 에서 attached 된 entity 를 async thread 로 전달 → async 의 새 transaction
+ * 안에서 LAZY proxy 접근 시 "Session/EntityManager is closed" (원본 session 닫힘).</p>
+ *
+ * <p><b>정공 fix</b>: {@link #executeAsync(Long, Long)} 시그니처 변경 — ID 만 받고
+ * async transaction 안에서 fresh fetch. 호출 측 (CollectionJobService.executeManually)
+ * 도 ID 전달로 정합. {@link #executeSync(CollectionJob, JobExecution)} 는 그대로 유지
+ * (스케줄러의 sync 컨텍스트는 같은 thread/session 이라 LAZY OK).</p>
+ *
+ * <p>회귀 보호: {@link com.secuhub.ScriptExecutionTest} 에 Script entity (UID) 시나리오
+ * 케이스 추가 — {@code job.getScript()} 가 executeScript 안에서 정상 resolve 검증.</p>
  */
 @Slf4j
 @Service
@@ -86,30 +101,67 @@ public class ScriptExecutionService {
     private long timeoutSeconds;
 
     /**
-     * 비동기 스크립트 실행 — @Async("jobExecutor") 로 별도 스레드에서 실행
+     * 비동기 스크립트 실행 — {@code @Async("jobExecutor")} 로 별도 스레드에서 실행.
      *
-     * 1. 스크립트 경로 검증
-     * 2. output 디렉토리 준비
-     * 3. ProcessBuilder로 스크립트 실행
-     * 4. stdout/stderr 캡처
-     * 5. 종료 코드 확인 후 성공/실패 마킹
-     * 6. 성공 시 output 디렉토리에서 생성된 파일을 EvidenceFile로 자동 등록
-     * 7. v18.7 — 성공/실패 무관하게 _diagnosis.json 자동 보관 (실패 시 본질)
+     * <h4>v18.8.5 시그니처 변경 (LAZY proxy 회귀 fix)</h4>
+     * <p>옛: {@code executeAsync(CollectionJob job, JobExecution execution)} — 호출 측
+     * transaction 의 attached entity 를 별도 스레드로 전달. async 안에서 LAZY 접근 시
+     * "Session/EntityManager is closed".</p>
+     * <p>새: ID 만 받음. async transaction 안에서 fresh fetch → 자기 session 소유 → LAZY 정상.</p>
+     *
+     * <h4>실행 흐름</h4>
+     * <ol>
+     *   <li>fresh fetch (CollectionJob + JobExecution)</li>
+     *   <li>스크립트 경로 검증 / output 디렉토리 준비 / ProcessBuilder 실행 / stdout-stderr 캡처</li>
+     *   <li>종료 코드 확인 후 성공/실패 마킹</li>
+     *   <li>성공 시 output 디렉토리에서 생성된 파일을 EvidenceFile 로 자동 등록</li>
+     *   <li>v18.7 — 성공/실패 무관하게 _diagnosis.json 자동 보관 (실패 시 본질)</li>
+     * </ol>
+     *
+     * @param jobId       실행할 작업 id
+     * @param executionId 사전 생성된 JobExecution id (status=running)
      */
     @Async("jobExecutor")
     @Transactional
-    public void executeAsync(CollectionJob job, JobExecution execution) {
+    public void executeAsync(Long jobId, Long executionId) {
         try {
+            CollectionJob job = collectionJobRepository.findById(jobId)
+                    .orElseThrow(() -> new ResourceNotFoundException("수집 작업", jobId));
+            JobExecution execution = jobExecutionRepository.findById(executionId)
+                    .orElseThrow(() -> new ResourceNotFoundException("작업 실행", executionId));
             executeScript(job, execution);
         } catch (Exception e) {
-            log.error("스크립트 비동기 실행 중 예외 발생: {} (jobId={})", e.getMessage(), job.getId(), e);
-            execution.markFailed("비동기 실행 예외: " + e.getMessage());
-            jobExecutionRepository.save(execution);
+            log.error("스크립트 비동기 실행 중 예외 발생: jobId={}, executionId={}, error={}",
+                    jobId, executionId, e.getMessage(), e);
+            markExecutionFailed(executionId, "비동기 실행 예외: " + e.getMessage());
         }
     }
 
     /**
-     * 동기 스크립트 실행 — 스케줄러에서 직접 호출
+     * v18.8.5 — async 예외 시점 execution 실패 마킹 helper.
+     *
+     * <p>최초 catch 안에서 execution 이 detached 거나 fetch 자체가 실패했을 수 있으므로
+     * 별도 fresh fetch 후 markFailed + save. 내부 예외는 log 만 (상위 흐름 방해 금지).</p>
+     */
+    private void markExecutionFailed(Long executionId, String errorMessage) {
+        try {
+            JobExecution execution = jobExecutionRepository.findById(executionId).orElse(null);
+            if (execution != null) {
+                execution.markFailed(errorMessage);
+                jobExecutionRepository.save(execution);
+            } else {
+                log.warn("실패 마킹 대상 JobExecution 없음: executionId={}", executionId);
+            }
+        } catch (Exception inner) {
+            log.error("실패 마킹 중 추가 예외 발생: executionId={}", executionId, inner);
+        }
+    }
+
+    /**
+     * 동기 스크립트 실행 — 스케줄러에서 직접 호출.
+     *
+     * <p>v18.8.5 — 시그니처 유지. 스케줄러는 같은 thread/session 에서 호출하므로
+     * LAZY proxy 정상. executeAsync 와 달리 cross-thread session 문제 없음.</p>
      */
     @Transactional
     public void executeSync(CollectionJob job, JobExecution execution) {
@@ -127,6 +179,7 @@ public class ScriptExecutionService {
      */
     private void executeScript(CollectionJob job, JobExecution execution) {
         // v18.8.2 — script_id 우선, 없으면 script_path fallback (Q2=A)
+        // v18.8.5 — async 컨텍스트에서도 정상 동작 (executeAsync 가 fresh fetch 후 호출)
         String scriptPath;
         Script linkedScript = job.getScript();
         if (linkedScript != null) {

@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -140,10 +142,25 @@ public class CollectionJobService {
      * 수동 실행 — ProcessBuilder 기반 비동기 스크립트 실행
      *
      * 1. JobExecution을 running 상태로 생성
-     * 2. ScriptExecutionService.executeAsync()로 비동기 위임
+     * 2. <b>v18.8.6 — tx commit 완료 후</b> ScriptExecutionService.executeAsync()로 비동기 위임
      * 3. 즉시 ExecutionSummary 반환 (실행 결과는 비동기로 업데이트)
      *
      * v18.8.2 — script 또는 scriptPath 중 하나라도 있어야 실행 가능.
+     *
+     * <h4>v18.8.6 — afterCommit 패턴 (commit timing race fix)</h4>
+     * <p><b>회귀 원인</b> (v18.8.5 → v18.8.6): v18.8.5 가 executeAsync 시그니처를
+     * {@code (CollectionJob, JobExecution)} → {@code (Long, Long)} 로 바꾸면서 async 안에서
+     * fresh fetch (findById) 하도록 정합. 하지만 본 메서드의 tx-outer 가 아직 commit 되기 전에
+     * async 스레드가 시작하여 findById(executionId) 호출 → 별도 connection 에서는 INSERT
+     * 가 안 보임 → {@link ResourceNotFoundException} → catch 의 markExecutionFailed 도 같은
+     * 이유로 또 못 찾음 → status=running 영구 좀비.</p>
+     *
+     * <p><b>정공 fix</b>: {@link TransactionSynchronizationManager#registerSynchronization}
+     * 으로 tx commit 후에 executeAsync 호출. async 스레드 시작 시점에는 DB 에 INSERT 가
+     * 확정 보장 → findById 정상 성공.</p>
+     *
+     * <p>운영 로그 (2026-05-21 11:27:40, executionId=11) 가 본 race condition 증거 —
+     * INSERT 후 15ms 만에 async 가 "작업 실행을(를) 찾을 수 없습니다 (id=11)" 발생.</p>
      */
     @Transactional
     public CollectionJobDto.ExecutionSummary executeManually(Long jobId) {
@@ -164,11 +181,22 @@ public class CollectionJobService {
                 .build();
         execution = jobExecutionRepository.save(execution);
 
-        // 비동기 스크립트 실행 위임
-        scriptExecutionService.executeAsync(job, execution);
+        // v18.8.6 — tx commit 후 async 호출 (commit timing race fix).
+        // executeAsync 가 즉시 호출되면 별도 connection 에서 아직 INSERT 가 안 보임 →
+        // findById 가 ResourceNotFoundException 던지고 좀비 발생. afterCommit 으로 보장.
+        final Long capturedJobId = job.getId();
+        final Long capturedExecutionId = execution.getId();
+        final String capturedJobName = job.getName();
 
-        log.info("수집 작업 수동 실행 요청: {} (jobId={}, executionId={})",
-                job.getName(), jobId, execution.getId());
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                scriptExecutionService.executeAsync(capturedJobId, capturedExecutionId);
+                log.info("수집 작업 수동 실행 요청 (afterCommit): {} (jobId={}, executionId={})",
+                        capturedJobName, capturedJobId, capturedExecutionId);
+            }
+        });
+
         return CollectionJobDto.ExecutionSummary.from(execution);
     }
 }
