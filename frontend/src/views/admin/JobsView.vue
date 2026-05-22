@@ -14,8 +14,16 @@ const jobs = ref<CollectionJobItem[]>([])
 const loading = ref(false)
 const selectedJob = ref<CollectionJobDetail | null>(null)
 const showDetailPanel = ref(false)
-const showCreateDialog = ref(false)
+
+// v18.9.4 — dialog mode: create | edit | null (옛 showCreateDialog 통합).
+//  · openCreateDialog / openEditDialog 가 mode + newJob 폼 + editingJobId 설정.
+//  · handleSubmit 이 mode 분기 (jobsApi.create vs jobsApi.update).
+const jobDialogMode = ref<'create' | 'edit' | null>(null)
+const editingJobId = ref<number | null>(null)
+
 const detailLoading = ref(false)
+// v18.9.4 — newJob 의미 확장 (create/edit 공용 폼). edit 모드 시 read-only 표시용
+// 필드 (evidenceTypeName / controlNodeCode / controlNodeName) 추가 — payload 미포함.
 const newJob = ref<{
   name: string
   description: string
@@ -23,6 +31,10 @@ const newJob = ref<{
   scriptId: number | null
   scriptPath: string
   scheduleCron: string
+  // edit 모드 read-only 표시용 (v18.9.4)
+  evidenceTypeName?: string
+  controlNodeCode?: string
+  controlNodeName?: string
 }>({ name: '', description: '', jobType: 'web_scraping', scriptId: null, scriptPath: '', scheduleCron: '' })
 
 // v18.7 — 진단 패널 진입 상태 (풀폭 swap)
@@ -94,18 +106,71 @@ function goToEvidenceType(job: CollectionJobItem) {
   })
 }
 
-async function handleCreate() {
+// ============================================================================
+// v18.9.4 — 작업 등록 + 수정 통합 dialog
+// ============================================================================
+//
+// mode='create' 일 때 jobsApi.create, mode='edit' 일 때 jobsApi.update 호출.
+// BE UpdateRequest 는 name/description/scriptId/scriptPath/scheduleCron 만 받아
+// jobType / evidenceTypeId 는 변경 불가 — FE 도 edit 모드에서 read-only 표시.
+
+function openCreateDialog() {
+  newJob.value = {
+    name: '', description: '', jobType: 'web_scraping',
+    scriptId: null, scriptPath: '', scheduleCron: '',
+  }
+  editingJobId.value = null
+  jobDialogMode.value = 'create'
+}
+
+function openEditDialog() {
+  if (!selectedJob.value) return
+  newJob.value = {
+    name: selectedJob.value.name,
+    description: selectedJob.value.description ?? '',
+    jobType: selectedJob.value.jobType,
+    scriptId: selectedJob.value.scriptId ?? null,
+    scriptPath: selectedJob.value.scriptPath ?? '',
+    scheduleCron: selectedJob.value.scheduleCron ?? '',
+    evidenceTypeName: selectedJob.value.evidenceTypeName,
+    controlNodeCode: selectedJob.value.controlNodeCode,
+    controlNodeName: selectedJob.value.controlNodeName,
+  }
+  editingJobId.value = selectedJob.value.id
+  jobDialogMode.value = 'edit'
+}
+
+function closeJobDialog() {
+  jobDialogMode.value = null
+  editingJobId.value = null
+}
+
+async function handleSubmit() {
+  if (!newJob.value.name) return
   try {
-    await jobsApi.create({
-      name: newJob.value.name,
-      description: newJob.value.description || undefined,
-      jobType: newJob.value.jobType,
-      scriptId: newJob.value.scriptId ?? undefined,         // v18.8.2
-      scriptPath: newJob.value.scriptPath || undefined,     // legacy fallback
-      scheduleCron: newJob.value.scheduleCron || undefined,
-    })
-    showCreateDialog.value = false
-    newJob.value = { name: '', description: '', jobType: 'web_scraping', scriptId: null, scriptPath: '', scheduleCron: '' }
+    if (jobDialogMode.value === 'create') {
+      await jobsApi.create({
+        name: newJob.value.name,
+        description: newJob.value.description || undefined,
+        jobType: newJob.value.jobType,
+        scriptId: newJob.value.scriptId ?? undefined,         // v18.8.2
+        scriptPath: newJob.value.scriptPath || undefined,     // legacy fallback
+        scheduleCron: newJob.value.scheduleCron || undefined,
+      })
+    } else if (jobDialogMode.value === 'edit' && editingJobId.value != null) {
+      await jobsApi.update(editingJobId.value, {
+        name: newJob.value.name,
+        description: newJob.value.description || undefined,
+        scriptId: newJob.value.scriptId ?? undefined,
+        scriptPath: newJob.value.scriptPath || undefined,
+        scheduleCron: newJob.value.scheduleCron || undefined,
+      })
+      // 변경 반영 위해 상세 패널 reload
+      if (selectedJob.value?.id === editingJobId.value) {
+        await openDetail(editingJobId.value)
+      }
+    }
+    closeJobDialog()
     await loadJobs()
   } catch (e) { console.error(e) }
 }
@@ -213,7 +278,7 @@ async function onScriptSaved(payload: { scriptId: number }) {
   closeScriptEditor()
 
   // 신규 작성이면 작업 등록 dialog 의 scriptId 자동 채움
-  if (showCreateDialog.value && !newJob.value.scriptId) {
+  if (jobDialogMode.value != null && !newJob.value.scriptId) {
     newJob.value.scriptId = payload.scriptId
   }
 
@@ -287,7 +352,7 @@ onMounted(async () => {
         <p class="text-sm text-gray-500 mt-1">증빙 자료 자동 수집 작업을 관리합니다.</p>
       </div>
       <!-- v18.7 — 진단 패널 표시 중이면 작업 등록 버튼 숨김 (mockup 정합) -->
-      <button v-if="!showDiagnosisPanel" @click="showCreateDialog = true"
+      <button v-if="!showDiagnosisPanel" @click="openCreateDialog"
         class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2">
         <i class="pi pi-plus text-sm"></i> 작업 등록
       </button>
@@ -447,6 +512,18 @@ onMounted(async () => {
           </div>
 
           <!--
+            v18.9.4 — 작업 수정 진입점. 기존에는 실패 이력 진단 패널 → 수정
+            스크립트 업로드 흐름만 존재해 신규/실행 이력 없는 작업은 수정 진입점 0.
+            등록 dialog 재활용 (mode='edit'). jobType / 증빙 유형은 read-only.
+          -->
+          <button
+            @click="openEditDialog"
+            class="w-full px-3 py-2 text-sm bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 inline-flex items-center justify-center gap-1.5">
+            <i class="pi pi-pencil text-xs"></i>
+            수정
+          </button>
+
+          <!--
             v18.7 — 실행 이력 (mockup 화면 1 정합).
             row layout: 4 column grid (시간 mono | 상태+추가정보 | 소요시간 | 진단 보기 →).
             실패 row = 빨간 배경 + border + cursor-pointer + 클릭 시 진단 패널 풀폭 진입.
@@ -527,9 +604,11 @@ onMounted(async () => {
     <!-- ========================================
          다이얼로그: 작업 등록
          ======================================== -->
-    <div v-if="showCreateDialog" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div v-if="jobDialogMode !== null" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-        <h3 class="text-lg font-bold text-gray-900 mb-4">수집 작업 등록</h3>
+        <h3 class="text-lg font-bold text-gray-900 mb-4">
+          {{ jobDialogMode === 'create' ? '수집 작업 등록' : '수집 작업 수정' }}
+        </h3>
         <div class="space-y-3">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">작업명 *</label>
@@ -539,7 +618,9 @@ onMounted(async () => {
             <label class="block text-sm font-medium text-gray-700 mb-1">설명</label>
             <textarea v-model="newJob.description" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea>
           </div>
-          <div>
+
+          <!-- v18.9.4 — 유형 select (create 모드만). BE UpdateRequest 가 jobType 미허용. -->
+          <div v-if="jobDialogMode === 'create'">
             <label class="block text-sm font-medium text-gray-700 mb-1">유형 *</label>
             <select v-model="newJob.jobType" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
               <option value="web_scraping">웹 스크래핑</option>
@@ -547,6 +628,30 @@ onMounted(async () => {
               <option value="log_extract">로그 추출</option>
             </select>
           </div>
+
+          <!-- v18.9.4 — edit 모드 read-only 영역 (유형 + 증빙 유형). BE 정합. -->
+          <template v-else>
+            <div class="bg-gray-50 px-3 py-2 rounded-lg relative">
+              <span class="absolute top-2 right-2 text-xs text-gray-400">변경 불가</span>
+              <label class="block text-xs text-gray-500 mb-0.5">유형</label>
+              <p class="text-sm text-gray-700">
+                {{
+                  newJob.jobType === 'web_scraping' ? '웹 스크래핑'
+                  : newJob.jobType === 'excel_extract' ? '엑셀 추출'
+                  : newJob.jobType === 'log_extract' ? '로그 추출'
+                  : newJob.jobType
+                }}
+              </p>
+            </div>
+            <div v-if="newJob.evidenceTypeName" class="bg-gray-50 px-3 py-2 rounded-lg relative">
+              <span class="absolute top-2 right-2 text-xs text-gray-400">변경 불가</span>
+              <label class="block text-xs text-gray-500 mb-0.5">증빙 유형</label>
+              <p class="text-sm text-gray-700">
+                <template v-if="newJob.controlNodeCode">{{ newJob.controlNodeCode }} {{ newJob.controlNodeName }} ▸ </template>{{ newJob.evidenceTypeName }}
+              </p>
+            </div>
+          </template>
+
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">스크립트</label>
 
@@ -584,9 +689,11 @@ onMounted(async () => {
           </div>
         </div>
         <div class="flex justify-end gap-2 mt-4">
-          <button @click="showCreateDialog = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
-          <button @click="handleCreate" :disabled="!newJob.name"
-            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">등록</button>
+          <button @click="closeJobDialog" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
+          <button @click="handleSubmit" :disabled="!newJob.name"
+            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+            {{ jobDialogMode === 'create' ? '등록' : '저장' }}
+          </button>
         </div>
       </div>
     </div>
