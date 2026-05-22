@@ -40,7 +40,7 @@
  * </ul>
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   frameworksApi,
   controlNodesApi,
@@ -63,6 +63,17 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
+
+// ========================================
+// v18.9.2 — 도착 시 evidence 카드 포커싱 (EvidenceTypeDetailView goBack 진입)
+// ========================================
+//
+// EvidenceTypeDetailView 의 goBack 이 query.expandNodeId + query.focusEvidenceTypeId
+// 전달 → onMounted 가 그 leaf 의 ancestors 모두 expand + leaf 인라인 펼침 +
+// evidence 카드 포커싱 (border-blue-500 + bg-blue-50 + box-shadow inset). 3초 자동
+// 해제 + transition fade out. v18.9.1 의 focusJob 패턴 정합.
+const focusedEvidenceTypeId = ref<number | null>(null)
 
 // ========================================
 // 프레임워크 상태 (헤더 메타용)
@@ -121,6 +132,66 @@ async function refreshDetail() {
     // v15.6 정상화. 기존 controlDetail 보존 (fallback) — 갱신 실패가 화면을 비우지
     // 않도록.
     showToast('증빙 유형을 갱신하지 못했습니다.', 'error')
+  }
+}
+
+// ========================================
+// v18.9.2 — EvidenceTypeDetailView goBack 진입 처리
+// ========================================
+/**
+ * leaf 노드의 ancestors 모두 expand + leaf 인라인 펼침 + evidence 카드 포커싱.
+ *
+ * 흐름:
+ *  1. tree.flatNodes 따라 nodeId 의 ancestors 수집 (parentId chain)
+ *  2. tree.expandedIds 에 ancestors 모두 add (Set 재할당으로 reactivity trigger)
+ *  3. expandedLeafId 가 다르면 toggleLeaf 호출 (펼침 + controlDetail 로드).
+ *     같으면 그대로 (toggleLeaf 의 close 분기 회피)
+ *  4. focusedEvidenceTypeId 설정 + nextTick 후 scrollIntoView
+ *  5. 3초 후 자동 해제 (그 사이 다른 jobId focus 되었으면 그 신규 focus 보존)
+ *
+ * @param nodeId          포커싱할 leaf control_node.id
+ * @param evidenceTypeId  포커싱할 evidence_type.id (null 시 leaf 펼침만)
+ */
+async function expandAncestorsAndFocus(nodeId: number, evidenceTypeId: number | null) {
+  // ── 1. ancestors 수집 ───────────────────────────────────────
+  const nodeMap = new Map(tree.flatNodes.value.map((n) => [n.id, n]))
+  const targetNode = nodeMap.get(nodeId)
+  if (!targetNode) return
+
+  const ancestorIds: number[] = []
+  let cursor = targetNode.parentId
+  while (cursor != null) {
+    ancestorIds.push(cursor)
+    cursor = nodeMap.get(cursor)?.parentId ?? null
+  }
+
+  // ── 2. ancestors expand (Set 재할당으로 reactivity trigger) ──
+  const newExpanded = new Set(tree.expandedIds.value)
+  for (const id of ancestorIds) newExpanded.add(id)
+  tree.expandedIds.value = newExpanded
+
+  // ── 3. leaf 인라인 펼침 + controlDetail 로드 ──────────────────
+  // toggleLeaf 가 같은 nodeId 면 close 분기 → 회피 (이미 펼쳐 있으면 그대로)
+  if (expandedLeafId.value !== nodeId) {
+    await toggleLeaf(nodeId)
+  }
+
+  // ── 4. evidence 카드 포커싱 + scrollIntoView ────────────────
+  if (evidenceTypeId != null) {
+    focusedEvidenceTypeId.value = evidenceTypeId
+    await nextTick()
+    // ControlNodeRow 의 .et-card 에 :data-evidence-type-id attribute 있음 (v18.9.2 추가)
+    const card = document.querySelector(
+      `.et-card[data-evidence-type-id="${evidenceTypeId}"]`,
+    ) as HTMLElement | null
+    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+    // ── 5. 3초 후 자동 해제 ─────────────────────────────────
+    setTimeout(() => {
+      if (focusedEvidenceTypeId.value === evidenceTypeId) {
+        focusedEvidenceTypeId.value = null
+      }
+    }, 3000)
   }
 }
 
@@ -390,7 +461,16 @@ async function onDeleteEvidenceType(etId: number, etName: string) {
 // lifecycle
 // ========================================
 onMounted(() => {
-  loadFrameworks()
+  // v18.9.2 — loadFrameworks 가 tree.load() 까지 끝나야 expandAncestorsAndFocus 가
+  // tree.flatNodes 를 조회할 수 있음. 그래서 await 후 query 처리.
+  void (async () => {
+    await loadFrameworks()
+    const qExpandNodeId = Number(route.query.expandNodeId)
+    const qFocusEvidenceTypeId = Number(route.query.focusEvidenceTypeId)
+    if (qExpandNodeId) {
+      await expandAncestorsAndFocus(qExpandNodeId, qFocusEvidenceTypeId || null)
+    }
+  })()
   // P11 (5-14i v3) — Framework switcher dropdown: 외부 클릭 + Esc 로 닫기
   document.addEventListener('click', closeFwSwitcher)
   document.addEventListener('keydown', onGlobalKeydown)
@@ -625,6 +705,7 @@ watch(
           :highlight-fn="tree.highlightMatch"
           :match-count-by-category-id="tree.matchCountByCategoryId.value"
           :search-active="tree.filterActive.value"
+          :focused-evidence-type-id="focusedEvidenceTypeId"
           @toggle-expand="onTreeToggle"
           @go-evidence-type="goToEvidenceTypeDetail"
           @zip-download="onZipDownload"

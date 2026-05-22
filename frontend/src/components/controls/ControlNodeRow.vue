@@ -55,6 +55,14 @@ interface Props {
   matchCountByCategoryId?: Map<number, number>
   /** 검색 또는 필터 활성 여부 — 매치 카운트 핍 노출 가드. */
   searchActive?: boolean
+
+  // ─── view 모드 props (v18.9.2) ───
+  /**
+   * v18.9.2 — EvidenceTypeDetailView goBack 진입 시 포커싱할 evidence_type.id.
+   * 본 evidence_type 의 카드에 `.et-card-focused` class 적용 → border-blue-500 +
+   * bg-blue-50 + box-shadow inset. ControlsView 에서 3초 후 자동 해제.
+   */
+  focusedEvidenceTypeId?: number | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -67,6 +75,7 @@ const props = withDefaults(defineProps<Props>(), {
   highlightFn: undefined,
   matchCountByCategoryId: () => new Map<number, number>(),
   searchActive: false,
+  focusedEvidenceTypeId: null,    // v18.9.2
 })
 
 const emit = defineEmits<{
@@ -573,10 +582,14 @@ function forwardRequestDelete(n: UnifiedNode): void {
               </div>
             </div>
             <!-- 증빙 카드 (클릭→상세, 삭제 아이콘) -->
+            <!-- v18.9.2 — :data-evidence-type-id + et-card-focused class 동적
+                 (EvidenceTypeDetailView goBack 진입 시 ControlsView 가 querySelector + class binding) -->
             <div
               v-for="et in controlDetail.evidenceTypes"
               :key="et.id"
+              :data-evidence-type-id="et.id"
               class="et-card group/et"
+              :class="{ 'et-card-focused': et.id === focusedEvidenceTypeId }"
               @click.stop="viewOnGoEt(et)">
               <div class="et-card-top">
                 <div class="et-card-name">{{ et.name }}</div>
@@ -642,6 +655,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
         :highlight-fn="highlightFn"
         :match-count-by-category-id="matchCountByCategoryId"
         :search-active="searchActive"
+        :focused-evidence-type-id="focusedEvidenceTypeId"
         @toggle-expand="forwardToggle"
         @go-evidence-type="forwardGoEt"
         @zip-download="forwardZip"
@@ -976,9 +990,22 @@ function forwardRequestDelete(n: UnifiedNode): void {
 .et-card {
   background: white; border: 1px solid #e5e7eb; border-radius: 8px;
   padding: 12px 14px; margin-bottom: 6px;
-  cursor: pointer; transition: border-color 0.1s;
+  cursor: pointer;
+  /* v18.9.2 — border-color + background + box-shadow 모두 transition (포커싱 fade in/out) */
+  transition: border-color 0.5s, background-color 0.5s, box-shadow 0.5s;
 }
 .et-card:hover { border-color: #94a3b8; }
+/**
+ * v18.9.2 — EvidenceTypeDetailView goBack 진입 시 포커싱 강조.
+ * border-blue-500 + bg-blue-50 + box-shadow inset blue ring. 3초 후 transition
+ * 으로 자연 fade out (ControlsView 가 focusedEvidenceTypeId.value = null 트리거).
+ * v18.9.1 의 JobsView / EvidenceTypeDetailView 포커싱 패턴 정합.
+ */
+.et-card-focused {
+  border-color: #3b82f6;
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 2px #3b82f6;
+}
 .et-card-name { font-size: 13px; font-weight: 500; color: #111827; }
 .et-card-top {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;

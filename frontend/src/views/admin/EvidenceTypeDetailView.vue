@@ -213,10 +213,17 @@ onMounted(async () => {
 // ========================================
 // 네비게이션
 // ========================================
+//
+// v18.9.2 — goBack 시 query 추가: 도착 ControlsView 가 그 leaf 의 ancestors 펼침
+// + 증빙 유형 카드 포커싱. 사용자 위치 컨텍스트 보존.
 function goBack() {
   router.push({
     name: 'framework-detail',
     params: { frameworkId: props.frameworkId },
+    query: {
+      expandNodeId: String(props.nodeId),
+      focusEvidenceTypeId: String(props.evidenceTypeId),
+    },
   })
 }
 
