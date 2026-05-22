@@ -40,7 +40,7 @@
  * </ul>
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import {
   frameworksApi,
   controlNodesApi,
@@ -196,6 +196,87 @@ async function expandAncestorsAndFocus(nodeId: number, evidenceTypeId: number | 
 }
 
 // ========================================
+// v18.9.3 — sessionStorage 기반 작업 컨텍스트 보존
+// ========================================
+//
+// 묵시적 재진입 (대시보드/홈 → 관리항목) 시 마지막 펼침 + 스크롤 상태 복원.
+// v18.9.2 의 URL query 명시적 deep-link 와 보완 패턴.
+//
+// 우선순위: URL query > sessionStorage > 기본값 (depth=1 카테고리만 펼침)
+// 만료: sessionStorage 는 탭 닫을 때 자동 클리어 (별도 만료 로직 없음)
+// 격리: framework 별 key 분리 (다른 framework 펼침 상태가 섞이지 않음)
+
+interface ControlsViewSnapshot {
+  expandedIds: number[]
+  expandedLeafId: number | null
+  scrollY: number
+}
+
+function snapshotKey(frameworkId: number): string {
+  return `secuhub:controlsView:state:${frameworkId}`
+}
+
+function saveSnapshot(): void {
+  if (selectedFrameworkId.value == null) return
+  const snap: ControlsViewSnapshot = {
+    expandedIds: Array.from(tree.expandedIds.value),
+    expandedLeafId: expandedLeafId.value,
+    scrollY: window.scrollY,
+  }
+  try {
+    sessionStorage.setItem(
+      snapshotKey(selectedFrameworkId.value),
+      JSON.stringify(snap),
+    )
+  } catch (e) {
+    // Quota / disabled storage — silent ignore (보조 기능, 본 흐름 영향 없음)
+    console.warn('[v18.9.3] sessionStorage save failed', e)
+  }
+}
+
+async function restoreSnapshot(frameworkId: number): Promise<boolean> {
+  let raw: string | null = null
+  try {
+    raw = sessionStorage.getItem(snapshotKey(frameworkId))
+  } catch {
+    return false
+  }
+  if (!raw) return false
+  let snap: ControlsViewSnapshot
+  try {
+    snap = JSON.parse(raw)
+  } catch {
+    return false
+  }
+
+  // 트리 펼침 복원 — 실제 존재하는 노드만 (stale id 필터)
+  const validIds = new Set(tree.flatNodes.value.map((n) => n.id))
+  const restoredExpanded = new Set(snap.expandedIds.filter((id) => validIds.has(id)))
+  tree.expandedIds.value = restoredExpanded
+
+  // leaf 인라인 펼침 복원
+  if (snap.expandedLeafId != null && validIds.has(snap.expandedLeafId)) {
+    await toggleLeaf(snap.expandedLeafId)
+  }
+
+  // 스크롤 위치 복원 — DOM 렌더링 + expand transition 끝나기 전 약간 일찍 (자연 효과)
+  await nextTick()
+  setTimeout(() => {
+    window.scrollTo({ top: snap.scrollY, behavior: 'auto' })
+  }, 100)
+
+  return true
+}
+
+// v18.9.3-fix — scroll event listener (debounced 500ms 저장).
+// 사용자가 스크롤만 하고 페이지 떠나도 위치 보존됨.
+let scrollSaveTimer: number | null = null
+function onScroll() {
+  if (scrollSaveTimer != null) clearTimeout(scrollSaveTimer)
+  scrollSaveTimer = window.setTimeout(() => saveSnapshot(), 500)
+}
+
+// ========================================
 // 다이얼로그 — UnifiedControlsDialog (5-14g 신규)
 // ========================================
 const showUnifiedDialog = ref(false)
@@ -257,12 +338,14 @@ function onTreeToggle(nodeId: number, nodeType: 'category' | 'control') {
       controlDetail.value = null
     }
     tree.toggleExpand(nodeId)
+    saveSnapshot()   // v18.9.3-fix — 사용자 action 시점 즉시 저장
   } else {
     // 증빙 펼침 시 하위 목록 자동 닫기 (겹침 방지)
     if (tree.effectiveExpandedIds.value.has(nodeId)) {
       tree.toggleExpand(nodeId)
     }
-    void toggleLeaf(nodeId)
+    // v18.9.3-fix — toggleLeaf 완료 후 저장 (expandedLeafId 갱신 시점)
+    void toggleLeaf(nodeId).then(() => saveSnapshot())
   }
 }
 
@@ -463,24 +546,46 @@ async function onDeleteEvidenceType(etId: number, etName: string) {
 onMounted(() => {
   // v18.9.2 — loadFrameworks 가 tree.load() 까지 끝나야 expandAncestorsAndFocus 가
   // tree.flatNodes 를 조회할 수 있음. 그래서 await 후 query 처리.
+  //
+  // v18.9.3 — URL query 우선. 없으면 sessionStorage 묵시적 복원 시도.
   void (async () => {
     await loadFrameworks()
     const qExpandNodeId = Number(route.query.expandNodeId)
     const qFocusEvidenceTypeId = Number(route.query.focusEvidenceTypeId)
     if (qExpandNodeId) {
       await expandAncestorsAndFocus(qExpandNodeId, qFocusEvidenceTypeId || null)
+    } else if (selectedFrameworkId.value != null) {
+      await restoreSnapshot(selectedFrameworkId.value)
     }
   })()
   // P11 (5-14i v3) — Framework switcher dropdown: 외부 클릭 + Esc 로 닫기
   document.addEventListener('click', closeFwSwitcher)
   document.addEventListener('keydown', onGlobalKeydown)
+  // v18.9.3-fix — scroll 위치 debounced 저장
+  window.addEventListener('scroll', onScroll, { passive: true })
   // P14/P19/P21 (5-14i v3~v5) — 검색 적용 hook 등록 (debounce 200ms 후 호출됨)
   setupSearchHook()
 })
 
+// v18.9.3-fix — onBeforeUnmount 가 일부 환경 (layout wrapper / router transition /
+// KeepAlive) 에서 호출 안 될 수 있음. onBeforeRouteLeave 가드는 Vue Router 의
+// navigation 시점에 항상 호출되어 더 reliable.
+onBeforeRouteLeave(() => {
+  saveSnapshot()
+})
+
 onBeforeUnmount(() => {
+  // v18.9.3 — 페이지 떠나기 직전 현재 상태 저장 (대시보드/홈 등 다른 페이지로
+  // navigate 시점). 같은 탭에서 돌아오면 onMounted 의 restoreSnapshot 이 복원.
+  saveSnapshot()
   document.removeEventListener('click', closeFwSwitcher)
   document.removeEventListener('keydown', onGlobalKeydown)
+  // v18.9.3-fix — scroll listener + timer cleanup
+  window.removeEventListener('scroll', onScroll)
+  if (scrollSaveTimer != null) {
+    clearTimeout(scrollSaveTimer)
+    scrollSaveTimer = null
+  }
   if (searchHookCleanup) {
     searchHookCleanup()
     searchHookCleanup = null
@@ -488,16 +593,26 @@ onBeforeUnmount(() => {
 })
 
 // 라우트 prop 변경 시 Framework 전환
+//
+// v18.9.3 — framework 전환 시 이전 framework 상태 저장 + 새 framework 의
+// sessionStorage 복원 시도. 같은 ControlsView 인스턴스 안에서 framework 만 바뀌는
+// 경우라 onBeforeUnmount 가 호출되지 않음 — watch 가 책임짐.
 watch(
   () => props.frameworkId,
-  async (newId) => {
+  async (newId, oldId) => {
     if (newId != null && frameworks.value.length > 0) {
       const match = frameworks.value.find((f) => f.id === newId)
       if (match && match.id !== selectedFrameworkId.value) {
+        // v18.9.3 — 이전 framework 상태 저장 (전환 직전)
+        if (oldId != null && oldId !== newId) {
+          saveSnapshot()
+        }
         selectedFrameworkId.value = match.id
         expandedLeafId.value = null
         controlDetail.value = null
         await tree.load()
+        // v18.9.3 — 새 framework 의 sessionStorage 복원 시도
+        await restoreSnapshot(newId)
       }
     }
   },
