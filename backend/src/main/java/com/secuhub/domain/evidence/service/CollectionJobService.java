@@ -26,9 +26,16 @@ public class CollectionJobService {
     private final ScriptRepository scriptRepository;            // v18.8.2 — Script entity 조회용
     private final ScriptExecutionService scriptExecutionService;
 
+    /**
+     * v18.9 — N+1 차단: evidenceType + controlNode + framework JOIN FETCH.
+     *
+     * <p>{@link CollectionJobDto.Response#from} 안에서 controlNode pathline (frameworkId /
+     * controlNodeId / controlNodeCode / controlNodeName) 까지 traverse. lazy 그대로 두면 작업 N 개당
+     * query 3N+1. {@link CollectionJobRepository#findAllWithGraph()} 로 단일 query hydrate.</p>
+     */
     @Transactional(readOnly = true)
     public List<CollectionJobDto.Response> findAll() {
-        return collectionJobRepository.findAll().stream()
+        return collectionJobRepository.findAllWithGraph().stream()
                 .map(job -> {
                     List<JobExecution> execs = jobExecutionRepository.findByJobIdOrderByCreatedAtDesc(job.getId());
                     JobExecution lastExec = execs.isEmpty() ? null : execs.get(0);
@@ -47,6 +54,21 @@ public class CollectionJobService {
                 .map(CollectionJobDto.ExecutionSummary::from)
                 .toList();
 
+        // v18.9 — pathline 4 필드 안전 traverse (entity.evidenceType nullable, controlNode/framework null 가능)
+        Long fwId = null;
+        Long cnId = null;
+        String cnCode = null;
+        String cnName = null;
+        if (job.getEvidenceType() != null && job.getEvidenceType().getControlNode() != null) {
+            var cn = job.getEvidenceType().getControlNode();
+            cnId = cn.getId();
+            cnCode = cn.getCode();
+            cnName = cn.getName();
+            if (cn.getFramework() != null) {
+                fwId = cn.getFramework().getId();
+            }
+        }
+
         return CollectionJobDto.DetailResponse.builder()
                 .id(job.getId())
                 .name(job.getName())
@@ -56,7 +78,13 @@ public class CollectionJobService {
                 .scriptId(job.getScript() != null ? job.getScript().getId() : null)
                 .scriptPath(job.getScriptPath())
                 .evidenceTypeId(job.getEvidenceType() != null ? job.getEvidenceType().getId() : null)
-                .evidenceTypeName(job.getEvidenceType() != null ? job.getEvidenceType().getName() : null)
+                .evidenceTypeName(job.getEvidenceType() != null ?
+                        job.getEvidenceType().getName() : null)
+                // v18.9 — 양방향 navigation
+                .frameworkId(fwId)
+                .controlNodeId(cnId)
+                .controlNodeCode(cnCode)
+                .controlNodeName(cnName)
                 .scheduleCron(job.getScheduleCron())
                 .isActive(job.getIsActive())
                 .executions(execSummaries)

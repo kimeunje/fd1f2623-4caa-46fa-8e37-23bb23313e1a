@@ -24,8 +24,13 @@ import java.util.List;
  * </ul>
  *
  * <h3>v18.8.7 — 스크립트 삭제 시 사용 중 검사용</h3>
- * <p>{@link #existsByScriptId(Long)} 추가. {@link ScriptManagementService#delete} 가
- * 본 메서드로 "사용 중인 작업이 있으면 거부" 정책 구현 (Q2=안전).</p>
+ * <p>{@link #existsByScriptId(Long)} 추가. {@link com.secuhub.domain.evidence.service.ScriptManagementService#delete}
+ * 가 본 메서드로 "사용 중인 작업이 있으면 거부" 정책 구현 (Q2=안전).</p>
+ *
+ * <h3>v18.9 — JobsView pathline 표시용 JOIN FETCH 메서드 추가</h3>
+ * <p>{@link #findAllWithGraph()} 신규. CollectionJobDto.Response.from 의 controlNode pathline
+ * traverse 시 N+1 차단. {@link com.secuhub.domain.evidence.service.CollectionJobService#findAll}
+ * 가 본 메서드 호출.</p>
  */
 public interface CollectionJobRepository extends JpaRepository<CollectionJob, Long> {
 
@@ -95,4 +100,30 @@ public interface CollectionJobRepository extends JpaRepository<CollectionJob, Lo
         WHERE j.evidenceType.controlNode.id IN :controlNodeIds
         """)
     long countByControlNodeIds(@Param("controlNodeIds") List<Long> controlNodeIds);
+
+    // ====================================================================
+    // v18.9 — JobsView 작업 목록 표시용 JOIN FETCH (pathline N+1 차단)
+    // ====================================================================
+
+    /**
+     * v18.9 — JobsView 의 작업 목록 표시용 JOIN FETCH 변형.
+     *
+     * <p>본 응답이 {@link com.secuhub.domain.evidence.dto.CollectionJobDto.Response#from} 매핑 시
+     * {@code entity.getEvidenceType().getControlNode().getFramework()} 까지 traverse. LAZY 그대로 두면
+     * 작업 N 개당 query 3N+1 발생. JOIN FETCH 로 단일 query 로 hydrate.</p>
+     *
+     * <p>{@code j.evidenceType} 가 NULL 인 전역 작업도 LEFT JOIN FETCH 로 포함 (omit 금지 — JobsView 에서 표시되어야 함).
+     * cartesian product 위험 없음 (모두 ToOne).</p>
+     *
+     * <p>spec v16.4a 의 DashboardService N+1 차단 패턴
+     * ({@link EvidenceFileRepository#findTop10PendingForDashboardRaw}) 정합.</p>
+     */
+    @Query("""
+        SELECT j FROM CollectionJob j
+        LEFT JOIN FETCH j.evidenceType et
+        LEFT JOIN FETCH et.controlNode cn
+        LEFT JOIN FETCH cn.framework
+        LEFT JOIN FETCH j.script
+        """)
+    List<CollectionJob> findAllWithGraph();
 }

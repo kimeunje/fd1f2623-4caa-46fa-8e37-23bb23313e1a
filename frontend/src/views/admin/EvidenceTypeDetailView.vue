@@ -31,8 +31,8 @@
  *  - 기존 파일 선택 시 EvidenceAssetSearchDialog 검색 + asset 선택 → POST /link
  *  - 새로 등록 선택 시 POST /upload?forceUpload=true 재호출 (Q9)
  */
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, nextTick, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { controlNodesApi, evidenceFilesApi, evidenceTypesApi, jobsApi } from '@/services/evidenceApi'
 import type {
   ControlDetail,
@@ -57,6 +57,26 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
+
+// v18.9.1 — JobsView 의 pathline 진입 시 자동 수집 탭 진입 + 해당 작업 row 포커싱.
+// border-blue-500 + ring-2 + bg-blue-50 강조 후 3초 자동 해제 (transition-colors fade out).
+const focusedJobId = ref<number | null>(null)
+const focusedJobRef = ref<HTMLElement | null>(null)
+
+function focusJob(jobId: number) {
+  focusedJobId.value = jobId
+  // DOM 갱신 후 scrollIntoView 호출 (template 의 :ref 가 dynamic 으로 갱신됨)
+  nextTick(() => {
+    focusedJobRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+  // 3초 후 자동 해제 (다른 jobId 가 그 사이에 focus 되었으면 그 신규 focus 보존)
+  setTimeout(() => {
+    if (focusedJobId.value === jobId) {
+      focusedJobId.value = null
+    }
+  }, 3000)
+}
 
 // ========================================
 // 상태
@@ -179,7 +199,16 @@ async function loadAll() {
   }
 }
 
-onMounted(loadAll)
+// v18.9.1 — query param ?focusJobId=N 으로 진입 시 자동 수집 탭 진입 + 그 작업 row 포커싱.
+// JobsView 의 pathline 클릭 deep-link 진입 — 도착 즉시 어떤 작업인지 시각화.
+onMounted(async () => {
+  await loadAll()
+  const qFocusJobId = Number(route.query.focusJobId)
+  if (qFocusJobId && jobs.value.some(j => j.id === qFocusJobId)) {
+    activeTab.value = 'auto'   // 자동 수집 탭 자동 전환 (history 기본값 override)
+    focusJob(qFocusJobId)
+  }
+})
 
 // ========================================
 // 네비게이션
@@ -514,6 +543,13 @@ async function handleExecuteJob(jobId: number) {
   } catch (e: any) {
     showToast(e?.response?.data?.message ?? '작업 실행에 실패했습니다.', 'error')
   }
+}
+
+// v18.9 — 자동 수집 탭의 작업 row 옆 외부링크 icon 클릭 → JobsView 의 이 작업 상세로 deep-link.
+// 같은 화면 (인라인 펼침) 이 아닌 별도 페이지로 이동 (사용자 결정 — A 페이지 이동).
+// JobsView 의 onMounted 가 ?jobId=N 감지 시 자동으로 그 작업 상세 패널 펼침.
+function goToJobsPage(jobId: number) {
+  router.push({ name: 'jobs', query: { jobId: String(jobId) } })
 }
 
 async function handleToggleJob(jobId: number) {
@@ -1128,8 +1164,12 @@ function executionDotCls(status?: string): string {
           <div
             v-for="job in jobs"
             :key="job.id"
-            class="grid gap-3 items-center p-3 bg-white border border-gray-200 rounded-md hover:border-gray-300"
-            style="grid-template-columns: 1fr auto auto;">
+            :ref="el => { if (job.id === focusedJobId) focusedJobRef = el as HTMLElement | null }"
+            class="grid gap-3 items-center p-3 bg-white rounded-md transition-colors duration-500"
+            :class="focusedJobId === job.id
+              ? 'border border-blue-500 ring-2 ring-blue-300 bg-blue-50'
+              : 'border border-gray-200 hover:border-gray-300'"
+            style="grid-template-columns: 1fr auto auto auto;">
             <div>
               <div class="text-sm font-medium flex items-center gap-2">
                 {{ job.name }}
@@ -1157,6 +1197,18 @@ function executionDotCls(status?: string): string {
               @click="handleExecuteJob(job.id)"
               class="h-7 px-3 text-[11px] border border-gray-200 bg-white rounded-md text-gray-700 hover:bg-gray-50">
               즉시 실행
+            </button>
+            <!--
+              v18.9 — 수집 작업 페이지의 이 작업 상세 패널로 deep-link.
+              사용자 결정 A 페이지 이동: router.push({ name: 'jobs', query: { jobId } })
+              → JobsView 의 onMounted 가 query 감지 시 그 작업 상세 자동 펼침.
+            -->
+            <button
+              type="button"
+              @click="goToJobsPage(job.id)"
+              class="w-7 h-7 flex items-center justify-center border border-blue-200 bg-blue-50 rounded-md text-blue-700 hover:bg-blue-100 transition-colors"
+              title="수집 작업 페이지에서 열기">
+              <i class="pi pi-external-link text-xs"></i>
             </button>
             <div class="flex gap-1">
               <button

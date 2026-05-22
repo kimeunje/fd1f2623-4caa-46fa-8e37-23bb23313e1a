@@ -182,6 +182,17 @@ export interface CollectionJobItem {
   scriptPath?: string
   evidenceTypeId?: number
   evidenceTypeName?: string
+
+  // ── v18.9 — JobsView pathline + router.push 양방향 navigation 용 ──
+  /** route param :frameworkId 조립용. */
+  frameworkId?: number
+  /** route param :nodeId 조립용 + pathline display ("1.1.2" 의 id). */
+  controlNodeId?: number
+  /** pathline display ("1.1.2 보호대책 요구사항" 의 코드). */
+  controlNodeCode?: string
+  /** pathline display ("1.1.2 보호대책 요구사항" 의 이름). */
+  controlNodeName?: string
+
   scheduleCron?: string
   isActive: boolean
   lastExecution?: ExecutionSummary

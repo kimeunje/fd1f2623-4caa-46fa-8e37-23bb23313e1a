@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { jobsApi } from '@/services/evidenceApi'
 import type { CollectionJobItem, CollectionJobDetail, ExecutionSummary } from '@/types/evidence'
 import FailureDiagnosisPanel from '@/components/admin/FailureDiagnosisPanel.vue'
 import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
+
+// v18.9 — query param ?jobId=N 진입 + pathline 클릭 시 router.push 위해 추가
+const route = useRoute()
+const router = useRouter()
 
 const jobs = ref<CollectionJobItem[]>([])
 const loading = ref(false)
@@ -22,6 +27,25 @@ const newJob = ref<{
 
 // v18.7 — 진단 패널 진입 상태 (풀폭 swap)
 const selectedExecution = ref<ExecutionSummary | null>(null)
+
+// v18.9.1 — 도착 시 작업 row 포커싱 (EvidenceTypeDetailView 외부링크 ?jobId=N 진입 시 시각화).
+// border-blue-500 + ring-2 + bg-blue-50 강조 후 3초 자동 해제 (transition-colors fade out).
+const focusedJobId = ref<number | null>(null)
+const focusedRowRef = ref<HTMLElement | null>(null)
+
+function focusJob(jobId: number) {
+  focusedJobId.value = jobId
+  // DOM 갱신 후 scrollIntoView 호출 (template 의 :ref 가 dynamic 으로 갱신됨)
+  nextTick(() => {
+    focusedRowRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+  // 3초 후 자동 해제 (다른 jobId 가 그 사이에 focus 되었으면 그 신규 focus 보존)
+  setTimeout(() => {
+    if (focusedJobId.value === jobId) {
+      focusedJobId.value = null
+    }
+  }, 3000)
+}
 
 // v18.8.2 — 스크립트 편집 dialog 상태 (UID 기반)
 const scriptEditorMode = ref<'create' | 'edit' | null>(null)
@@ -52,6 +76,24 @@ async function openDetail(jobId: number) {
   finally { detailLoading.value = false }
 }
 
+// v18.9 — 작업 row 의 pathline 클릭 시 EvidenceTypeDetailView 로 router.push.
+// route 정합: /controls/:frameworkId/:nodeId/evidence-types/:evidenceTypeId (router/index.ts).
+// template 측 v-if 가 4 필드 모두 있을 때만 button 노출이라 여기서는 가드 후 push 만.
+//
+// v18.9.1 — query.focusJobId 추가: 도착 화면에서 'auto' 탭 자동 진입 + 그 작업 row 포커싱.
+function goToEvidenceType(job: CollectionJobItem) {
+  if (!job.frameworkId || !job.controlNodeId || !job.evidenceTypeId) return
+  router.push({
+    name: 'evidence-type-detail',
+    params: {
+      frameworkId: job.frameworkId,
+      nodeId: job.controlNodeId,
+      evidenceTypeId: job.evidenceTypeId,
+    },
+    query: { focusJobId: String(job.id) },   // v18.9.1
+  })
+}
+
 async function handleCreate() {
   try {
     await jobsApi.create({
@@ -76,8 +118,7 @@ async function toggleActive(job: CollectionJobItem) {
 }
 
 async function executeJob(jobId: number) {
-  if (!confirm('이 작업을 즉시 실행하시겠습니까?'))
-    return
+  if (!confirm('이 작업을 즉시 실행하시겠습니까?')) return
   try {
     await jobsApi.execute(jobId)
     await loadJobs()
@@ -223,7 +264,18 @@ async function onScriptDeleted(payload: { scriptId: number }) {
   await loadJobs()
 }
 
-onMounted(loadJobs)
+// v18.9 — query param ?jobId=N 으로 진입 시 자동으로 그 작업 상세 패널 펼침.
+// EvidenceTypeDetailView 의 자동 수집 탭에서 외부링크 icon 클릭한 deep-link 진입.
+//
+// v18.9.1 — 상세 패널 펼침 외에 작업 row 자체도 포커싱 (어떤 row 인지 즉시 시각화).
+onMounted(async () => {
+  await loadJobs()
+  const qJobId = Number(route.query.jobId)
+  if (qJobId && jobs.value.some(j => j.id === qJobId)) {
+    await openDetail(qJobId)
+    focusJob(qJobId)   // v18.9.1 — row 포커싱 + scrollIntoView
+  }
+})
 </script>
 
 <template>
@@ -280,8 +332,14 @@ onMounted(loadJobs)
           </thead>
           <tbody>
             <tr v-for="job in jobs" :key="job.id"
+              :ref="el => { if (job.id === focusedJobId) focusedRowRef = el as HTMLElement | null }"
               @click="openDetail(job.id)"
-              class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors">
+              :class="[
+                'cursor-pointer transition-colors duration-500',
+                focusedJobId === job.id
+                  ? 'bg-blue-50 outline outline-2 outline-blue-500 outline-offset-[-2px]'
+                  : 'border-b border-gray-100 hover:bg-gray-50'
+              ]">
               <td class="px-4 py-3 text-center">
                 <span v-if="job.lastExecution"
                   :class="['inline-block w-2.5 h-2.5 rounded-full', job.lastExecution.status === 'success' ? 'bg-green-500' : job.lastExecution.status === 'failed' ? 'bg-red-500' : 'bg-blue-500']">
@@ -290,7 +348,28 @@ onMounted(loadJobs)
               </td>
               <td class="px-4 py-3">
                 <p class="text-sm font-medium text-gray-900">{{ job.name }}</p>
-                <p v-if="job.evidenceTypeName" class="text-xs text-gray-400 mt-0.5">{{ job.evidenceTypeName }}</p>
+
+                <!--
+                  v18.9 — pathline (관리 항목 > 증빙 유형) button.
+                  4 필드 모두 있을 때만 표시 (전역 작업 / orphan 작업은 미노출).
+                  클릭 시 EvidenceTypeDetailView 로 router.push.
+                  @click.stop 으로 행 클릭 (openDetail) 와 충돌 방지.
+                -->
+                <button
+                  v-if="job.evidenceTypeId && job.controlNodeId && job.frameworkId"
+                  type="button"
+                  @click.stop="goToEvidenceType(job)"
+                  class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 border border-blue-200 rounded-md text-[11px] text-blue-900 hover:bg-blue-100 hover:border-blue-300 transition-colors"
+                  :title="`${job.controlNodeCode} ${job.controlNodeName} > ${job.evidenceTypeName} 으로 이동`">
+                  <i class="pi pi-folder text-[10px] text-blue-700"></i>
+                  <span>{{ job.controlNodeCode }} {{ job.controlNodeName }}</span>
+                  <i class="pi pi-angle-right text-[10px] text-blue-700"></i>
+                  <span class="font-medium">{{ job.evidenceTypeName }}</span>
+                  <i class="pi pi-arrow-up-right text-[10px] text-blue-700 ml-0.5"></i>
+                </button>
+
+                <!-- v18.9 이전: evidenceTypeName 만 단순 표시. 위 pathline button 으로 대체됨 -->
+                <p v-else-if="job.evidenceTypeName" class="text-xs text-gray-400 mt-0.5">{{ job.evidenceTypeName }}</p>
               </td>
               <td class="px-4 py-3 text-center">
                 <span :class="['px-2 py-1 rounded text-xs font-medium', jobTypeLabels[job.jobType]?.color || 'bg-gray-100 text-gray-500']">
