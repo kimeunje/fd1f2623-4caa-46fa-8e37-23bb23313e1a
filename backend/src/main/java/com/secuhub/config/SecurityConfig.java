@@ -59,9 +59,21 @@ public class SecurityConfig {
 
                 // === SPA 클라이언트 라우팅 지원 ===
                 // Vue Router의 History 모드 경로들 (API가 아닌 경로)
+                //
+                // v18.9.5 — 모든 SPA 경로에 /** 추가. 정확 매치만 허용했을 때
+                // 깊은 path (/controls/1, /controls/1/3/evidence-types/2 등) 새로고침
+                // 시 .anyRequest().authenticated() 분기로 떨어져 JWT 필터가 토큰 없는
+                // HTML 요청에 401 JSON 응답 → 브라우저가 JSON 그대로 표시.
+                // /api/v1/** 는 별도 매칭 룰이라 충돌 없음.
                 .requestMatchers(
-                    "/login", "/dashboard", "/controls", "/jobs", "/files",
-                    "/vulns", "/accounts", "/settings",
+                    "/login",
+                    "/dashboard", "/dashboard/**",
+                    "/controls", "/controls/**",
+                    "/jobs", "/jobs/**",
+                    "/files", "/files/**",
+                    "/vulns", "/vulns/**",
+                    "/accounts", "/accounts/**",
+                    "/settings", "/settings/**",
                     "/my-tasks", "/my-tasks/**",   // v11: 담당자 "내 할 일" 페이지 (Phase 5-5)
                     "/dev/**"
                 ).permitAll()
