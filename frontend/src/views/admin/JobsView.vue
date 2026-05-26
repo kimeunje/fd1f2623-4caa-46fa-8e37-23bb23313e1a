@@ -5,6 +5,7 @@ import { jobsApi } from '@/services/evidenceApi'
 import type { CollectionJobItem, CollectionJobDetail, ExecutionSummary } from '@/types/evidence'
 import FailureDiagnosisPanel from '@/components/admin/FailureDiagnosisPanel.vue'
 import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
+import CronBuilder from '@/components/admin/CronBuilder.vue'
 
 // v18.9 — query param ?jobId=N 진입 + pathline 클릭 시 router.push 위해 추가
 const route = useRoute()
@@ -683,9 +684,9 @@ onMounted(async () => {
             </div>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">스케줄 (Cron)</label>
-            <input v-model="newJob.scheduleCron" class="w-full px-3 py-2 border rounded-lg text-sm font-mono"
-              placeholder="0 0 18 * * ?" />
+            <label class="block text-sm font-medium text-gray-700 mb-1">스케줄</label>
+            <!-- v18.9.7 — cron 친화 빌더 (dropdown + 직접 입력 + 자연어 미리보기) -->
+            <CronBuilder v-model="newJob.scheduleCron" />
           </div>
         </div>
         <div class="flex justify-end gap-2 mt-4">

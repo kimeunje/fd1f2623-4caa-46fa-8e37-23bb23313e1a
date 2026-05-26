@@ -45,6 +45,7 @@ import type {
 import EvidenceAssetSearchDialog from '@/components/evidence/EvidenceAssetSearchDialog.vue'
 import EvidenceAssetDuplicateConfirmDialog from '@/components/evidence/EvidenceAssetDuplicateConfirmDialog.vue'
 import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
+import CronBuilder from '@/components/admin/CronBuilder.vue'
 
 // ========================================
 // Props — 라우트에서 전달
@@ -1345,11 +1346,9 @@ function executionDotCls(status?: string): string {
             </div>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">스케줄 (Cron)</label>
-            <input
-              v-model="newJob.scheduleCron"
-              placeholder="0 9 1 * * (매월 1일 09:00)"
-              class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono" />
+            <label class="block text-sm font-medium text-gray-700 mb-1">스케줄</label>
+            <!-- v18.9.7 — cron 친화 빌더 -->
+            <CronBuilder v-model="newJob.scheduleCron" />
             <p class="text-[11px] text-gray-400 mt-1">비워두면 수동 실행 전용 작업이 됩니다.</p>
           </div>
         </div>
