@@ -122,9 +122,10 @@ function onUploadScript() {
 
     <!-- ────── Body — 진단 정보 없음 ────── -->
     <div v-if="!diagnosis" class="py-8 text-center text-sm text-stone-500">
-      <p>이 실행의 진단 정보가 없습니다.</p>
-      <p class="text-xs text-stone-400 mt-2">
-        v18.7 이전에 실행되었거나 selenium wrapper 가 _diagnosis.json 을 산출하지 않은 시나리오입니다.
+      <p>단계별 진단 정보가 기록되지 않았습니다.</p>
+      <p class="text-xs text-stone-400 mt-2 leading-relaxed">
+        스크립트가 wrapper template 의 step() 패턴을 사용하지 않았거나,<br/>
+        진단 데이터 생성 전에 실패했을 수 있습니다. 아래 원본 에러 메시지를 참고해주세요.
       </p>
       <p v-if="execution.errorMessage"
         class="mt-4 text-xs text-red-600 bg-red-50 p-3 rounded text-left whitespace-pre-wrap break-all">
