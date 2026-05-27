@@ -6,6 +6,7 @@ import type { CollectionJobItem, CollectionJobDetail, ExecutionSummary } from '@
 import FailureDiagnosisPanel from '@/components/admin/FailureDiagnosisPanel.vue'
 import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
 import CronBuilder from '@/components/admin/CronBuilder.vue'
+import { formatCronToKorean } from '@/utils/cron'
 
 // v18.9 — query param ?jobId=N 진입 + pathline 클릭 시 router.push 위해 추가
 const route = useRoute()
@@ -442,7 +443,7 @@ onMounted(async () => {
                   {{ jobTypeLabels[job.jobType]?.label || job.jobType }}
                 </span>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-600 font-mono">{{ job.scheduleCron || '-' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">{{ formatCronToKorean(job.scheduleCron) }}</td>
               <td class="px-4 py-3 text-sm text-gray-500">
                 {{ job.lastExecution ? formatDate(job.lastExecution.finishedAt || job.lastExecution.startedAt) : '-' }}
               </td>

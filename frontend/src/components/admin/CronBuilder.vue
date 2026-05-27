@@ -24,8 +24,7 @@
 -->
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import cronstrue from 'cronstrue'
-import 'cronstrue/locales/ko'
+import { formatCronToKorean } from '@/utils/cron'
 
 const props = defineProps<{
   modelValue: string
@@ -149,15 +148,10 @@ const currentCron = computed(() => buildCron())
 const previewText = computed(() => {
   const cron = currentCron.value
   if (!cron || !cron.trim()) return ''
-  try {
-    return cronstrue.toString(cron, {
-      locale: 'ko',
-      use24HourTimeFormat: false,
-      throwExceptionOnParseError: true,
-    })
-  } catch {
-    return '⚠ cron expression 을 해석할 수 없습니다'
-  }
+  const result = formatCronToKorean(cron)
+  // cron 원본과 같으면 parse 실패한 케이스 (formatCronToKorean 의 마지막 fallback)
+  if (result === cron) return '⚠ cron expression 을 해석할 수 없습니다'
+  return result
 })
 
 const previewValid = computed(() => !previewText.value.startsWith('⚠'))

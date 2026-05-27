@@ -46,6 +46,7 @@ import EvidenceAssetSearchDialog from '@/components/evidence/EvidenceAssetSearch
 import EvidenceAssetDuplicateConfirmDialog from '@/components/evidence/EvidenceAssetDuplicateConfirmDialog.vue'
 import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
 import CronBuilder from '@/components/admin/CronBuilder.vue'
+import { formatCronToKorean } from '@/utils/cron'
 
 // ========================================
 // Props — 라우트에서 전달
@@ -1189,7 +1190,7 @@ function executionDotCls(status?: string): string {
               </div>
               <div class="text-[11px] text-gray-500 mt-0.5 flex items-center gap-1 flex-wrap">
                 <span>{{ job.jobType }}</span>
-                <template v-if="job.scheduleCron">· {{ job.scheduleCron }}</template>
+                <template v-if="job.scheduleCron">· {{ formatCronToKorean(job.scheduleCron) }}</template>
                 <template v-if="job.lastExecution">
                   · <span class="inline-flex items-center gap-1">
                     <span :class="['inline-block w-1.5 h-1.5 rounded-full', executionDotCls(job.lastExecution.status)]"></span>
