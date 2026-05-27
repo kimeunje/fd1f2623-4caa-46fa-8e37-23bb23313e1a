@@ -32,6 +32,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { scriptsApi } from '@/services/evidenceApi'
+import PythonCodeEditor from '@/components/admin/PythonCodeEditor.vue'
 
 const props = defineProps<{
   mode: 'create' | 'edit'
@@ -227,7 +228,7 @@ async function handleFileImport(event: Event) {
           />
         </div>
 
-        <!-- 본문 — textarea -->
+        <!-- 본문 — Python 코드 에디터 (v18.9.9 — CodeMirror 6) -->
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">
             스크립트 내용 *
@@ -235,14 +236,11 @@ async function handleFileImport(event: Event) {
               (Python · selenium_wrapper.py 의 execute_with_diagnosis 활용)
             </span>
           </label>
-          <textarea
+          <PythonCodeEditor
             v-model="content"
             :disabled="loading"
-            class="w-full px-3 py-2 border rounded-lg text-xs font-mono leading-relaxed"
-            :class="{ 'bg-gray-50 text-gray-400': loading }"
-            :rows="20"
-            spellcheck="false"
-          ></textarea>
+            :height="480"
+          />
           <p v-if="loading" class="mt-1 text-xs text-gray-400">
             <i class="pi pi-spin pi-spinner mr-1"></i>스크립트 내용 로딩 중...
           </p>
