@@ -70,6 +70,28 @@ const canDelete = computed(() => {
 // UTF-8 byte 수 — BE 의 1MB 제한 검증과 정합
 const contentByteSize = computed(() => new TextEncoder().encode(content.value).length)
 
+// ============================================================================
+// v18.9.10 — wrapper template 사용 검증 (FE inline)
+// ============================================================================
+//
+// raw 스크립트 (selenium_wrapper.execute_with_diagnosis 미호출) 는 진단 데이터를
+// 산출하지 않아 실패 시 단계별 분석 불가. 작성 시점에 경고로 안내.
+//
+// 검증 룰:
+//   1. `from selenium_wrapper import ...` OR `import selenium_wrapper`
+//   2. `execute_with_diagnosis(...)` 호출
+// 위 둘 다 만족하지 않으면 경고. 저장은 허용 (강제 X).
+const hasWrapperImport = computed(() =>
+  /(^|\n)\s*(from\s+selenium_wrapper\s+import|import\s+selenium_wrapper)/.test(content.value),
+)
+const hasExecuteCall = computed(() => /execute_with_diagnosis\s*\(/.test(content.value))
+const showWrapperWarning = computed(
+  () =>
+    !loading.value &&
+    content.value.trim().length > 0 &&
+    !(hasWrapperImport.value && hasExecuteCall.value),
+)
+
 // 신규 작성용 placeholder content (사용자 작성 가이드)
 const PLACEHOLDER_CONTENT = `"""
 {시나리오 이름}
@@ -236,6 +258,26 @@ async function handleFileImport(event: Event) {
               (Python · selenium_wrapper.py 의 execute_with_diagnosis 활용)
             </span>
           </label>
+
+          <!-- v18.9.10 — wrapper template 미사용 inline 경고 -->
+          <div
+            v-if="showWrapperWarning"
+            class="mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2">
+            <i class="pi pi-exclamation-triangle text-amber-700 text-sm mt-0.5 flex-shrink-0"></i>
+            <div class="flex-1 text-xs text-amber-800 leading-relaxed">
+              <p>
+                <span class="font-medium">selenium_wrapper template 미사용</span> — 실패 시 단계별 진단이 기록되지 않습니다.
+              </p>
+              <p class="mt-1 text-amber-700">
+                권장:
+                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">from selenium_wrapper import execute_with_diagnosis, step</code>
+                사용 후
+                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">execute_with_diagnosis(collect)</code>
+                호출.
+              </p>
+            </div>
+          </div>
+
           <PythonCodeEditor
             v-model="content"
             :disabled="loading"
