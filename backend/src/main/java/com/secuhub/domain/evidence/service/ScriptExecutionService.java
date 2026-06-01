@@ -218,13 +218,21 @@ public class ScriptExecutionService {
 
         // ── 4. ProcessBuilder 실행 ──
         ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(script.getParent().toFile());
+        //
+        // v18.9.11 — cwd 를 격리 outputDir 로 변경 (옛: script.getParent() = scripts.base-dir).
+        // 사용자 스크립트가 상대 경로 (예: "./식별관리자/증빙") 로 결과 저장하면 자동으로
+        // outputDir 안에 떨어져 BE 수집 정합 보장. 사용자 패턴 자유도 ↑ + 통제항목 정합 강제.
+        // PYTHONPATH = scripts.base-dir 추가하여 base-dir 안의 다른 모듈 import 정합 보존
+        // (예: from helper_utils import ...).
+        pb.directory(outputDir.toFile());
         pb.redirectErrorStream(false); // stdout/stderr 분리 캡처
 
         // 환경변수 설정
         pb.environment().put("SECUHUB_OUTPUT_DIR", outputDir.toString());
         pb.environment().put("SECUHUB_JOB_ID", String.valueOf(job.getId()));
         pb.environment().put("SECUHUB_EXECUTION_ID", String.valueOf(execution.getId()));
+        // v18.9.11 — base-dir 의 다른 .py 모듈 import 정합 (cwd 변경 보완)
+        pb.environment().put("PYTHONPATH", script.getParent().toString());
 
         Process process = null;
         try {
