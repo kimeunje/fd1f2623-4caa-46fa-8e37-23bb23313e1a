@@ -128,6 +128,7 @@ def _build_driver(
     """
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
 
     opts = Options()
 
@@ -152,8 +153,21 @@ def _build_driver(
     base_prefs.update(chrome_prefs or {})
     opts.add_experimental_option("prefs", base_prefs)
 
-    # selenium 4.x = selenium manager 자동 driver (executable_path 불필요)
-    driver = webdriver.Chrome(options=opts)
+    # ── 폐쇄망 — 드라이버/브라우저 경로 명시 (selenium manager 자동 다운로드 불가) ──
+    # 운영 서버는 인터넷이 없어 selenium 4.x 의 드라이버 자동 탐색/다운로드가 막힘.
+    # 사전 배치한 chromedriver 경로를 직접 지정. 경로는 환경변수로 빼서 위치/버전
+    # 변경 시 코드 수정 불필요 (미지정 시 기본 /var/lib/secuhub/drivers/chromedriver).
+    chromedriver_path = os.environ.get(
+        "SECUHUB_CHROMEDRIVER", "/var/lib/secuhub/drivers/chromedriver"
+    )
+    # 크롬 본체 경로. 표준 위치(/usr/bin/google-chrome)면 보통 자동 인식되어 생략 가능.
+    # 비표준 위치일 때만 SECUHUB_CHROME_BINARY 로 지정.
+    chrome_binary = os.environ.get("SECUHUB_CHROME_BINARY")
+    if chrome_binary:
+        opts.binary_location = chrome_binary
+
+    service = Service(executable_path=chromedriver_path)
+    driver = webdriver.Chrome(service=service, options=opts)
     return driver
 
 
