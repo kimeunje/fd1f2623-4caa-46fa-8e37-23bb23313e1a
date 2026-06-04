@@ -100,6 +100,13 @@ public class ScriptExecutionService {
     @Value("${app.scripts.timeout-seconds:300}")
     private long timeoutSeconds;
 
+    // .py 스크립트 실행에 사용할 파이썬 명령어.
+    // 운영 서버에서 `python3` 가 옛 버전(예: 3.6)을 가리키는 경우,
+    // application-prod.yml 에서 `python3.11` 등으로 지정 (코드 수정 불필요).
+    // 미지정 시 기본값 python3.
+    @Value("${app.scripts.python-command:python3}")
+    private String pythonCommand;
+
     /**
      * 비동기 스크립트 실행 — {@code @Async("jobExecutor")} 로 별도 스레드에서 실행.
      *
@@ -378,7 +385,9 @@ public class ScriptExecutionService {
         List<String> command = new ArrayList<>();
 
         if (fileName.endsWith(".py")) {
-            command.add(isWindows ? "python" : "python3");
+            // Windows = python, Linux = 설정값(app.scripts.python-command, 기본 python3).
+            // 운영 서버에서 python3 가 옛 버전이면 python3.11 등으로 설정 가능.
+            command.add(isWindows ? "python" : pythonCommand);
             command.add(script.toString());
         } else if (fileName.endsWith(".sh")) {
             if (isWindows) {

@@ -42,6 +42,7 @@ spring:
 app:
   scripts:
     base-dir: /home/scripts
+    python-command: python3.11
   storage:
     path: /home/storage
 
