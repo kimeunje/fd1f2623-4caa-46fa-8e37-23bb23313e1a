@@ -273,13 +273,25 @@ public class ScriptExecutionService {
                 // ── 6. output 디렉토리에서 파일 수집 ──
                 log.debug("output 디렉토리 확인: {} (exists={}, isDir={})",
                         outputDir, Files.exists(outputDir), Files.isDirectory(outputDir));
-                try (var listing = Files.list(outputDir)) {
-                    listing.forEach(f -> log.debug("  output 파일 발견: {} (size={})",
-                            f.getFileName(), f.toFile().length()));
+                try (var listing = Files.walk(outputDir)) {
+                    listing.filter(Files::isRegularFile)
+                           .forEach(f -> log.debug("  output 파일 발견: {} (size={})",
+                                   outputDir.relativize(f), f.toFile().length()));
                 } catch (IOException ignored) {}
 
                 int collectedFiles = collectOutputFiles(job, execution, outputDir);
-                log.info("스크립트 실행 성공: jobId={}, 수집 파일 {}건", job.getId(), collectedFiles);
+                if (collectedFiles == 0) {
+                    // 스크립트는 성공(exit 0)했으나 수집 폴더에서 증빙을 찾지 못함.
+                    // 흔한 원인: 절대경로(/tmp, C:\) 저장 → 수집 폴더(outputDir) 밖이라 누락.
+                    // 상대경로나 ctx.output 사용 시 자동으로 outputDir 안에 떨어짐 (v18.9.11 cwd 격리).
+                    log.warn("스크립트는 성공했으나 수집된 증빙이 0건입니다. " +
+                            "스크립트가 절대경로(/tmp, C:\\)에 저장했을 수 있습니다 — " +
+                            "상대경로 또는 ctx.output 사용을 권장합니다. " +
+                            "(jobId={}, executionId={}, outputDir={})",
+                            job.getId(), execution.getId(), outputDir);
+                } else {
+                    log.info("스크립트 실행 성공: jobId={}, 수집 파일 {}건", job.getId(), collectedFiles);
+                }
             } else {
                 // 실패: stderr 또는 stdout 앞부분을 에러 메시지로 저장
                 String errorMsg = buildErrorMessage(exitCode, stdout, stderr);
@@ -488,6 +500,12 @@ public class ScriptExecutionService {
      *
      * <p><b>v18.7 보강</b>: {@code _diagnosis.json} 과 {@code _diag_*} 접두 파일은
      * EvidenceFile 로 수집하지 않음 (진단 자산은 별도 책임 — collectDiagnosis 가 처리).</p>
+     *
+     * <p><b>하위 폴더 수집</b>: {@code Files.walk} 로 outputDir 전체를 재귀 순회.
+     * 사용자 스크립트가 상대 하위 경로 (예: {@code ./증빙/result.txt}) 에 저장해도
+     * 누락 없이 수집. 폴더 자체는 {@code isRegularFile} 필터에서 제외되므로 폴더가
+     * 증빙으로 잘못 등록되지 않음. 파일명은 outputDir 기준 상대경로 (구분자 → '_')
+     * 로 보존하여 다른 폴더의 동명 파일끼리 충돌하지 않음.</p>
      */
     private int collectOutputFiles(CollectionJob job, JobExecution execution, Path outputDir) {
         if (!Files.exists(outputDir) || !Files.isDirectory(outputDir)) {
@@ -512,7 +530,7 @@ public class ScriptExecutionService {
         log.debug("output 디렉토리 스캔 시작: {} (evidenceTypeId={})", outputDir, evidenceType.getId());
 
         int count = 0;
-        try (Stream<Path> files = Files.list(outputDir)) {
+        try (Stream<Path> files = Files.walk(outputDir)) {
             List<Path> fileList = files
                     .filter(Files::isRegularFile)
                     // v18.7 — 진단 자산 (_diagnosis.json / _diag_*) 은 EvidenceFile 로 수집 안 함
@@ -521,7 +539,13 @@ public class ScriptExecutionService {
 
             for (Path file : fileList) {
                 try {
-                    String originalFileName = file.getFileName().toString();
+                    // 하위 폴더까지 수집하므로 outputDir 기준 상대경로를 이름으로 사용.
+                    // 같은 파일명이 다른 폴더에 있어도 구분됨 (top/result.txt vs sub/result.txt).
+                    // 경로 구분자는 '_' 로 치환 (다운로드 파일명 안전 + 폴더 구조 보존).
+                    String originalFileName = outputDir.relativize(file)
+                            .toString()
+                            .replace('/', '_')
+                            .replace('\\', '_');
 
                     // v18.6a — 자동 수집은 Q7 (자동 reuse, confirm 없음)
                     // 1. SHA-256 계산

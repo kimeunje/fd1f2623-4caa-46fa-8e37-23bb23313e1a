@@ -74,65 +74,64 @@ const contentByteSize = computed(() => new TextEncoder().encode(content.value).l
 // v18.9.10 — wrapper template 사용 검증 (FE inline)
 // ============================================================================
 //
-// raw 스크립트 (SecuHub 프레임워크 미호출) 는 진단 데이터를 산출하지 않아
-// 실패 시 단계별 분석 불가. 작성 시점에 경고로 안내.
+// raw 스크립트 (selenium_wrapper.execute_with_diagnosis 미호출) 는 진단 데이터를
+// 산출하지 않아 실패 시 단계별 분석 불가. 작성 시점에 경고로 안내.
 //
-// v18.9.12 — 검증 룰 확장:
-//   1. import 룰 — `from secuhub_task import ...` (신규, 권장) 또는
-//                  `from selenium_wrapper import ...` (옛, 호환)
-//   2. entry 룰 — `@collect_task(...)` (신규) 또는 `execute_with_diagnosis(...)` (옛)
-//
-// 한쪽 패턴 (옛/새) 만 완성되면 통과. 저장은 허용 (강제 X).
-const hasSecuhubImport = computed(() =>
-  /(^|\n)\s*(from\s+(secuhub_task|selenium_wrapper)\s+import|import\s+(secuhub_task|selenium_wrapper))/.test(content.value),
+// 검증 룰:
+//   1. `from selenium_wrapper import ...` OR `import selenium_wrapper`
+//   2. `execute_with_diagnosis(...)` 호출
+// 위 둘 다 만족하지 않으면 경고. 저장은 허용 (강제 X).
+const hasWrapperImport = computed(() =>
+  /(^|\n)\s*(from\s+selenium_wrapper\s+import|import\s+selenium_wrapper)/.test(content.value),
 )
-const hasSecuhubEntry = computed(() =>
-  /@collect_task\s*\(|execute_with_diagnosis\s*\(/.test(content.value),
-)
+const hasExecuteCall = computed(() => /execute_with_diagnosis\s*\(/.test(content.value))
 const showWrapperWarning = computed(
   () =>
     !loading.value &&
     content.value.trim().length > 0 &&
-    !(hasSecuhubImport.value && hasSecuhubEntry.value),
+    !(hasWrapperImport.value && hasExecuteCall.value),
 )
 
-// ============================================================================
-// 신규 작성용 starter (v18.9.12 — @collect_task 패턴)
-// ============================================================================
-// 프레임워크 (secuhub_task) 가 driver 생성·옵션·저장 경로·진단·cleanup 흡수.
-// 사용자는 옵션 선언 (선택) + main(ctx) 본문 (필수) 만 작성.
+const hasAbsolutePath = computed(() => {
+  const code = content.value
+  const winDrive = /[A-Za-z]:[\\/]/.test(code)                       // C:\ , D:/
+  const posixOpen = /open\s*\(\s*[rbfRBF]*['"]\/[^'"\n]+/.test(code) // open("/tmp/x")
+  return winDrive || posixOpen
+})
+
+const showAbsolutePathWarning = computed(
+  () => !loading.value && content.value.trim().length > 0 && hasAbsolutePath.value,
+)
+
+// 신규 작성용 placeholder content (사용자 작성 가이드)
 const PLACEHOLDER_CONTENT = `"""
-{시나리오 이름} — SecuHub Collection Task
+{시나리오 이름}
 
-driver 생성·옵션·저장 경로·진단·cleanup 은 프레임워크가 처리합니다.
-사용자는 @collect_task 옵션 선언 (선택) 과 main(ctx) 본문만 작성하면 됩니다.
+SecuHub 자동 수집 — selenium_wrapper.py 활용.
 """
-from secuhub_task import collect_task
+import sys
+import os
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "templates"))
+
+from selenium_wrapper import execute_with_diagnosis, step
+from selenium.webdriver.common.by import By
 
 
-@collect_task(
-    use_browser=True,         # 웹 스크래핑 = True. 엑셀/로그 추출 = False
-    headless=True,            # 운영 = Linux 서버 (화면 없음). 로컬 디버깅은 False
-    # chrome_options=["--window-size=1920,1080"],
-    # chrome_prefs={"profile.default_content_settings.popups": 0},
-)
-def main(ctx):
-    """
-    ctx.driver  : 준비된 webdriver (옵션·다운로드 경로 자동 적용)
-    ctx.output  : 결과 저장 디렉토리 (여기 저장하면 자동 수집)
-    ctx.step    : 단계별 진단 (시작·종료·예외 자동 기록)
-    """
-    with ctx.step("페이지 접속"):
-        ctx.driver.get("https://example.com")  # TODO: 대상 URL
+def scenario(driver, output_dir):
+    with step("open https://example.com"):
+        driver.get("https://example.com")
 
-    with ctx.step("로그인"):
-        # TODO: 자격증명 입력
-        pass
+    with step("extract h1"):
+        h1 = driver.find_element(By.TAG_NAME, "h1").text
 
-    with ctx.step("데이터 추출 및 저장"):
-        # TODO: 추출 로직
-        # 저장 예: (ctx.output / "result.csv").write_text("...", encoding="utf-8")
-        pass
+    with step("write output"):
+        (output_dir / "result.txt").write_text(f"h1: {h1}\\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    sys.exit(execute_with_diagnosis(scenario))
 `
 
 onMounted(async () => {
@@ -271,22 +270,40 @@ async function handleFileImport(event: Event) {
             </span>
           </label>
 
-          <!-- v18.9.10 — wrapper template 미사용 inline 경고
-               v18.9.12 — 권장 패턴을 @collect_task 로 변경 (옛 execute_with_diagnosis 도 호환) -->
+          <!-- v18.9.10 — wrapper template 미사용 inline 경고 -->
           <div
             v-if="showWrapperWarning"
             class="mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2">
             <i class="pi pi-exclamation-triangle text-amber-700 text-sm mt-0.5 flex-shrink-0"></i>
             <div class="flex-1 text-xs text-amber-800 leading-relaxed">
               <p>
-                <span class="font-medium">SecuHub 프레임워크 미사용</span> — 실패 시 단계별 진단이 기록되지 않습니다.
+                <span class="font-medium">selenium_wrapper template 미사용</span> — 실패 시 단계별 진단이 기록되지 않습니다.
               </p>
               <p class="mt-1 text-amber-700">
                 권장:
-                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">from secuhub_task import collect_task</code>
+                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">from selenium_wrapper import execute_with_diagnosis, step</code>
                 사용 후
-                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">@collect_task(...)</code>
-                데코레이터.
+                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">execute_with_diagnosis(collect)</code>
+                호출.
+              </p>
+            </div>
+          </div>
+          
+          <!-- 절대경로 사용 경고 (수집 누락 사전 방지) -->
+          <div
+            v-if="showAbsolutePathWarning"
+            class="mb-2 px-3 py-2 rounded-lg bg-orange-50 border border-orange-200 flex items-start gap-2">
+            <i class="pi pi-exclamation-circle text-orange-700 text-sm mt-0.5 flex-shrink-0"></i>
+            <div class="flex-1 text-xs text-orange-800 leading-relaxed">
+              <p>
+                <span class="font-medium">절대경로 감지</span> —
+                <code class="bg-orange-100 px-1 py-0.5 rounded text-[10px] font-mono">/tmp/...</code> 나
+                <code class="bg-orange-100 px-1 py-0.5 rounded text-[10px] font-mono">C:\...</code> 같은 절대경로는
+                수집 폴더 밖이라 증빙이 수집되지 않을 수 있습니다.
+              </p>
+              <p class="mt-1 text-orange-700">
+                상대경로 (<code class="bg-orange-100 px-1 py-0.5 rounded text-[10px] font-mono">"result.csv"</code>) 나
+                <code class="bg-orange-100 px-1 py-0.5 rounded text-[10px] font-mono">ctx.output</code> 을 사용하세요.
               </p>
             </div>
           </div>
