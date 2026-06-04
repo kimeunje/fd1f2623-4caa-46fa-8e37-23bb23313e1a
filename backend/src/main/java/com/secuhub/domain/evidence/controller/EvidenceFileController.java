@@ -13,6 +13,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -22,7 +23,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -235,15 +235,16 @@ public class EvidenceFileController {
 
         EvidenceFileDto.DownloadResponse downloadInfo = evidenceFileService.download(id);
 
-        String encodedFileName = URLEncoder.encode(downloadInfo.getFileName(), StandardCharsets.UTF_8)
-                .replaceAll("\\+", "%20");
-
-        String contentDisposition = "attachment; filename=\"" + downloadInfo.getFileName() + "\"; "
-                + "filename*=UTF-8''" + encodedFileName;
+        // 한글 파일명 안전 처리 — ContentDisposition 빌더가 RFC 5987/6266 에 맞춰
+        // 비ASCII 파일명을 filename*=UTF-8'' 형식으로 인코딩 (수동 조립 시 filename= 에
+        // 한글 원본이 들어가 톰캣이 "0~255 범위 밖" 으로 거부하던 문제 fix).
+        ContentDisposition contentDisposition = ContentDisposition.attachment()
+                .filename(downloadInfo.getFileName(), StandardCharsets.UTF_8)
+                .build();
 
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(downloadInfo.getContentType()))
-                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
+                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition.toString())
                 .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(downloadInfo.getFileSize()))
                 .body(downloadInfo.getResource());
     }
@@ -261,12 +262,13 @@ public class EvidenceFileController {
     public void downloadZip(@PathVariable Long nodeId, HttpServletResponse response) throws IOException {
         String zipFileName = nodeId + "_증빙자료.zip";
 
-        String encodedFileName = URLEncoder.encode(zipFileName, StandardCharsets.UTF_8)
-                .replaceAll("\\+", "%20");
+        // 한글 파일명 안전 처리 — download() 와 동일하게 ContentDisposition 빌더 사용.
+        ContentDisposition contentDisposition = ContentDisposition.attachment()
+                .filename(zipFileName, StandardCharsets.UTF_8)
+                .build();
 
         response.setContentType("application/zip");
-        response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
-                "attachment; filename=\"" + zipFileName + "\"; filename*=UTF-8''" + encodedFileName);
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, contentDisposition.toString());
 
         evidenceFileService.downloadZip(nodeId, response.getOutputStream());
     }
