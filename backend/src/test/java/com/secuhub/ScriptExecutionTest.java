@@ -909,4 +909,98 @@ class ScriptExecutionTest {
         System.out.println("✅ [Script-Delete] 경로 3 — 해제 후 삭제 정상 (id=" + inUse.getId() + ")");
         System.out.println("✅ [Script-Delete] v18.8.7 스크립트 Hard delete 흐름 모두 정상 (3 경로)");
     }
+
+	// ========================================
+    // 15. v18.9.13 회귀 — 하위 폴더 산출물 재귀 수집 (Files.walk)
+    //     v18.9.13 실측: parsed_top.txt 수집 / sub_dir/nested.txt 누락(Files.list 1뎁스)
+    //     → Files.walk 전환 후 둘 다 수집되어야 함.
+    //     수집 파일명은 outputDir 기준 상대경로(구분자 → '_'):
+    //       parsed_top.txt          → "parsed_top.txt"
+    //       sub_dir/nested.txt (LF) → "sub_dir_nested.txt"
+    //       sub_dir\nested.txt (Win)→ "sub_dir_nested.txt"  (양 OS 수렴)
+    // ========================================
+    @Test
+    @Order(15)
+    @DisplayName("[Script] v18.9.13 회귀 — 하위 폴더 산출물 재귀 수집 (Files.walk)")
+    @Transactional
+    void testCollectFilesInSubdirectory() throws IOException {
+        Path scriptDir = Paths.get(scriptsBaseDir).toAbsolutePath().normalize();
+        Files.createDirectories(scriptDir);
+
+        Path testScript;
+        if (IS_WINDOWS) {
+            testScript = scriptDir.resolve("test_collect_subdir.bat");
+            Files.writeString(testScript,
+                    "@echo off\r\n" +
+                    "set \"OUTPUT_DIR=%~1\"\r\n" +
+                    "if \"%OUTPUT_DIR%\"==\"\" set \"OUTPUT_DIR=%SECUHUB_OUTPUT_DIR%\"\r\n" +
+                    "mkdir \"%OUTPUT_DIR%\\sub_dir\"\r\n" +
+                    "echo TOP LEVEL OUTPUT > \"%OUTPUT_DIR%\\parsed_top.txt\"\r\n" +
+                    "echo NESTED OUTPUT > \"%OUTPUT_DIR%\\sub_dir\\nested.txt\"\r\n" +
+                    "exit /b 0\r\n");
+        } else {
+            testScript = scriptDir.resolve("test_collect_subdir.sh");
+            Files.writeString(testScript,
+                    "#!/bin/bash\n" +
+                    "OUTPUT_DIR=\"$1\"\n" +
+                    "mkdir -p \"$OUTPUT_DIR/sub_dir\"\n" +
+                    "echo \"TOP LEVEL OUTPUT\" > \"$OUTPUT_DIR/parsed_top.txt\"\n" +
+                    "echo \"NESTED OUTPUT\" > \"$OUTPUT_DIR/sub_dir/nested.txt\"\n" +
+                    "exit 0\n");
+            testScript.toFile().setExecutable(true);
+        }
+
+        Framework fw = frameworkRepository.save(Framework.builder().name("하위폴더 회귀 FW").build());
+        ControlNode ctrl = controlNodeRepository.save(ControlNode.builder()
+                .framework(fw).parent(null).nodeType(NodeType.control)
+                .code("SC-15").name("하위 폴더 수집 항목")
+                .displayOrder(0).depth(1).build());
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(ctrl).name("하위 폴더 산출물").build());
+
+        CollectionJob job = collectionJobRepository.save(CollectionJob.builder()
+                .name("하위 폴더 수집 작업")
+                .jobType(JobType.log_extract)
+                .scriptPath(testScript.getFileName().toString())
+                .evidenceType(et)
+                .build());
+
+        JobExecution execution = jobExecutionRepository.save(JobExecution.builder()
+                .job(job)
+                .status(ExecutionStatus.running)
+                .startedAt(LocalDateTime.now())
+                .build());
+
+        scriptExecutionService.executeSync(job, execution);
+
+        JobExecution saved = jobExecutionRepository.findById(execution.getId()).orElseThrow();
+        assertThat(saved.getStatus())
+                .as("스크립트 자체는 성공(exit 0)")
+                .isEqualTo(ExecutionStatus.success);
+
+        evidenceFileRepository.flush();
+        List<EvidenceFile> files =
+                evidenceFileRepository.findByEvidenceTypeIdOrderByVersionDesc(et.getId());
+
+        // 핵심 회귀: top-level + 하위 폴더 = 2건 모두 수집 (Files.list 였다면 top 1건만)
+        assertThat(files)
+                .as("Files.walk 재귀 — top-level + 하위 폴더 산출물 2건 모두 수집되어야 함")
+                .hasSize(2);
+
+        assertThat(files).extracting(EvidenceFile::getFileName)
+                .as("하위 폴더 파일은 outputDir 상대경로 기반 이름(구분자→'_')으로 수집")
+                .containsExactlyInAnyOrder("parsed_top.txt", "sub_dir_nested.txt");
+
+        // 양쪽 모두 자동 수집 + asset 채널 정합 (v18.6a Q7)
+        assertThat(files).allSatisfy(f -> {
+            assertThat(f.getCollectionMethod()).isEqualTo(CollectionMethod.auto);
+            assertThat(f.getAsset()).as("auto 수집은 asset 채널").isNotNull();
+            assertThat(f.getAsset().getSha256()).hasSize(64);
+        });
+
+        System.out.println("✅ [Script] v18.9.13 회귀 — 하위 폴더 재귀 수집 정상 (2건: "
+                + files.stream().map(EvidenceFile::getFileName).toList() + ")");
+
+        Files.deleteIfExists(testScript);
+    }
 }
