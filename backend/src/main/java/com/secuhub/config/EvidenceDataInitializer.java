@@ -22,48 +22,47 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 /**
  * dev 프로필 데모 데이터 — 증빙 수집 관련.
  *
  * <p>DataInitializer(계정) 이후에 실행됩니다 (@Order(2)).</p>
  *
- * <h3>v18.8.8 — 진짜 최소 테스트 시드</h3>
+ * <h3>발표용 실데이터 시드 (ISMS-2025)</h3>
  *
- * <p><b>본 의제 본질</b>: UI/UX 변경 시 "수동 업로드 / 자동 수집 두 채널 차이"
- * 화면에서 시연. 9가지 상태 매트릭스 시연은 needs 아님 — L_OVER_ENGINEER_DETECT
- * 자가 적발 후 단순화 (사용자 표면 = "딱 테스트 하기 편하게").</p>
+ * <p><b>시연 시나리오</b>: ISMS-2025 를 복제하여 ISMS-2026 을 만들고, 복제본의
+ * "2.6.1 네트워크 접근 > 네트워크 구성도" 에 대해 발표자가 직접 수집 스크립트를
+ * 작성·실행해 자동 수집을 라이브로 시연한다. 따라서 본 시드에서 네트워크 구성도는
+ * 의도적으로 비워 둔다(증적 없음 = 라이브 작성 타겟).</p>
+ *
+ * <p><b>범위 제한</b>: 검토(승인/반려) 워크플로우와 담당자 계정은 미구현이므로
+ * 시드에서 제외. 모든 증빙 유형의 담당자(owner)/업로더는 admin 단일 계정으로 통일하고,
+ * 모든 EvidenceFile 은 중립 상태(auto_approved)로 시드한다. 사전 시드된 자동 수집
+ * (성공/실패+진단) 데이터도 제거 — 자동 수집은 위 시나리오대로 라이브로 시연한다.</p>
  *
  * <h3>구조</h3>
  * <pre>
- * ISMS-P 2026 (Framework 1)
- * └── 1. 관리체계 (cat depth=1)
- *     └── 1.1 정책 (cat depth=2)
- *         ├── 1.1.1 정보보호 정책 수립 (control depth=3)
- *         │   ├── 정보보호 정책서        [수동 업로드 — approved]
- *         │   └── 정보보호 조직도        [자동 수집 — 성공]
- *         └── 1.1.2 보호대책 요구사항 (control depth=3)
- *             ├── 접근통제 정책서        [수동 업로드 — pending 검토 대기]
- *             ├── 정보자산 목록          [자동 수집 — 성공]
- *             └── 출입 기록              [자동 수집 — 실패 + 진단]
+ * ISMS-2025 (Framework 1)
+ * ├── 1. 관리체계 수립 및 운영 (cat depth=1)
+ * │   └── 1.1 관리체계 기반 마련 (cat depth=2)
+ * │       ├── 1.1.1 경영진의 참여 (control depth=3)
+ * │       │   ├── 경영진 참여 증적   [수동 업로드]
+ * │       │   └── 개최 결과 보고     [수동 업로드]
+ * │       └── 1.1.2 최고책임자의 지정 (control depth=3)
+ * │           └── CISO·CPO 지정      [수동 업로드]
+ * └── 2. 보호대책 요구사항 (cat depth=1)
+ *     ├── 2.6 접근통제 (cat depth=2)
+ *     │   └── 2.6.1 네트워크 접근 (control depth=3)
+ *     │       └── 네트워크 구성도    [증적 없음 — 라이브 시연 타겟]
+ *     └── 2.10 시스템 및 서비스 보안관리 (cat depth=2)
+ *         └── 2.10.8 패치관리 (control depth=3)
+ *             └── 패치 관리 내역     [수동 업로드]
  * </pre>
  *
  * <p>spec §3.3.1.1 결정 #16 (v18 갱신) 정합 — view 모드 렌더링이 depth 기반.
- * depth 1-2 = 카테고리 스타일 (자식 ControlNode 표시), depth 3+ = leaf 스타일
+ * depth 1-2 = 카테고리 스타일(자식 ControlNode 표시), depth 3+ = leaf 스타일
  * (EvidenceType 표시). 통제를 depth=3 에 두어야 ControlsView 에서 EvidenceType
  * (화면 용어 "관리 항목") 이 정상 렌더링됨.</p>
- *
- * <h3>채널 정합</h3>
- * <ul>
- *   <li><b>수동 업로드 채널</b> = EvidenceFile.collectionMethod=manual + asset link.
- *       EvidenceTypeDetailView 의 "수동 업로드" 탭에 표시</li>
- *   <li><b>자동 수집 채널</b> = CollectionJob + JobExecution + EvidenceFile.collectionMethod=auto
- *       + execution_id + asset link. EvidenceTypeDetailView 의 "자동 수집" 탭에
- *       작업 + 실행 이력 + 결과 파일 표시</li>
- *   <li>실패 진단 = JobExecution.errorDiagnosis (JSON) + output 디렉토리의
- *       _diag_screenshot.png + _diag_page_source.html. FailureDiagnosisPanel 정상 동작</li>
- * </ul>
  *
  * <h3>재실행 정책</h3>
  * <p>{@code frameworkRepository.count() > 0} 시 skip. 시드 갱신은 DB drop 수동.</p>
@@ -80,32 +79,10 @@ public class EvidenceDataInitializer implements CommandLineRunner {
     private final EvidenceTypeRepository evidenceTypeRepository;
     private final EvidenceFileRepository evidenceFileRepository;
     private final EvidenceAssetRepository evidenceAssetRepository;
-    private final CollectionJobRepository collectionJobRepository;
-    private final JobExecutionRepository jobExecutionRepository;
-    private final ScriptRepository scriptRepository;
     private final UserRepository userRepository;
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
-
-    @Value("${app.scripts.base-dir:./scripts}")
-    private String scriptsBaseDir;
-
-    // ====================================================================
-    // 상수 — 1x1 transparent PNG (진단 스크린샷)
-    // ====================================================================
-
-    private static final byte[] TINY_PNG = new byte[]{
-            (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, (byte) 0xC4,
-            (byte) 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54,
-            0x78, (byte) 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05,
-            0x00, 0x01, 0x0D, 0x0A, 0x2D, (byte) 0xB4, 0x00, 0x00,
-            0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, (byte) 0xAE, 0x42,
-            0x60, (byte) 0x82
-    };
 
     // ====================================================================
     // 메인 — run
@@ -118,143 +95,74 @@ public class EvidenceDataInitializer implements CommandLineRunner {
             return;
         }
 
-        log.info("v18.8.8 증빙 데모 데이터 초기화 시작 (수동/자동 채널 최소 시드)...");
+        log.info("ISMS-2025 증빙 데모 데이터 초기화 시작 (발표용 실데이터)...");
 
+        // 발표용 단일 계정 — admin 만 존재. 모든 owner/업로더는 admin 으로 통일.
         User admin = userRepository.findByEmail("admin@company.com").orElse(null);
-        User parkTl = userRepository.findByEmail("park_tl@company.com").orElse(null);
-        User kimDev = userRepository.findByEmail("kim@company.com").orElse(null);
 
         LocalDate today = LocalDate.now();
 
         // ====================================================================
-        // Framework + 카테고리 + 통제
+        // Framework
         // ====================================================================
         Framework ismsp = frameworkRepository.save(Framework.builder()
-                .name("ISMS-P 2026")
-                .description("정보보호 및 개인정보보호 관리체계 인증")
+                .name("ISMS-2025")
+                .description("정보보호 및 개인정보보호 관리체계 인증 (2025)")
                 .status(FrameworkStatus.active)
                 .build());
 
-        // spec §3.3.1.1 결정 #16 (v18 갱신):
-        //   view 모드 렌더링은 depth 기반 분기. depth 1-2 = 카테고리 스타일,
-        //   depth 3+ = leaf 스타일 (증빙 정보 + 하위 칩 표시).
-        // 따라서 통제 (EvidenceType 매달리는 노드) 는 depth=3 이상에 둬야
-        // ControlsView 화면에 증빙 자료가 정상 표시됨.
-        ControlNode cat1 = saveCat(ismsp, null, "1", "관리체계", 0, 1);
-        ControlNode cat11 = saveCat(ismsp, cat1, "1.1", "정책", 0, 2);
-        ControlNode c11 = saveCtrl(ismsp, cat11, "1.1.1", "정보보호 정책 수립", 0, 3);
-        ControlNode c12 = saveCtrl(ismsp, cat11, "1.1.2", "보호대책 요구사항", 1, 3);
+        // ====================================================================
+        // 1. 관리체계 수립 및 운영
+        // ====================================================================
+        ControlNode cat1 = saveCat(ismsp, null, "1", "관리체계 수립 및 운영", 0, 1);
+        ControlNode cat11 = saveCat(ismsp, cat1, "1.1", "관리체계 기반 마련", 0, 2);
+
+        // ── 1.1.1 경영진의 참여 — 증빙 유형 2개 (각 1 파일, 수동 업로드)
+        ControlNode c111 = saveCtrl(ismsp, cat11, "1.1.1", "경영진의 참여", 0, 3);
+
+        EvidenceType et_mgmtPart = saveEt(c111, "경영진 참여 증적", admin, today.plusDays(60));
+        saveLinkText(et_mgmtPart, "경영진 참여 증적.txt", mgmtParticipationContent(),
+                1, CollectionMethod.manual, LocalDateTime.now().minusMonths(2), admin);
+
+        EvidenceType et_mtgReport = saveEt(c111, "개최 결과 보고", admin, today.plusDays(60));
+        saveLinkText(et_mtgReport, "개최 결과 보고.txt", meetingReportContent(),
+                1, CollectionMethod.manual, LocalDateTime.now().minusMonths(2), admin);
+
+        // ── 1.1.2 최고책임자의 지정 — 증빙 유형 1개 (수동 업로드)
+        ControlNode c112 = saveCtrl(ismsp, cat11, "1.1.2", "최고책임자의 지정", 1, 3);
+
+        EvidenceType et_ciso = saveEt(c112, "CISO·CPO 지정", admin, today.plusDays(90));
+        saveLinkText(et_ciso, "CISO 및 CPO의 주요활동은 1.1.1 증적자료 참고.txt", cisoCpoContent(),
+                1, CollectionMethod.manual, LocalDateTime.now().minusMonths(3), admin);
 
         // ====================================================================
-        // 통제 1.1.1 — 정보보호 정책 수립
+        // 2. 보호대책 요구사항
         // ====================================================================
+        ControlNode cat2 = saveCat(ismsp, null, "2", "보호대책 요구사항", 1, 1);
 
-        // ── 증빙 1: 정보보호 정책서 (수동 업로드 — approved)
-        EvidenceType et_policy = saveEt(c11, "정보보호 정책서", admin, today.plusDays(60));
-        saveLinkText(et_policy, "정보보호_정책서_v2.md", policyContent(),
-                1, CollectionMethod.manual,
-                LocalDateTime.now().minusMonths(2), ReviewStatus.approved,
-                admin, admin, null, null);
+        // ── 2.6 접근통제 > 2.6.1 네트워크 접근
+        ControlNode cat26 = saveCat(ismsp, cat2, "2.6", "접근통제", 0, 2);
+        ControlNode c261 = saveCtrl(ismsp, cat26, "2.6.1", "네트워크 접근", 0, 3);
 
-        // ── 증빙 2: 정보보호 조직도 (자동 수집 — 성공)
-        EvidenceType et_org = saveEt(c11, "정보보호 조직도", admin, today.plusDays(90));
+        // 네트워크 구성도 — 증적 없음. ISMS-2026 복제본에서 발표자가 직접 스크립트를
+        // 작성하여 자동 수집을 라이브로 시연하는 타겟. (Job/Script/파일 시드 없음)
+        saveEt(c261, "네트워크 구성도", admin, today.plusDays(30));
 
-        // ====================================================================
-        // 통제 1.1.2 — 보호대책 요구사항
-        // ====================================================================
+        // ── 2.10 시스템 및 서비스 보안관리 > 2.10.8 패치관리
+        ControlNode cat210 = saveCat(ismsp, cat2, "2.10", "시스템 및 서비스 보안관리", 1, 2);
+        ControlNode c2108 = saveCtrl(ismsp, cat210, "2.10.8", "패치관리", 0, 3);
 
-        // ── 증빙 1: 접근통제 정책서 (수동 업로드 — pending 검토 대기)
-        EvidenceType et_access = saveEt(c12, "접근통제 정책서", parkTl, today.plusDays(30));
-        saveLinkText(et_access, "접근통제_정책서.md", accessPolicyContent(),
-                1, CollectionMethod.manual,
-                LocalDateTime.now().minusDays(2), ReviewStatus.pending,
-                parkTl, null, null, "초안입니다. 검토 부탁드립니다.");
+        EvidenceType et_patch = saveEt(c2108, "패치 관리 내역", admin, today.plusDays(45));
+        saveLinkText(et_patch, "패치 관리 내역.txt", patchMgmtContent(),
+                1, CollectionMethod.manual, LocalDateTime.now().minusDays(7), admin);
 
-        // ── 증빙 2: 정보자산 목록 (자동 수집 — 성공)
-        EvidenceType et_asset = saveEt(c12, "정보자산 목록", kimDev, today.plusDays(60));
-
-        // ── 증빙 3: 출입 기록 (자동 수집 — 실패 + 진단)
-        EvidenceType et_entry = saveEt(c12, "출입 기록 월간 보고서", kimDev, today.plusDays(30));
-
-        // ====================================================================
-        // Script + CollectionJob + JobExecution (자동 수집 채널)
-        // ====================================================================
-        seedScriptsAndJobs(et_org, et_asset, et_entry);
-
-        log.info("v18.8.8 증빙 데모 데이터 초기화 완료 — Framework: {}, 통제 노드: {}, " +
-                        "EvidenceType: {}, EvidenceFile: {}, Asset: {}, Script: {}, Job: {}, Execution: {}",
+        log.info("ISMS-2025 증빙 데모 데이터 초기화 완료 — Framework: {}, 통제 노드: {}, " +
+                        "EvidenceType: {}, EvidenceFile: {}, Asset: {}",
                 ismsp.getName(),
                 controlNodeRepository.count(),
                 evidenceTypeRepository.count(),
                 evidenceFileRepository.count(),
-                evidenceAssetRepository.count(),
-                scriptRepository.count(),
-                collectionJobRepository.count(),
-                jobExecutionRepository.count());
-    }
-
-    // ====================================================================
-    // Script + Job + Execution + 자동 수집 결과
-    // ====================================================================
-
-    private void seedScriptsAndJobs(EvidenceType etOrg, EvidenceType etAsset,
-                                     EvidenceType etEntry) {
-        // ── 스크립트 3개
-        Script scriptOrg = saveScript(
-                "# 조직도 자동 추출 (데모)\n" +
-                "import os\n" +
-                "output_dir = os.environ.get('SECUHUB_OUTPUT_DIR', '.')\n" +
-                "with open(os.path.join(output_dir, 'orgchart.txt'), 'w', encoding='utf-8') as f:\n" +
-                "    f.write('회사 조직도\\n')\n" +
-                "print('완료')\n");
-
-        Script scriptAsset = saveScript(
-                "# 정보자산 목록 추출 (데모)\n" +
-                "import os\n" +
-                "output_dir = os.environ.get('SECUHUB_OUTPUT_DIR', '.')\n" +
-                "# 자산관리 시스템 API 호출 ...\n" +
-                "print('완료')\n");
-
-        Script scriptEntry = saveScript(
-                "# 출입 기록 추출 (데모, selenium)\n" +
-                "from selenium import webdriver\n" +
-                "driver = webdriver.Chrome()\n" +
-                "driver.get('https://internal.example.com/access-control')\n" +
-                "driver.find_element('css selector', 'button.login-submit').click()\n");
-
-        // ── CollectionJob 3개 (모두 active, cron 있음)
-        CollectionJob jobOrg = saveJob("조직도 자동 추출",
-                "HR 시스템에서 조직도를 매월 1일 06시 자동 추출합니다.",
-                JobType.web_scraping, scriptOrg, etOrg, "0 0 6 1 * ?", true);
-
-        CollectionJob jobAsset = saveJob("정보자산 목록 추출",
-                "자산관리 시스템에서 정보자산 목록을 매주 월요일 09시 추출합니다.",
-                JobType.web_scraping, scriptAsset, etAsset, "0 0 9 * * MON", true);
-
-        CollectionJob jobEntry = saveJob("출입 기록 월간 추출",
-                "출입통제 시스템에서 월간 출입 기록을 매월 1일 07시 추출합니다.",
-                JobType.log_extract, scriptEntry, etEntry, "0 0 7 1 * ?", true);
-
-        // ── JobExecution + 자동 수집 결과
-
-        // jobOrg: 성공 1회 → 조직도.txt 자동 수집 완료
-        JobExecution execOrg = saveExecution(jobOrg, ExecutionStatus.success,
-                LocalDateTime.now().minusDays(20), LocalDateTime.now().minusDays(20).plusMinutes(2),
-                null, null);
-        saveAutoCollectedFile(jobOrg, execOrg, "조직도_2026.txt", orgChartContent());
-
-        // jobAsset: 성공 1회 → 자산 목록.txt 자동 수집 완료
-        JobExecution execAsset = saveExecution(jobAsset, ExecutionStatus.success,
-                LocalDateTime.now().minusDays(3), LocalDateTime.now().minusDays(3).plusMinutes(3),
-                null, null);
-        saveAutoCollectedFile(jobAsset, execAsset, "정보자산_목록.txt", assetListContent());
-
-        // jobEntry: 실패 1회 + 진단 케이스 (selenium selector 깨짐)
-        JobExecution execEntry = saveExecution(jobEntry, ExecutionStatus.failed,
-                LocalDateTime.now().minusHours(6), LocalDateTime.now().minusHours(6).plusMinutes(2),
-                "selenium.common.exceptions.NoSuchElementException: 'button.login-submit'",
-                buildDemoDiagnosisJson());
-        writeDiagnosisArtifacts(jobEntry.getId(), execEntry.getId());
+                evidenceAssetRepository.count());
     }
 
     // ====================================================================
@@ -297,54 +205,15 @@ public class EvidenceDataInitializer implements CommandLineRunner {
     }
 
     // ====================================================================
-    // 헬퍼 — 수동 업로드 (txt/md)
+    // 헬퍼 — 수동 업로드 (txt)
     // ====================================================================
 
     private EvidenceFile saveLinkText(EvidenceType et, String fileName, String content,
                                        int version, CollectionMethod method,
-                                       LocalDateTime collectedAt, ReviewStatus reviewStatus,
-                                       User uploader, User reviewer,
-                                       String reviewNote, String submitNote) {
+                                       LocalDateTime collectedAt, User uploader) {
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         EvidenceAsset asset = createAsset(fileName, bytes, uploader);
-        return linkEvidenceFile(et, asset, fileName, version, method, collectedAt,
-                reviewStatus, uploader, reviewer, reviewNote, submitNote, null);
-    }
-
-    /**
-     * 자동 수집 결과 시뮬 — output 디렉토리 + asset + EvidenceFile(auto+execution_id).
-     */
-    private EvidenceFile saveAutoCollectedFile(CollectionJob job, JobExecution execution,
-                                                String fileName, String content) {
-        EvidenceType et = job.getEvidenceType();
-        if (et == null) {
-            log.warn("자동 수집 시뮬 skip — evidenceType 미설정 작업: jobId={}", job.getId());
-            return null;
-        }
-
-        // 1. output 디렉토리 + 결과 파일 (실제 ScriptExecutionService 의 산출 위치)
-        Path outputDir = Paths.get(storagePath, "output",
-                        String.valueOf(job.getId()), String.valueOf(execution.getId()))
-                .toAbsolutePath().normalize();
-        try {
-            Files.createDirectories(outputDir);
-            Files.writeString(outputDir.resolve(fileName), content, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        } catch (IOException e) {
-            log.warn("자동 수집 결과 파일 작성 실패 (dev 시드): jobId={}, executionId={}, error={}",
-                    job.getId(), execution.getId(), e.getMessage());
-        }
-
-        // 2. EvidenceAsset 생성 (수동 업로드와 같은 채널)
-        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-        EvidenceAsset asset = createAsset(fileName, bytes, null);
-
-        // 3. EvidenceFile (auto + execution_id + asset link)
-        int nextVersion = evidenceFileRepository.findMaxVersionByEvidenceTypeId(et.getId())
-                .orElse(0) + 1;
-        return linkEvidenceFile(et, asset, fileName, nextVersion, CollectionMethod.auto,
-                execution.getStartedAt(), ReviewStatus.auto_approved,
-                null, null, null, null, execution);
+        return linkEvidenceFile(et, asset, fileName, version, method, collectedAt, uploader);
     }
 
     private EvidenceAsset createAsset(String originalFileName, byte[] content, User uploader) {
@@ -374,10 +243,7 @@ public class EvidenceDataInitializer implements CommandLineRunner {
     private EvidenceFile linkEvidenceFile(EvidenceType et, EvidenceAsset asset,
                                            String fileName, int version,
                                            CollectionMethod method, LocalDateTime collectedAt,
-                                           ReviewStatus reviewStatus,
-                                           User uploader, User reviewer,
-                                           String reviewNote, String submitNote,
-                                           JobExecution execution) {
+                                           User uploader) {
         EvidenceFile.EvidenceFileBuilder b = EvidenceFile.builder()
                 .evidenceType(et)
                 .asset(asset)
@@ -387,233 +253,102 @@ public class EvidenceDataInitializer implements CommandLineRunner {
                 .version(version)
                 .collectionMethod(method)
                 .collectedAt(collectedAt)
-                .reviewStatus(reviewStatus);
-
-        if (execution != null) b.execution(execution);
+                // 검토(승인/반려) 워크플로우 미구현 — 중립 상태(auto_approved)로 시드.
+                .reviewStatus(ReviewStatus.auto_approved);
 
         if (uploader != null) b.uploadedBy(uploader);
         else if (et.getOwnerUser() != null && method == CollectionMethod.manual) {
             b.uploadedBy(et.getOwnerUser());
         }
 
-        if (submitNote != null) b.submitNote(submitNote);
-
-        if (reviewer != null) {
-            b.reviewedBy(reviewer);
-            b.reviewedAt(collectedAt.plusHours(6));
-        }
-        if (reviewNote != null) b.reviewNote(reviewNote);
-
         return evidenceFileRepository.save(b.build());
     }
 
     // ====================================================================
-    // 헬퍼 — Script entity + .py 더미
+    // 콘텐츠 (한국어, txt)
     // ====================================================================
 
-    private Script saveScript(String content) {
-        String uuid = UUID.randomUUID().toString();
-        String filename = uuid + ".py";
-
-        Script script = scriptRepository.save(Script.builder()
-                .filePath(filename)
-                .contentSize((long) content.getBytes(StandardCharsets.UTF_8).length)
-                .build());
-
-        Path target = Paths.get(scriptsBaseDir, filename).toAbsolutePath().normalize();
-        try {
-            Files.createDirectories(target.getParent());
-            Files.writeString(target, content, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        } catch (IOException e) {
-            log.warn("script 물리 파일 저장 실패 (dev 시드): id={}, path={}, error={}",
-                    script.getId(), target, e.getMessage());
-        }
-        return script;
-    }
-
-    // ====================================================================
-    // 헬퍼 — Job / Execution
-    // ====================================================================
-
-    private CollectionJob saveJob(String name, String description, JobType jobType,
-                                   Script script, EvidenceType evidenceType,
-                                   String scheduleCron, boolean isActive) {
-        CollectionJob.CollectionJobBuilder b = CollectionJob.builder()
-                .name(name)
-                .description(description)
-                .jobType(jobType)
-                .scheduleCron(scheduleCron)
-                .isActive(isActive);
-        if (script != null) b.script(script);
-        if (evidenceType != null) b.evidenceType(evidenceType);
-        return collectionJobRepository.save(b.build());
-    }
-
-    private JobExecution saveExecution(CollectionJob job, ExecutionStatus status,
-                                        LocalDateTime startedAt, LocalDateTime finishedAt,
-                                        String errorMessage, String errorDiagnosis) {
-        JobExecution exec = JobExecution.builder()
-                .job(job)
-                .status(status)
-                .startedAt(startedAt)
-                .finishedAt(finishedAt)
-                .errorMessage(errorMessage)
-                .errorDiagnosis(errorDiagnosis)
-                .build();
-        return jobExecutionRepository.save(exec);
-    }
-
-    // ====================================================================
-    // 헬퍼 — 진단 데이터
-    // ====================================================================
-
-    private String buildDemoDiagnosisJson() {
-        return "{\n" +
-                "  \"schema_version\": \"1.0\",\n" +
-                "  \"execution\": {\n" +
-                "    \"started_at\": \"" + LocalDateTime.now().minusHours(6) + "\",\n" +
-                "    \"finished_at\": \"" + LocalDateTime.now().minusHours(6).plusMinutes(2) + "\",\n" +
-                "    \"duration_seconds\": 120,\n" +
-                "    \"exit_code\": 1\n" +
-                "  },\n" +
-                "  \"scenario\": {\n" +
-                "    \"name\": \"출입통제 시스템 로그인 + 월간 보고서 다운로드\",\n" +
-                "    \"target_url\": \"https://internal.example.com/access-control\",\n" +
-                "    \"total_steps\": 5\n" +
-                "  },\n" +
-                "  \"steps\": [\n" +
-                "    {\"index\": 1, \"action\": \"open\", \"target\": \"https://internal.example.com/access-control\", \"status\": \"success\", \"duration_ms\": 1200},\n" +
-                "    {\"index\": 2, \"action\": \"type\", \"target\": \"#username\", \"value\": \"svc_secuhub\", \"status\": \"success\", \"duration_ms\": 80},\n" +
-                "    {\"index\": 3, \"action\": \"type\", \"target\": \"#password\", \"value\": \"***\", \"status\": \"success\", \"duration_ms\": 75},\n" +
-                "    {\"index\": 4, \"action\": \"click\", \"target\": \"button.login-submit\", \"status\": \"failed\", \"duration_ms\": 30000, \"error\": \"NoSuchElementException\"},\n" +
-                "    {\"index\": 5, \"action\": \"export\", \"target\": \"#export-btn\", \"status\": \"not_run\"}\n" +
-                "  ],\n" +
-                "  \"diagnosis\": {\n" +
-                "    \"primary_cause\": \"selector_changed\",\n" +
-                "    \"failed_step_index\": 4,\n" +
-                "    \"failed_selector\": \"button.login-submit\",\n" +
-                "    \"korean_summary\": \"로그인 버튼의 selector 가 변경되었습니다. button.login-submit 가 페이지에서 발견되지 않습니다. 사이트 개편 또는 A/B 테스트 가능성을 확인하세요.\",\n" +
-                "    \"suggestion\": \"진단 패널의 스크린샷과 page_source 를 확인하고 selector 를 수정한 뒤 [재실행] 버튼으로 검증하세요.\"\n" +
-                "  }\n" +
-                "}\n";
-    }
-
-    private void writeDiagnosisArtifacts(Long jobId, Long executionId) {
-        Path dir = Paths.get(storagePath, "output", String.valueOf(jobId), String.valueOf(executionId))
-                .toAbsolutePath().normalize();
-        try {
-            Files.createDirectories(dir);
-
-            Files.write(dir.resolve("_diag_screenshot.png"), TINY_PNG,
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-
-            String html = "<!DOCTYPE html>\n" +
-                    "<html lang=\"ko\">\n" +
-                    "<head><meta charset=\"utf-8\"><title>출입통제 시스템 로그인</title></head>\n" +
-                    "<body>\n" +
-                    "  <h1>출입통제 시스템</h1>\n" +
-                    "  <form>\n" +
-                    "    <input id=\"username\" name=\"username\" />\n" +
-                    "    <input id=\"password\" name=\"password\" type=\"password\" />\n" +
-                    "    <!-- button.login-submit 가 button#login-button 으로 변경됨 -->\n" +
-                    "    <button id=\"login-button\" type=\"submit\">로그인</button>\n" +
-                    "  </form>\n" +
-                    "</body>\n" +
-                    "</html>\n";
-            Files.writeString(dir.resolve("_diag_page_source.html"), html, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-
-            log.info("진단 더미 파일 작성: jobId={}, executionId={}, dir={}", jobId, executionId, dir);
-        } catch (IOException e) {
-            log.warn("진단 더미 파일 작성 실패 (dev 시드): jobId={}, executionId={}, error={}",
-                    jobId, executionId, e.getMessage());
-        }
-    }
-
-    // ====================================================================
-    // 콘텐츠 (한국어, txt + md)
-    // ====================================================================
-
-    private String policyContent() {
-        return "# 정보보호 정책서\n\n" +
-                "## 1. 목적\n" +
-                "본 정책은 회사의 정보자산을 보호하고, 임직원 및 협력사의 정보보호 활동에 대한 기본 원칙을 정의합니다.\n\n" +
-                "## 2. 적용 범위\n" +
-                "본사의 모든 임직원 / 상주 협력사 / 정보처리시스템 / 클라우드 환경에 적용됩니다.\n\n" +
-                "## 3. 정보보호 조직\n" +
-                "- 최고책임자(CISO): 정보보호 업무 총괄\n" +
-                "- 개인정보보호책임자(CPO): 개인정보 처리 총괄\n" +
-                "- 정보보호팀: 일상 운영 및 모니터링\n\n" +
-                "## 4. 정보보호 원칙\n" +
-                "1. 정보자산은 그 중요도에 따라 분류·관리한다.\n" +
-                "2. 접근권한은 업무 필요성에 따라 최소 권한으로 부여한다.\n" +
-                "3. 모든 정보 처리 활동은 감사 추적이 가능해야 한다.\n\n" +
+    private String mgmtParticipationContent() {
+        return "정보보호 및 개인정보보호 위원회 회의록\n\n" +
+                "■ 회의 개요\n" +
+                "  - 회의명 : 2025년 상반기 정보보호 위원회\n" +
+                "  - 일시   : 2025-03-14 (금) 14:00 ~ 16:00\n" +
+                "  - 장소   : 본사 3층 대회의실\n" +
+                "  - 주관   : 정보보호 최고책임자(CISO)\n\n" +
+                "■ 참석자\n" +
+                "  - 대표이사 (위원장)\n" +
+                "  - 정보보호 최고책임자(CISO)\n" +
+                "  - 개인정보 보호책임자(CPO)\n" +
+                "  - 정보보호팀장 및 각 본부장\n\n" +
+                "■ 주요 안건\n" +
+                "  1. 2024년 정보보호 활동 실적 보고\n" +
+                "  2. 2025년 정보보호 정책 및 투자 계획 심의\n" +
+                "  3. 주요 위험 평가 결과 및 대응 방안 검토\n" +
+                "  4. ISMS-P 인증 추진 계획 승인\n\n" +
+                "■ 의결 사항\n" +
+                "  - 2025년 정보보호 예산 승인 (전년 대비 18% 증액)\n" +
+                "  - 정보보호 조직 보강 (보안팀 2명 충원) 승인\n" +
+                "  - ISMS-P 인증 심사 2025년 4분기 추진 승인\n\n" +
+                "경영진이 정보보호 활동에 직접 참여하여 주요 정책과 투자를 심의·의결하였음.\n\n" +
                 "---\n" +
-                "제정일: 2024-01-15 | 시행일: 2024-02-01\n";
+                "작성 : 정보보호팀  |  승인 : CISO  |  보고일 : 2025-03-14\n";
     }
 
-    private String accessPolicyContent() {
-        return "# 접근통제 정책서 (초안)\n\n" +
-                "## 1. 목적\n" +
-                "정보자산에 대한 비인가 접근을 차단하고, 인가된 사용자의 접근을 통제하기 위한 기준을 정의합니다.\n\n" +
-                "## 2. 접근권한 부여 원칙\n" +
-                "- 최소 권한 원칙 (Need-to-Know)\n" +
-                "- 직무 분리 (Segregation of Duties)\n" +
-                "- 정기 재검토 (분기 1회)\n\n" +
-                "## 3. 인증 방식\n" +
-                "- 일반 사용자: ID/비밀번호 + 2FA\n" +
-                "- 관리자: ID/비밀번호 + 2FA + 접속 IP 제한\n" +
-                "- 외부 협력사: 별도 VPN + 2FA\n\n" +
-                "## 4. 접근권한 회수\n" +
-                "- 퇴직: 즉시\n" +
-                "- 부서 이동: 7일 이내\n" +
-                "- 장기 휴직: 30일 이상 시 비활성화\n\n" +
+    private String meetingReportContent() {
+        return "정보보호 위원회 개최 결과 보고\n\n" +
+                "수신 : 대표이사\n" +
+                "참조 : CPO, 각 본부장\n" +
+                "제목 : 2025년 상반기 정보보호 위원회 개최 결과 보고의 건\n\n" +
+                "1. 개최 일시 : 2025-03-14 (금) 14:00\n" +
+                "2. 경영진 참석 : 대표이사 외 6명 (참석률 100%)\n" +
+                "3. 심의 안건 : 총 4건 (전건 의결)\n" +
+                "4. 후속 조치\n" +
+                "   - 정보보호 예산 집행 계획 수립 (3월 내)\n" +
+                "   - 보안팀 충원 공고 게시 (4월)\n" +
+                "   - ISMS-P 인증 컨설팅 착수 (2분기)\n\n" +
+                "경영진이 정보보호 의사결정에 직접 참여하였으며, 상정된 안건이 전건\n" +
+                "원안대로 의결되었음을 보고합니다.\n\n" +
                 "---\n" +
-                "작성일: " + LocalDate.now().minusDays(2) + " | 작성자: 박팀장\n";
+                "보고 : 정보보호팀장  |  일자 : 2025-03-17\n";
     }
 
-    private String orgChartContent() {
-        return "회사 조직도 (자동 수집)\n" +
-                "================================================\n" +
-                "수집 일시: " + LocalDateTime.now().minusDays(20) + "\n" +
-                "수집 출처: HR 시스템\n" +
-                "================================================\n\n" +
-                "대표이사\n" +
-                "  ├─ CISO (홍길동)\n" +
-                "  │   └─ 보안팀 (5명)\n" +
-                "  ├─ CTO\n" +
-                "  │   ├─ 백엔드팀 (8명)\n" +
-                "  │   ├─ 프론트엔드팀 (6명)\n" +
-                "  │   └─ DevOps팀 (3명)\n" +
-                "  ├─ CFO\n" +
-                "  │   ├─ 회계팀 (4명)\n" +
-                "  │   └─ 재무팀 (3명)\n" +
-                "  └─ CMO\n" +
-                "      ├─ 마케팅팀 (7명)\n" +
-                "      └─ 디자인팀 (4명)\n\n" +
-                "총 인원: 41명\n";
+    private String cisoCpoContent() {
+        return "최고책임자(CISO / CPO) 지정 증적\n\n" +
+                "■ 지정 현황\n" +
+                "  - 정보보호 최고책임자(CISO) : 정보보호본부장\n" +
+                "      · 지정일 : 2024-01-02 (대표이사 지정 공문 제2024-001호)\n" +
+                "  - 개인정보 보호책임자(CPO)  : 경영지원본부장\n" +
+                "      · 지정일 : 2024-01-02 (대표이사 지정 공문 제2024-002호)\n\n" +
+                "■ 주요 활동\n" +
+                "  CISO 및 CPO 의 주요 활동(위원회 주관·심의·의결)은\n" +
+                "  「1.1.1 경영진의 참여」 증적자료(위원회 회의록 및 개최 결과 보고)를\n" +
+                "  참고하시기 바랍니다.\n\n" +
+                "■ 권한과 책임\n" +
+                "  - 정보보호 정책 수립 및 시행 총괄\n" +
+                "  - 정보보호 예산 및 인력 운영 책임\n" +
+                "  - 침해사고 대응 최종 의사결정\n\n" +
+                "---\n" +
+                "작성 : 정보보호팀  |  일자 : 2024-01-02\n";
     }
 
-    private String assetListContent() {
-        return "정보자산 목록 (자동 수집)\n" +
-                "================================================\n" +
-                "수집 일시: " + LocalDateTime.now().minusDays(3) + "\n" +
-                "수집 출처: 자산관리 시스템 (CMDB)\n" +
+    private String patchMgmtContent() {
+        return "패치 관리 내역\n\n" +
+                "작성 기준일 : " + LocalDate.now() + "\n" +
+                "대상       : 운영 서버 및 보안 장비\n" +
                 "================================================\n\n" +
-                "[서버]\n" +
-                "  web-prod-01     | Rocky 8.9    | 192.168.10.10  | 웹 서비스\n" +
-                "  web-prod-02     | Rocky 8.9    | 192.168.10.11  | 웹 서비스 (HA)\n" +
-                "  api-prod-01     | Rocky 8.9    | 192.168.10.20  | API 서버\n" +
-                "  db-prod-01      | Rocky 8.9    | 192.168.20.10  | MariaDB primary\n" +
-                "  db-prod-02      | Rocky 8.9    | 192.168.20.11  | MariaDB replica\n\n" +
-                "[네트워크 장비]\n" +
-                "  fw-main         | FortiGate    | 192.168.1.1    | 방화벽\n" +
-                "  sw-core-01      | Cisco        | 192.168.1.2    | 코어 스위치\n\n" +
-                "[클라우드]\n" +
-                "  S3 (logs)       | AWS          | seoul          | 로그 보관\n" +
-                "  CloudFront      | AWS          | global         | CDN\n\n" +
-                "총 자산: 9건\n";
+                "[적용 완료]\n" +
+                "  2025-05-09 | web-prod-01 | OS 보안 패치 (월 정기)        | 정상\n" +
+                "  2025-05-09 | web-prod-02 | OS 보안 패치 (월 정기)        | 정상\n" +
+                "  2025-05-10 | db-prod-01  | MariaDB 보안 업데이트         | 정상\n" +
+                "  2025-05-12 | api-prod-01 | OpenJDK 21 보안 패치          | 정상\n\n" +
+                "[예정]\n" +
+                "  2025-06-13 | fw-main     | 방화벽 펌웨어 업데이트         | 예정\n\n" +
+                "[패치 정책]\n" +
+                "  - 긴급(Critical) 패치 : 공지 후 72시간 이내 적용\n" +
+                "  - 정기 패치          : 매월 둘째 주 금요일\n" +
+                "  - 적용 전 스테이징 환경 검증 필수\n\n" +
+                "---\n" +
+                "작성 : 시스템운영팀  |  검토 : 보안팀\n";
     }
 
     // ====================================================================

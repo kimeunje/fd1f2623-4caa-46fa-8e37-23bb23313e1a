@@ -28,6 +28,9 @@ public class DataInitializer implements CommandLineRunner {
 
         log.info("데모 계정 초기화 시작...");
 
+        // 발표용 단일 계정 — admin 만 생성.
+        // 담당자(approver/developer) 계정은 "내 할 일" / 승인·반려 워크플로우가
+        // 아직 미구현이라 시드에서 제외 (구현 후 복원).
         userRepository.save(User.builder()
                 .email("admin@company.com")
                 .name("관리자")
@@ -37,42 +40,6 @@ public class DataInitializer implements CommandLineRunner {
                 .permissionEvidence(true)
                 .build());
 
-        userRepository.save(User.builder()
-                .email("park_tl@company.com")
-                .name("박팀장")
-                .hashedPassword(passwordEncoder.encode("park1234"))
-                .team("백엔드팀")
-                .role(UserRole.approver)
-                .permissionEvidence(false)
-                .build());
-
-        userRepository.save(User.builder()
-                .email("kim@company.com")
-                .name("김개발")
-                .hashedPassword(passwordEncoder.encode("dev1234"))
-                .team("백엔드팀")
-                .role(UserRole.developer)
-                .permissionEvidence(false)
-                .build());
-
-        userRepository.save(User.builder()
-                .email("lee@company.com")
-                .name("이보안")
-                .hashedPassword(passwordEncoder.encode("dev1234"))
-                .team("프론트엔드팀")
-                .role(UserRole.developer)
-                .permissionEvidence(false)
-                .build());
-
-        userRepository.save(User.builder()
-                .email("choi@company.com")
-                .name("박백엔드")
-                .hashedPassword(passwordEncoder.encode("dev1234"))
-                .team("백엔드팀")
-                .role(UserRole.developer)
-                .permissionEvidence(false)
-                .build());
-
-        log.info("데모 계정 초기화 완료 (5명)");
+        log.info("데모 계정 초기화 완료 (admin 1명)");
     }
 }
