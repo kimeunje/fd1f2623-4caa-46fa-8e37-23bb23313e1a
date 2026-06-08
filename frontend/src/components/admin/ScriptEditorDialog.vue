@@ -37,6 +37,7 @@ import PythonCodeEditor from '@/components/admin/PythonCodeEditor.vue'
 const props = defineProps<{
   mode: 'create' | 'edit'
   scriptId?: number   // edit 모드 시 필수
+  jobType?: string    // create 모드 시 starter 템플릿 선택 (web_scraping/excel_extract/log_extract)
 }>()
 
 const emit = defineEmits<{
@@ -77,14 +78,16 @@ const contentByteSize = computed(() => new TextEncoder().encode(content.value).l
 // raw 스크립트 (selenium_wrapper.execute_with_diagnosis 미호출) 는 진단 데이터를
 // 산출하지 않아 실패 시 단계별 분석 불가. 작성 시점에 경고로 안내.
 //
-// 검증 룰:
-//   1. `from selenium_wrapper import ...` OR `import selenium_wrapper`
-//   2. `execute_with_diagnosis(...)` 호출
-// 위 둘 다 만족하지 않으면 경고. 저장은 허용 (강제 X).
+// 검증 룰 (둘 중 한 프레임워크라도 갖추면 통과):
+//   A. 신규 secuhub_task — `from secuhub_task import collect_task` + `@collect_task`
+//   B. 옛  selenium_wrapper — `import selenium_wrapper` + `execute_with_diagnosis(...)`
+// 둘 다 만족하지 않으면 경고. 저장은 허용 (강제 X).
 const hasWrapperImport = computed(() =>
-  /(^|\n)\s*(from\s+selenium_wrapper\s+import|import\s+selenium_wrapper)/.test(content.value),
+  /(^|\n)\s*(from\s+secuhub_task\s+import|import\s+secuhub_task|from\s+selenium_wrapper\s+import|import\s+selenium_wrapper)/.test(content.value),
 )
-const hasExecuteCall = computed(() => /execute_with_diagnosis\s*\(/.test(content.value))
+const hasExecuteCall = computed(() =>
+  /@collect_task\b/.test(content.value) || /execute_with_diagnosis\s*\(/.test(content.value),
+)
 const showWrapperWarning = computed(
   () =>
     !loading.value &&
@@ -103,36 +106,128 @@ const showAbsolutePathWarning = computed(
   () => !loading.value && content.value.trim().length > 0 && hasAbsolutePath.value,
 )
 
-// 신규 작성용 placeholder content (사용자 작성 가이드)
-const PLACEHOLDER_CONTENT = `"""
-{시나리오 이름}
+// 신규 작성용 starter 템플릿 — 추출 방법(jobType)별로 다른 골격 제공.
+// String.raw — Python 코드의 백슬래시를 그대로 보존(이스케이프 불필요).
+const STARTER_TEMPLATES: Record<string, string> = {
+  // ── 웹 스크래핑 (use_browser=True) ──
+  web_scraping: String.raw`"""
+{증빙명} 자동 수집 — 웹 스크래핑
 
-SecuHub 자동 수집 — selenium_wrapper.py 활용.
+사내 시스템 화면에 접속하여 증빙(캡처/추출)을 저장합니다.
+프레임워크(secuhub_task)가 driver 생성·옵션·저장 경로·진단·정리를 자동 처리하므로,
+main(ctx) 안에 추출 로직만 작성하면 됩니다.
 """
-import sys
-import os
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(SCRIPT_DIR, "templates"))
-
-from selenium_wrapper import execute_with_diagnosis, step
+from secuhub_task import collect_task
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+SITE_URL = "https://사내시스템주소"
 
 
-def scenario(driver, output_dir):
-    with step("open https://example.com"):
-        driver.get("https://example.com")
+@collect_task(
+    use_browser=True,
+    headless=True,
+    chrome_options=["--window-size=1920,1080"],   # 캡처 잘림 방지
+)
+def main(ctx):
+    driver = ctx.driver
+    wait = WebDriverWait(driver, 10)
 
-    with step("extract h1"):
-        h1 = driver.find_element(By.TAG_NAME, "h1").text
+    with ctx.step("로그인 및 화면 이동"):
+        driver.get(SITE_URL)
+        # ... 로그인 / 대상 화면으로 이동 ...
 
-    with step("write output"):
-        (output_dir / "result.txt").write_text(f"h1: {h1}\\n", encoding="utf-8")
+    with ctx.step("증빙 화면 캡처"):
+        # 화면이 다 그려질 때까지 대기 후 캡처
+        wait.until(EC.presence_of_element_located((By.ID, "targetArea")))
+        # ctx.output 아래에 저장해야 BE 가 자동 수집합니다.
+        driver.save_screenshot(str(ctx.output / "접근통제_증빙.png"))
+`,
+
+  // ── 엑셀 추출 (use_browser=False) ──
+  excel_extract: String.raw`"""
+{증빙명} 자동 수집 — 엑셀 추출
+
+브라우저 없이 사내 시스템이 내보낸 엑셀을 파싱하여 필요한 항목만 정리합니다.
+- 원본 경로(SOURCE_XLSX)는 사내 공유/내보내기 경로로 교체하세요.
+- 결과는 ctx.output 아래에 저장해야 BE 가 자동 수집합니다.
+- openpyxl 필요 (폐쇄망은 오프라인 wheel 사전 설치).
+"""
+from secuhub_task import collect_task
+from pathlib import Path
+import csv
+import openpyxl
+
+SOURCE_XLSX = Path("/data/exports/접근권한_현황.xlsx")   # 원본 엑셀 경로로 교체
 
 
-if __name__ == "__main__":
-    sys.exit(execute_with_diagnosis(scenario))
-`
+@collect_task(use_browser=False)
+def main(ctx):
+    with ctx.step("엑셀 원본 로드"):
+        wb = openpyxl.load_workbook(SOURCE_XLSX, read_only=True, data_only=True)
+        ws = wb.active
+
+    with ctx.step("필요 항목 추출"):
+        rows = []
+        for row in ws.iter_rows(min_row=2, values_only=True):   # 1행 = 헤더로 가정
+            if row and row[0] is not None:
+                rows.append(row)
+
+    with ctx.step("증빙 파일 생성"):
+        out = ctx.output / "접근권한_현황_정리.csv"
+        with out.open("w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["계정", "권한", "부서", "최종접속일"])   # 출력 헤더 예시
+            writer.writerows(rows)
+`,
+
+  // ── 로그 추출 (use_browser=False, 표준 라이브러리만) ──
+  log_extract: String.raw`"""
+{증빙명} 자동 수집 — 로그 추출
+
+브라우저 없이 서버/장비 로그를 파싱하여 보안 관련 이벤트만 추려 보고서를 만듭니다.
+- 로그 위치(LOG_DIR)와 추출 패턴(PATTERNS)을 환경에 맞게 교체하세요.
+- 결과는 ctx.output 아래에 저장해야 BE 가 자동 수집합니다.
+- 표준 라이브러리만 사용 (추가 패키지 불필요).
+"""
+from secuhub_task import collect_task
+from pathlib import Path
+from datetime import datetime
+import re
+
+LOG_DIR = Path("/var/log/secure")                                   # 대상 로그 디렉토리
+PATTERNS = [r"Failed password", r"authentication failure", r"sudo:"]  # 추출 패턴
+
+
+@collect_task(use_browser=False)
+def main(ctx):
+    regex = re.compile("|".join(PATTERNS))
+    matched = []
+
+    with ctx.step("로그 파일 스캔"):
+        for log_file in sorted(LOG_DIR.glob("*.log")):
+            text = log_file.read_text(encoding="utf-8", errors="ignore")
+            for line in text.splitlines():
+                if regex.search(line):
+                    matched.append(f"{log_file.name}: {line}")
+
+    with ctx.step("증빙 보고서 생성"):
+        report = ctx.output / "보안이벤트_추출.txt"
+        header = (
+            "보안 이벤트 추출 보고서\n"
+            f"생성일시: {datetime.now():%Y-%m-%d %H:%M:%S}\n"
+            f"대상: {LOG_DIR}  |  매칭: {len(matched)}건\n"
+            + "=" * 48 + "\n\n"
+        )
+        report.write_text(header + "\n".join(matched) + "\n", encoding="utf-8")
+`,
+}
+
+// jobType → starter. 미지정/미지원이면 web_scraping 으로 fallback.
+function starterFor(jobType?: string): string {
+  return STARTER_TEMPLATES[jobType ?? 'web_scraping'] ?? STARTER_TEMPLATES.web_scraping
+}
 
 onMounted(async () => {
   if (isEdit.value && props.scriptId !== undefined) {
@@ -150,8 +245,8 @@ onMounted(async () => {
       loading.value = false
     }
   } else {
-    // 신규 — placeholder content 미리 채움 (관리자가 부분만 수정)
-    content.value = PLACEHOLDER_CONTENT
+    // 신규 — 선택된 추출 방법(jobType)에 맞는 starter 템플릿 미리 채움
+    content.value = starterFor(props.jobType)
   }
 })
 
@@ -266,7 +361,7 @@ async function handleFileImport(event: Event) {
           <label class="block text-sm font-medium text-gray-700 mb-1">
             스크립트 내용 *
             <span class="font-normal text-xs text-gray-400">
-              (Python · selenium_wrapper.py 의 execute_with_diagnosis 활용)
+              (Python · secuhub_task 의 @collect_task 활용)
             </span>
           </label>
 
@@ -277,14 +372,14 @@ async function handleFileImport(event: Event) {
             <i class="pi pi-exclamation-triangle text-amber-700 text-sm mt-0.5 flex-shrink-0"></i>
             <div class="flex-1 text-xs text-amber-800 leading-relaxed">
               <p>
-                <span class="font-medium">selenium_wrapper template 미사용</span> — 실패 시 단계별 진단이 기록되지 않습니다.
+                <span class="font-medium">수집 프레임워크 미사용</span> — 실패 시 단계별 진단이 기록되지 않습니다.
               </p>
               <p class="mt-1 text-amber-700">
                 권장:
-                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">from selenium_wrapper import execute_with_diagnosis, step</code>
-                사용 후
-                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">execute_with_diagnosis(collect)</code>
-                호출.
+                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">from secuhub_task import collect_task</code>
+                후 함수에
+                <code class="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">@collect_task(...)</code>
+                적용.
               </p>
             </div>
           </div>
