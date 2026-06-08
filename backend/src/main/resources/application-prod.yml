@@ -46,6 +46,8 @@ app:
     python-command: python3.11
   storage:
     path: /home/storage
+    output-retention-days: 30     # 실행 산출 디렉터리 보관일수. 0 이하면 GC 비활성
+    output-gc-cron: "0 30 3 * * *" # (선택) 6필드 cron. 기본 매일 03:30
 
   security:
     ip-acl:
