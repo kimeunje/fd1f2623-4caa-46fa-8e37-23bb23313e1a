@@ -47,6 +47,16 @@ app:
   storage:
     path: /home/storage
 
+  security:
+    ip-acl:
+      # nginx 등 reverse proxy 뒤에 있으면 true (X-Forwarded-For 첫 hop 신뢰).
+      # 폐쇄망 직결이면 false 그대로.
+      trust-forwarded-header: false
+      # break-glass: 계정별 규칙과 무관하게 항상 허용할 비상 대역.
+      # 운영자가 자기 IP 를 잘못 제한해 잠기는 사고 방지용. 기본 비어 있음.
+      always-allow: []
+        # - 10.10.0.0/16
+
 logging:
   level:
     com.secuhub: INFO

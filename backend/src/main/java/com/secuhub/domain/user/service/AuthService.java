@@ -3,6 +3,7 @@ package com.secuhub.domain.user.service;
 import com.secuhub.common.exception.BusinessException;
 import com.secuhub.common.exception.ResourceNotFoundException;
 import com.secuhub.config.jwt.JwtTokenProvider;
+import com.secuhub.domain.access.service.IpAccessService;
 import com.secuhub.domain.user.dto.LoginRequest;
 import com.secuhub.domain.user.dto.LoginResponse;
 import com.secuhub.domain.user.entity.User;
@@ -23,16 +24,20 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final IpAccessService ipAccessService;
 
     /**
      * 로그인 처리
      * - 이메일로 사용자 조회
      * - 비밀번호 검증
      * - 계정 상태 확인 (active만 허용)
+     * - v19.0: 계정별 IP 접근 제어 검사 (clientIp 가 허용 규칙에 없으면 403)
      * - JWT 토큰 생성 및 반환
+     *
+     * @param clientIp 호출부(AuthController)가 {@code ClientIpResolver} 로 해석한 클라이언트 IP
      */
     @Transactional
-    public LoginResponse login(LoginRequest request) {
+    public LoginResponse login(LoginRequest request, String clientIp) {
         // 사용자 조회
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new BusinessException(
@@ -48,6 +53,13 @@ public class AuthService {
         if (user.getStatus() != UserStatus.active) {
             throw new BusinessException(
                     "비활성화된 계정입니다. 관리자에게 문의하세요.", HttpStatus.FORBIDDEN);
+        }
+
+        // v19.0 — 계정별 IP 접근 제어. 자격증명이 맞아도 허용 IP 밖이면 거부.
+        if (!ipAccessService.isAllowed(user.getId(), clientIp)) {
+            log.warn("로그인 IP 거부: {} ip={}", user.getEmail(), clientIp);
+            throw new BusinessException(
+                    "허용되지 않은 IP 에서의 접근입니다.", HttpStatus.FORBIDDEN);
         }
 
         // 마지막 로그인 시각 갱신

@@ -23,6 +23,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final com.secuhub.config.security.IpAccessFilter ipAccessFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
     private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
 
@@ -123,7 +124,10 @@ public class SecurityConfig {
             )
 
             // JWT 필터 등록
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+
+            // 계정별 IP 접근 게이트
+            .addFilterAfter(ipAccessFilter, JwtAuthenticationFilter.class);
 
         return http.build();
     }
