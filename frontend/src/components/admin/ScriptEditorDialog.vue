@@ -33,6 +33,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { scriptsApi } from '@/services/evidenceApi'
 import PythonCodeEditor from '@/components/admin/PythonCodeEditor.vue'
+import ScriptVersionPanel from '@/components/admin/ScriptVersionPanel.vue'
 
 const props = defineProps<{
   mode: 'create' | 'edit'
@@ -275,6 +276,12 @@ async function handleSave() {
   }
 }
 
+// v19.5 — 버전 패널에서 되돌리기 성공 시, 새 현재 내용을 에디터에 반영
+function onRolledBack(payload: { content: string }) {
+  content.value = payload.content
+  error.value = null
+}
+
 // v18.8.7 — 스크립트 삭제 흐름
 async function handleDelete() {
   if (!canDelete.value || props.scriptId === undefined) return
@@ -415,6 +422,14 @@ async function handleFileImport(event: Event) {
             크기: {{ contentByteSize.toLocaleString() }} bytes (최대 1,048,576)
           </p>
         </div>
+
+        <!-- v19.5 — 버전 이력 패널 (편집 모드 한정) -->
+        <ScriptVersionPanel
+          v-if="isEdit && scriptId !== undefined"
+          :script-id="scriptId"
+          class="mt-3"
+          @rolledback="onRolledBack"
+        />
 
         <!-- 에러 표시 -->
         <p v-if="error" class="mt-3 text-xs text-red-600 bg-red-50 p-2 rounded whitespace-pre-wrap">

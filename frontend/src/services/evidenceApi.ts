@@ -455,6 +455,27 @@ export const scriptsApi = {
   delete(id: number) {
     return api.delete<ApiResponse<void>>(`/admin/scripts/${id}`)
   },
+
+  // ── v19.5 — 버전 이력 (carry-over ⑤ FE) ──
+
+  /** 버전 이력 목록 (BE 가 오래된 순 반환; 패널에서 최신순 정렬) */
+  listVersions(id: number) {
+    return api.get<ApiResponse<ScriptVersionResponse[]>>(`/admin/scripts/${id}/versions`)
+  },
+
+  /** 특정 버전 내용 (미리보기) */
+  getVersion(id: number, versionNo: number) {
+    return api.get<ApiResponse<ScriptVersionContentResponse>>(
+      `/admin/scripts/${id}/versions/${versionNo}`,
+    )
+  },
+
+  /** 롤백 (전진형) — 옛 버전 내용으로 새 버전 생성 + 실행본 교체. 새 현재 ScriptResponse 반환 */
+  rollback(id: number, versionNo: number) {
+    return api.post<ApiResponse<ScriptResponse>>(
+      `/admin/scripts/${id}/versions/${versionNo}/rollback`,
+    )
+  },
 }
 
 // ────── v18.8.2 타입 정의 ──────
@@ -473,6 +494,24 @@ export interface ScriptCreateRequest {
 
 export interface ScriptUpdateRequest {
   content: string
+}
+
+// ────── v19.5 버전 이력 타입 ──────
+
+export interface ScriptVersionResponse {
+  versionNo: number
+  contentSize: number
+  note?: string
+  createdBy?: number
+  createdAt: string   // ISO-8601
+}
+
+export interface ScriptVersionContentResponse {
+  versionNo: number
+  content: string
+  contentSize: number
+  note?: string
+  createdAt: string
 }
 
 // ========================================
