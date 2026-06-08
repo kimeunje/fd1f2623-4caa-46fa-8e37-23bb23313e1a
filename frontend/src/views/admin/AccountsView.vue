@@ -1,12 +1,25 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { usersApi } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
+import IpRulesDialog from '@/components/admin/IpRulesDialog.vue'
 import type { User } from '@/types'
+
+const auth = useAuthStore()
 
 const users = ref<User[]>([])
 const total = ref(0)
 const loading = ref(false)
 const search = ref('')
+
+// v19.2 (FE-1) — 계정별 IP 접근 규칙 편집 모달
+const showIpDialog = ref(false)
+const selectedUser = ref<User | null>(null)
+
+function openIpRules(user: User) {
+  selectedUser.value = user
+  showIpDialog.value = true
+}
 
 const roleLabels: Record<string, { label: string; bg: string; text: string }> = {
   admin: { label: '관리자', bg: 'bg-blue-100', text: 'text-blue-700' },
@@ -67,7 +80,7 @@ onMounted(loadUsers)
             <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600">접근 권한</th>
             <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600">마지막 로그인</th>
             <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600">상태</th>
-            <th class="px-4 py-3 w-20"></th>
+            <th class="px-4 py-3 w-24"></th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100">
@@ -115,9 +128,18 @@ onMounted(loadUsers)
               </span>
             </td>
             <td class="px-4 py-3">
-              <button class="p-1.5 text-gray-400 hover:text-blue-500">
-                <i class="pi pi-pencil text-sm"></i>
-              </button>
+              <div class="flex items-center gap-1">
+                <button
+                  class="p-1.5 text-gray-400 hover:text-blue-500"
+                  title="IP 접근 규칙"
+                  @click="openIpRules(user)"
+                >
+                  <i class="pi pi-shield text-sm"></i>
+                </button>
+                <button class="p-1.5 text-gray-400 hover:text-blue-500" title="수정">
+                  <i class="pi pi-pencil text-sm"></i>
+                </button>
+              </div>
             </td>
           </tr>
 
@@ -134,5 +156,13 @@ onMounted(loadUsers)
         총 {{ total }}명
       </div>
     </div>
+
+    <!-- v19.2 (FE-1) — IP 접근 규칙 편집 모달 -->
+    <IpRulesDialog
+      v-model="showIpDialog"
+      :user-id="selectedUser?.id ?? null"
+      :user-name="selectedUser?.name"
+      :is-self="selectedUser?.id === auth.user?.id"
+    />
   </div>
 </template>

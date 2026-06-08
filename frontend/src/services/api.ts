@@ -8,6 +8,9 @@ import type {
   UserBrief,
   UserCreatePayload,
   UserUpdatePayload,
+  IpAccessRule,
+  IpAccessRuleCreatePayload,
+  IpAccessRuleUpdatePayload,
 } from '@/types'
 
 // ========================================
@@ -101,6 +104,24 @@ export const usersApi = {
       currentPassword,
       newPassword,
     })
+  },
+}
+
+// ========================================
+// IP Access Rules API (v19.x)
+// ========================================
+export const ipRulesApi = {
+  list(userId: number) {
+    return api.get<ApiResponse<IpAccessRule[]>>(`/users/${userId}/ip-rules`)
+  },
+  create(userId: number, data: IpAccessRuleCreatePayload) {
+    return api.post<ApiResponse<IpAccessRule>>(`/users/${userId}/ip-rules`, data)
+  },
+  update(userId: number, ruleId: number, data: IpAccessRuleUpdatePayload) {
+    return api.patch<ApiResponse<IpAccessRule>>(`/users/${userId}/ip-rules/${ruleId}`, data)
+  },
+  delete(userId: number, ruleId: number) {
+    return api.delete(`/users/${userId}/ip-rules/${ruleId}`)
   },
 }
 

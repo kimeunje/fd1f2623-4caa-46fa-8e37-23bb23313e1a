@@ -111,3 +111,28 @@ export interface Control {
   evidenceTotal?: number
   createdAt: string
 }
+
+// ========================================
+// 계정별 IP 접근 규칙 (v19.x)
+// ========================================
+export interface IpAccessRule {
+  id: number
+  userId: number
+  cidr: string
+  description?: string
+  enabled: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface IpAccessRuleCreatePayload {
+  cidr: string
+  description?: string
+  enabled?: boolean
+}
+
+export interface IpAccessRuleUpdatePayload {
+  cidr?: string
+  description?: string
+  enabled?: boolean
+}
