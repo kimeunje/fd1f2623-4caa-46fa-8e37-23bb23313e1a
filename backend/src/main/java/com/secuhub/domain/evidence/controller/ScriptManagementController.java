@@ -2,9 +2,13 @@ package com.secuhub.domain.evidence.controller;
 
 import com.secuhub.common.dto.ApiResponse;
 import com.secuhub.domain.evidence.dto.ScriptManagementDto;
+import com.secuhub.domain.evidence.dto.ScriptVersionDto;
 import com.secuhub.domain.evidence.service.ScriptManagementService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+
+import java.util.List;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -88,5 +92,40 @@ public class ScriptManagementController {
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
         scriptManagementService.delete(id);
         return ResponseEntity.ok(ApiResponse.ok("스크립트가 삭제되었습니다.", null));
+    }
+
+    /**
+     * v19.4 — 버전 이력 목록 (오래된 순). 레거시 스크립트는 조회 시 v1 자동 시드.
+     * GET /api/v1/admin/scripts/{id}/versions
+     */
+    @GetMapping("/{id}/versions")
+    public ResponseEntity<ApiResponse<List<ScriptVersionDto.VersionResponse>>> listVersions(
+            @PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok(scriptManagementService.listVersions(id)));
+    }
+
+    /**
+     * v19.4 — 특정 버전 내용 (미리보기).
+     * GET /api/v1/admin/scripts/{id}/versions/{versionNo}
+     */
+    @GetMapping("/{id}/versions/{versionNo}")
+    public ResponseEntity<ApiResponse<ScriptVersionDto.VersionContentResponse>> getVersionContent(
+            @PathVariable Long id,
+            @PathVariable int versionNo) {
+        return ResponseEntity.ok(
+                ApiResponse.ok(scriptManagementService.getVersionContent(id, versionNo)));
+    }
+
+    /**
+     * v19.4 — 롤백 (전진형: 옛 버전 내용으로 새 버전 생성 + 실행본 교체).
+     * POST /api/v1/admin/scripts/{id}/versions/{versionNo}/rollback
+     */
+    @PostMapping("/{id}/versions/{versionNo}/rollback")
+    public ResponseEntity<ApiResponse<ScriptManagementDto.ScriptResponse>> rollback(
+            @PathVariable Long id,
+            @PathVariable int versionNo) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                "v" + versionNo + " 내용으로 복귀했습니다.",
+                scriptManagementService.rollback(id, versionNo)));
     }
 }
