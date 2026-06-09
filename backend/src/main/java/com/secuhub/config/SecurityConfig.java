@@ -15,6 +15,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
 
 @Configuration
 @EnableWebSecurity
@@ -37,6 +39,28 @@ public class SecurityConfig {
         http
             // CSRF 비활성화 (JWT 사용)
             .csrf(csrf -> csrf.disable())
+
+            // v19.8 — 보안 헤더. 기본 X-Frame-Options(DENY) / X-Content-Type-Options(nosniff)
+            // 는 그대로 두고 CSP / Referrer-Policy / Permissions-Policy 추가.
+            // 폐쇄망 평문(HTTP) 이므로 HSTS 는 추가하지 않음(HTTP 에서 무의미).
+            .headers(headers -> headers
+                .contentSecurityPolicy(csp -> csp.policyDirectives(
+                    "default-src 'self'; " +
+                    "script-src 'self'; " +
+                    "style-src 'self' 'unsafe-inline'; " +   // Vue/Tailwind/PrimeIcons 인라인 스타일 허용
+                    "img-src 'self' data:; " +
+                    "font-src 'self' data:; " +
+                    "connect-src 'self'; " +
+                    "object-src 'none'; " +
+                    "frame-ancestors 'none'; " +
+                    "base-uri 'self'; " +
+                    "form-action 'self'"))
+                .referrerPolicy(ref -> ref.policy(
+                    ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .addHeaderWriter(new StaticHeadersWriter(
+                    "Permissions-Policy",
+                    "geolocation=(), camera=(), microphone=(), payment=(), usb=()"))
+            )
 
             // 세션 사용하지 않음
             .sessionManagement(session ->

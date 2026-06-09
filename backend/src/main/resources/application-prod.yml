@@ -63,3 +63,9 @@ logging:
   level:
     com.secuhub: INFO
     org.flywaydb: INFO
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
