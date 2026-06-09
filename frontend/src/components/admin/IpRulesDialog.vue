@@ -32,6 +32,11 @@ const hasRules = computed(() => rules.value.length > 0)
 const restricted = computed(() => rules.value.some((r) => r.enabled))
 
 function close() {
+  // v19.7 — 작성 중(CIDR/메모 입력)인데 닫으면 confirm. 빈 상태면 바로 닫힘.
+  const dirty = newCidr.value.trim() !== '' || newDescription.value.trim() !== ''
+  if (dirty && !window.confirm('입력 중인 내용이 있습니다. 닫으면 사라집니다. 닫을까요?')) {
+    return
+  }
   emit('update:modelValue', false)
 }
 

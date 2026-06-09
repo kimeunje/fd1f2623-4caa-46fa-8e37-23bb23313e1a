@@ -322,7 +322,7 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="dialog-backdrop" @click.self="handleCloseRequest">
+    <div v-if="open" class="dialog-backdrop">
       <div class="dialog-shell" role="dialog" aria-labelledby="unified-controls-title">
         <!-- ─────────── 헤더 ─────────── -->
         <header class="dialog-header">
