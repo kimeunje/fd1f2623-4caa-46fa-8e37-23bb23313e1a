@@ -32,11 +32,6 @@ const hasRules = computed(() => rules.value.length > 0)
 const restricted = computed(() => rules.value.some((r) => r.enabled))
 
 function close() {
-  // v19.7 — 작성 중(CIDR/메모 입력)인데 닫으면 confirm. 빈 상태면 바로 닫힘.
-  const dirty = newCidr.value.trim() !== '' || newDescription.value.trim() !== ''
-  if (dirty && !window.confirm('입력 중인 내용이 있습니다. 닫으면 사라집니다. 닫을까요?')) {
-    return
-  }
   emit('update:modelValue', false)
 }
 
@@ -122,7 +117,8 @@ async function remove(rule: IpAccessRule) {
 
 <template>
   <div v-if="modelValue" class="fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/40" @click="close"></div>
+    <!-- v19.7 — backdrop 클릭으로 닫히지 않음(작성 중 실수 방지). 닫기는 X 로만. -->
+    <div class="absolute inset-0 bg-black/40"></div>
 
     <div
       class="relative bg-white rounded-xl border border-gray-200 shadow-xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col"

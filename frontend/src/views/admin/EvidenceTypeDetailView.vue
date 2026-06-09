@@ -594,23 +594,6 @@ function openAddJobDialog() {
   showAddJobDialog.value = true
 }
 
-// v19.7 — 입력 중 닫기 가드. 입력한 게 있으면 confirm, 빈 상태면 바로 닫힘.
-// 바깥 클릭 / X / 취소 모두 이 함수를 거친다. (정상 생성 성공 경로는 직접 닫으므로 미해당)
-function closeAddJobDialog() {
-  const j = newJob.value
-  const dirty =
-    j.name.trim() !== '' ||
-    j.description.trim() !== '' ||
-    j.scriptPath.trim() !== '' ||
-    j.scheduleCron.trim() !== '' ||
-    j.scriptId !== null ||
-    j.jobType !== 'web_scraping'
-  if (dirty && !window.confirm('입력 중인 내용이 있습니다. 닫으면 사라집니다. 닫을까요?')) {
-    return
-  }
-  showAddJobDialog.value = false
-}
-
 // ========================================
 // v18.8.2 — 스크립트 작성/편집 dialog 연계 (UID 기반)
 // ========================================
@@ -1293,13 +1276,13 @@ function executionDotCls(status?: string): string {
          ====================================== -->
     <div
       v-if="showAddJobDialog"
-      class="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
-      @click.self="closeAddJobDialog">
+      class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <!-- v19.7 — backdrop 클릭으로 닫히지 않음(작성 중 실수 방지). 닫기는 X / 취소로만. -->
       <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-lg font-bold text-gray-900">수집 작업 추가</h3>
           <button
-            @click="closeAddJobDialog"
+            @click="showAddJobDialog = false"
             class="p-1 text-gray-400 hover:text-gray-600">
             <i class="pi pi-times"></i>
           </button>
@@ -1372,7 +1355,7 @@ function executionDotCls(status?: string): string {
         </div>
         <div class="flex justify-end gap-2 mt-5">
           <button
-            @click="closeAddJobDialog"
+            @click="showAddJobDialog = false"
             :disabled="addJobSubmitting"
             class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50">
             취소
