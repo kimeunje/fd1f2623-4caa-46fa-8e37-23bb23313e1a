@@ -59,6 +59,11 @@ app:
       always-allow: []
         # - 10.10.0.0/16
 
+    login-rate-limit:
+      enabled: true
+      max-attempts: 5
+      window-minutes: 15
+
 logging:
   level:
     com.secuhub: INFO

@@ -17,6 +17,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.security.web.header.writers.StaticHeadersWriter;
+import com.secuhub.config.security.LoginRateLimitFilter;
 
 @Configuration
 @EnableWebSecurity
@@ -28,6 +29,7 @@ public class SecurityConfig {
     private final com.secuhub.config.security.IpAccessFilter ipAccessFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
     private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
+    private final LoginRateLimitFilter loginRateLimitFilter;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -149,6 +151,9 @@ public class SecurityConfig {
 
             // JWT 필터 등록
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+
+            // 로그인 brute-force 차단 (JWT 필터 앞에서 short-circuit)
+            .addFilterBefore(loginRateLimitFilter, JwtAuthenticationFilter.class)
 
             // 계정별 IP 접근 게이트
             .addFilterAfter(ipAccessFilter, JwtAuthenticationFilter.class);
