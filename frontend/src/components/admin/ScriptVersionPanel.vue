@@ -8,12 +8,14 @@
  *
  * 자족적 — scriptsApi 만 사용하고 부모 상태에 의존하지 않는다.
  */
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { scriptsApi } from '@/services/evidenceApi'
 import type { ScriptVersionResponse } from '@/services/evidenceApi'
 
 const props = defineProps<{
   scriptId: number
+  /** true 면 토글 없이 바로 펼쳐 렌더 (모달 안에서 사용). */
+  flat?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +47,13 @@ async function toggle() {
     await load()
   }
 }
+
+onMounted(() => {
+  if (props.flat) {
+    expanded.value = true
+    load()
+  }
+})
 
 async function load() {
   loading.value = true
@@ -105,9 +114,10 @@ async function rollback(versionNo: number) {
 </script>
 
 <template>
-  <div class="border border-gray-200 rounded-lg">
-    <!-- header -->
+  <div :class="flat ? '' : 'border border-gray-200 rounded-lg'">
+    <!-- header (인라인 모드에서만 토글) -->
     <button
+      v-if="!flat"
       type="button"
       class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
       @click="toggle"
@@ -120,7 +130,13 @@ async function rollback(versionNo: number) {
       <i v-if="loading" class="pi pi-spin pi-spinner text-gray-400"></i>
     </button>
 
-    <div v-if="expanded" class="border-t border-gray-200 px-3 py-3 space-y-3">
+    <div
+      v-if="flat || expanded"
+      :class="flat ? 'space-y-3' : 'border-t border-gray-200 px-3 py-3 space-y-3'"
+    >
+      <div v-if="flat && loading" class="text-center text-gray-400 py-4">
+        <i class="pi pi-spin pi-spinner"></i>
+      </div>
       <div
         v-if="error"
         class="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1.5"

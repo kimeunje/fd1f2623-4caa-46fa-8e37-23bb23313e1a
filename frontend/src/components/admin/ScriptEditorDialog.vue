@@ -276,6 +276,9 @@ async function handleSave() {
   }
 }
 
+// v19.5 — 버전 이력 모달 (편집 모드)
+const showVersions = ref(false)
+
 // v19.5 — 버전 패널에서 되돌리기 성공 시, 새 현재 내용을 에디터에 반영
 function onRolledBack(payload: { content: string }) {
   content.value = payload.content
@@ -335,7 +338,7 @@ async function handleFileImport(event: Event) {
 </script>
 
 <template>
-  <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" @click.self="emit('close')">
+  <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
     <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl flex flex-col max-h-[90vh]">
       <!-- Header -->
       <div class="flex items-center justify-between p-4 border-b border-stone-200">
@@ -343,9 +346,20 @@ async function handleFileImport(event: Event) {
           {{ isEdit ? '스크립트 수정' : '스크립트 작성' }}
           <span v-if="isEdit" class="ml-2 text-xs font-normal text-gray-400 font-mono">#{{ scriptId }}</span>
         </h3>
-        <button @click="emit('close')" class="text-gray-400 hover:text-gray-600" aria-label="닫기">
-          <i class="pi pi-times text-base"></i>
-        </button>
+        <div class="flex items-center gap-3">
+          <!-- v19.5 — 버전 이력 (편집 모드 한정) -->
+          <button
+            v-if="isEdit && scriptId !== undefined"
+            @click="showVersions = true"
+            class="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 inline-flex items-center gap-1.5"
+          >
+            <i class="pi pi-history text-xs"></i>
+            버전 이력
+          </button>
+          <button @click="emit('close')" class="text-gray-400 hover:text-gray-600" aria-label="닫기">
+            <i class="pi pi-times text-base"></i>
+          </button>
+        </div>
       </div>
 
       <!-- Body -->
@@ -423,14 +437,6 @@ async function handleFileImport(event: Event) {
           </p>
         </div>
 
-        <!-- v19.5 — 버전 이력 패널 (편집 모드 한정) -->
-        <ScriptVersionPanel
-          v-if="isEdit && scriptId !== undefined"
-          :script-id="scriptId"
-          class="mt-3"
-          @rolledback="onRolledBack"
-        />
-
         <!-- 에러 표시 -->
         <p v-if="error" class="mt-3 text-xs text-red-600 bg-red-50 p-2 rounded whitespace-pre-wrap">
           {{ error }}
@@ -466,6 +472,31 @@ async function handleFileImport(event: Event) {
             {{ isEdit ? '수정 저장' : '신규 등록' }}
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    v19.5 — 버전 이력 모달 (편집창 위에 z-[60] 으로 표시).
+    바깥 클릭은 이 모달만 닫음(편집 내용 영향 없음). 편집창 자체는 바깥 클릭으로 닫히지 않음.
+  -->
+  <div
+    v-if="showVersions && isEdit && scriptId !== undefined"
+    class="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+    @click.self="showVersions = false"
+  >
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg flex flex-col max-h-[85vh]">
+      <div class="flex items-center justify-between p-4 border-b border-stone-200">
+        <h3 class="text-base font-bold text-gray-900">
+          버전 이력
+          <span class="ml-1 text-xs font-normal text-gray-400 font-mono">#{{ scriptId }}</span>
+        </h3>
+        <button @click="showVersions = false" class="text-gray-400 hover:text-gray-600" aria-label="닫기">
+          <i class="pi pi-times text-base"></i>
+        </button>
+      </div>
+      <div class="p-4 overflow-y-auto flex-1">
+        <ScriptVersionPanel :script-id="scriptId" flat @rolledback="onRolledBack" />
       </div>
     </div>
   </div>
