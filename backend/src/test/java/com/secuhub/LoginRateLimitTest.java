@@ -2,6 +2,7 @@ package com.secuhub;
 
 import com.secuhub.domain.user.entity.User;
 import com.secuhub.domain.user.entity.UserRole;
+import com.secuhub.domain.user.entity.UserStatus;
 import com.secuhub.domain.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@ActiveProfiles("test")
 @DisplayName("v19.9 - 로그인 Rate Limiting")
 class LoginRateLimitTest {
 
@@ -77,6 +80,7 @@ class LoginRateLimitTest {
                 .team("팀")
                 .role(UserRole.developer)
                 .permissionEvidence(false)
+                .status(UserStatus.active)
                 .build());
 
         String addr = "198.51.100.22";

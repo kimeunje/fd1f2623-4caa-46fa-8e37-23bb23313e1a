@@ -14,6 +14,15 @@ spring:
       ddl-auto: create
     show-sql: true
 
+# v19.10 — 업로드 파일 검증은 prod 관심사. 통합 테스트 픽스처(MockMultipartFile)는
+# 합성 콘텐츠라 매직바이트 시그니처를 통과하지 못하므로 test 프로필에서는 비활성화한다.
+# 검증 로직 자체는 순수 단위 테스트(FileUploadValidatorTest)가 커버한다. prod 는 켜짐.
+app:
+  security:
+    upload:
+      enabled: false
+ 
 logging:
   level:
     com.secuhub: DEBUG
+ 
