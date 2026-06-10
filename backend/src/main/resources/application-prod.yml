@@ -64,6 +64,29 @@ app:
       max-attempts: 5
       window-minutes: 15
 
+        # v19.10 — 업로드 파일 검증
+    upload:
+      enabled: true
+      verify-magic-bytes: true
+      max-size-bytes: 52428800           # 50MB (multipart 상한과 정렬)
+      allowed-extensions:                # 운영 정책에 맞게 가감 (예: zip 제거)
+        - pdf
+        - doc
+        - docx
+        - xls
+        - xlsx
+        - ppt
+        - pptx
+        - hwp
+        - hwpx
+        - png
+        - jpg
+        - jpeg
+        - gif
+        - txt
+        - csv
+        - zip  
+
 logging:
   level:
     com.secuhub: INFO

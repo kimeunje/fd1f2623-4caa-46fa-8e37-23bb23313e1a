@@ -3,6 +3,7 @@ package com.secuhub.domain.evidence.service;
 import com.secuhub.common.exception.BusinessException;
 import com.secuhub.common.exception.ResourceNotFoundException;
 import com.secuhub.config.jwt.UserPrincipal;
+import com.secuhub.config.security.FileUploadValidator;
 import com.secuhub.domain.evidence.dto.EvidenceFileDto;
 import com.secuhub.domain.evidence.entity.*;
 import com.secuhub.domain.evidence.repository.*;
@@ -77,6 +78,7 @@ public class EvidenceFileService {
     // v18.6a — Evidence Asset 신규 채널
     private final EvidenceAssetService evidenceAssetService;
     private final EvidenceAssetRepository evidenceAssetRepository;
+    private final FileUploadValidator fileUploadValidator;
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
@@ -198,6 +200,9 @@ public class EvidenceFileService {
                                                   UserPrincipal uploader,
                                                   String submitNote,
                                                   boolean forceUpload) {
+        // v19.10 — 확장자 allowlist + 크기 + 매직바이트 검증 (위반 시 400)
+        fileUploadValidator.validate(file);
+
         EvidenceType evidenceType = evidenceTypeRepository.findById(evidenceTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 유형", evidenceTypeId));
 
