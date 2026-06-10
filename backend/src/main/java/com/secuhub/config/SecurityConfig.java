@@ -18,6 +18,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import com.secuhub.config.security.LoginRateLimitFilter;
+import com.secuhub.config.security.SecurityHeadersProperties;
 
 @Configuration
 @EnableWebSecurity
@@ -30,6 +31,7 @@ public class SecurityConfig {
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
     private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
     private final LoginRateLimitFilter loginRateLimitFilter;
+    private final SecurityHeadersProperties securityHeadersProperties;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -45,24 +47,20 @@ public class SecurityConfig {
             // v19.8 — 보안 헤더. 기본 X-Frame-Options(DENY) / X-Content-Type-Options(nosniff)
             // 는 그대로 두고 CSP / Referrer-Policy / Permissions-Policy 추가.
             // 폐쇄망 평문(HTTP) 이므로 HSTS 는 추가하지 않음(HTTP 에서 무의미).
-            .headers(headers -> headers
-                .contentSecurityPolicy(csp -> csp.policyDirectives(
-                    "default-src 'self'; " +
-                    "script-src 'self'; " +
-                    "style-src 'self' 'unsafe-inline'; " +   // Vue/Tailwind/PrimeIcons 인라인 스타일 허용
-                    "img-src 'self' data:; " +
-                    "font-src 'self' data:; " +
-                    "connect-src 'self'; " +
-                    "object-src 'none'; " +
-                    "frame-ancestors 'none'; " +
-                    "base-uri 'self'; " +
-                    "form-action 'self'"))
-                .referrerPolicy(ref -> ref.policy(
-                    ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
-                .addHeaderWriter(new StaticHeadersWriter(
-                    "Permissions-Policy",
-                    "geolocation=(), camera=(), microphone=(), payment=(), usb=()"))
-            )
+            .headers(headers -> {
+                String csp = securityHeadersProperties.getContentSecurityPolicy();
+                if (csp != null && !csp.isBlank()) {
+                    headers.contentSecurityPolicy(c -> c.policyDirectives(csp));
+                }
+                String referrer = securityHeadersProperties.getReferrerPolicy();
+                if (referrer != null && !referrer.isBlank()) {
+                    headers.addHeaderWriter(new StaticHeadersWriter("Referrer-Policy", referrer));
+                }
+                String permissions = securityHeadersProperties.getPermissionsPolicy();
+                if (permissions != null && !permissions.isBlank()) {
+                    headers.addHeaderWriter(new StaticHeadersWriter("Permissions-Policy", permissions));
+                }
+            })
 
             // 세션 사용하지 않음
             .sessionManagement(session ->
