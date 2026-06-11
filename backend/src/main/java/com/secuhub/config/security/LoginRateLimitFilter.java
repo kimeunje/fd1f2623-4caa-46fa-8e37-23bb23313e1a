@@ -2,6 +2,9 @@ package com.secuhub.config.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.secuhub.common.dto.ApiResponse;
+import com.secuhub.domain.audit.AuditAction;
+import com.secuhub.domain.audit.AuditResult;
+import com.secuhub.domain.audit.AuditService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -30,6 +33,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@link ClientIpResolver} 재사용.</p>
  *
  * <p>카운팅 대상은 401(자격증명 불일치)만 — 400(검증 오류)/403(비활성·IP 거부)은 세지 않는다.</p>
+ *
+ * <p>AUDIT-1: 429 차단 시 RATE_LIMIT_BLOCKED 를 감사 로그로 명시 기록(미인증이라 IP 중심).</p>
  */
 @Slf4j
 @Component
@@ -41,6 +46,7 @@ public class LoginRateLimitFilter extends OncePerRequestFilter {
     private final ClientIpResolver clientIpResolver;
     private final ObjectMapper objectMapper;
     private final LoginRateLimitProperties properties;
+    private final AuditService auditService; // AUDIT-1
 
     private final Map<String, Counter> counters = new ConcurrentHashMap<>();
 
@@ -69,6 +75,7 @@ public class LoginRateLimitFilter extends OncePerRequestFilter {
         if (isBlocked(ip, now, windowMs)) {
             log.warn("로그인 rate limit 차단: ip={} (윈도 {}분 내 실패 {}회 초과)",
                     ip, properties.getWindowMinutes(), properties.getMaxAttempts());
+            safeAuditBlocked(ip);
             writeTooManyRequests(response);
             return; // bcrypt 도달 전 차단
         }
@@ -76,6 +83,19 @@ public class LoginRateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
 
         onResult(ip, response.getStatus(), now, windowMs);
+    }
+
+    private void safeAuditBlocked(String ip) {
+        try {
+            auditService.record(AuditAction.RATE_LIMIT_BLOCKED, AuditResult.BLOCKED,
+                    null, null,
+                    auditService.toJson(Map.of(
+                            "windowMinutes", properties.getWindowMinutes(),
+                            "maxAttempts", properties.getMaxAttempts())),
+                    null, null, ip); // 미인증 — actor 미상, IP 만
+        } catch (Exception ignore) {
+            // 감사 실패는 차단 응답에 영향 주지 않음
+        }
     }
 
     private boolean isLoginAttempt(HttpServletRequest request) {

@@ -4,6 +4,9 @@ import com.secuhub.common.exception.BusinessException;
 import com.secuhub.common.exception.ResourceNotFoundException;
 import com.secuhub.config.jwt.JwtTokenProvider;
 import com.secuhub.domain.access.service.IpAccessService;
+import com.secuhub.domain.audit.AuditAction;
+import com.secuhub.domain.audit.AuditResult;
+import com.secuhub.domain.audit.AuditService;
 import com.secuhub.domain.user.dto.LoginRequest;
 import com.secuhub.domain.user.dto.LoginResponse;
 import com.secuhub.domain.user.entity.User;
@@ -25,6 +28,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final IpAccessService ipAccessService;
+    private final AuditService auditService; // AUDIT-1
 
     /**
      * 로그인 처리
@@ -33,24 +37,34 @@ public class AuthService {
      * - 계정 상태 확인 (active만 허용)
      * - v19.0: 계정별 IP 접근 제어 검사 (clientIp 가 허용 규칙에 없으면 403)
      * - JWT 토큰 생성 및 반환
+     * - AUDIT-1: 성공/실패/IP 차단을 감사 로그로 기록 (명시 호출 — 필터는 AOP 대상 아님)
      *
      * @param clientIp 호출부(AuthController)가 {@code ClientIpResolver} 로 해석한 클라이언트 IP
      */
     @Transactional
     public LoginResponse login(LoginRequest request, String clientIp) {
         // 사용자 조회
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new BusinessException(
-                        "이메일 또는 비밀번호가 올바르지 않습니다.", HttpStatus.UNAUTHORIZED));
+        User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+        if (user == null) {
+            // 존재하지 않는 이메일 — actor 미상(actorUserId=null), 시도 이메일만 스냅샷
+            safeAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE,
+                    null, request.getEmail(), clientIp, "존재하지 않는 이메일");
+            throw new BusinessException(
+                    "이메일 또는 비밀번호가 올바르지 않습니다.", HttpStatus.UNAUTHORIZED);
+        }
 
         // 비밀번호 검증
         if (!passwordEncoder.matches(request.getPassword(), user.getHashedPassword())) {
+            safeAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE,
+                    user.getId(), user.getEmail(), clientIp, "비밀번호 불일치");
             throw new BusinessException(
                     "이메일 또는 비밀번호가 올바르지 않습니다.", HttpStatus.UNAUTHORIZED);
         }
 
         // 계정 상태 확인
         if (user.getStatus() != UserStatus.active) {
+            safeAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE,
+                    user.getId(), user.getEmail(), clientIp, "비활성 계정");
             throw new BusinessException(
                     "비활성화된 계정입니다. 관리자에게 문의하세요.", HttpStatus.FORBIDDEN);
         }
@@ -58,6 +72,8 @@ public class AuthService {
         // v19.0 — 계정별 IP 접근 제어. 자격증명이 맞아도 허용 IP 밖이면 거부.
         if (!ipAccessService.isAllowed(user.getId(), clientIp)) {
             log.warn("로그인 IP 거부: {} ip={}", user.getEmail(), clientIp);
+            safeAudit(AuditAction.ACL_BLOCKED, AuditResult.BLOCKED,
+                    user.getId(), user.getEmail(), clientIp, "로그인 IP 미허용");
             throw new BusinessException(
                     "허용되지 않은 IP 에서의 접근입니다.", HttpStatus.FORBIDDEN);
         }
@@ -70,6 +86,9 @@ public class AuthService {
                 user.getId(), user.getEmail(), user.getRole().name());
 
         log.info("로그인 성공: {} ({})", user.getEmail(), user.getRole());
+
+        safeAudit(AuditAction.LOGIN_SUCCESS, AuditResult.SUCCESS,
+                user.getId(), user.getEmail(), clientIp, null);
 
         return LoginResponse.of(token, user);
     }
@@ -92,5 +111,17 @@ public class AuthService {
                 .role(user.getRole().name())
                 .permissionEvidence(user.getPermissionEvidence())
                 .build();
+    }
+
+    /** 감사 기록 — 실패가 로그인 흐름을 절대 막지 않도록 예외를 삼킨다. */
+    private void safeAudit(AuditAction action, AuditResult result,
+                           Long actorUserId, String actorEmail, String clientIp, String detail) {
+        try {
+            auditService.record(action, result, "User",
+                    actorUserId == null ? null : String.valueOf(actorUserId),
+                    detail, actorUserId, actorEmail, clientIp);
+        } catch (Exception ignore) {
+            // 감사 실패는 인증 결과에 영향 주지 않음
+        }
     }
 }

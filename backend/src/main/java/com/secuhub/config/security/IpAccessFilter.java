@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.secuhub.common.dto.ApiResponse;
 import com.secuhub.config.jwt.UserPrincipal;
 import com.secuhub.domain.access.service.IpAccessService;
+import com.secuhub.domain.audit.AuditAction;
+import com.secuhub.domain.audit.AuditResult;
+import com.secuhub.domain.audit.AuditService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,6 +34,8 @@ import java.io.IOException;
  * <p>거부 시 보안 필터 체인의 {@code ExceptionTranslationFilter} 앞 위치라 예외를
  * 던지지 않고 403 JSON({@link ApiResponse})을 직접 기록한다 — {@code JwtAccessDeniedHandler}
  * 패턴 정합.</p>
+ *
+ * <p>AUDIT-1: 차단 시 ACL_BLOCKED 를 감사 로그로 명시 기록.</p>
  */
 @Slf4j
 @Component
@@ -40,6 +45,7 @@ public class IpAccessFilter extends OncePerRequestFilter {
     private final IpAccessService ipAccessService;
     private final ClientIpResolver clientIpResolver;
     private final ObjectMapper objectMapper;
+    private final AuditService auditService; // AUDIT-1
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -57,12 +63,24 @@ public class IpAccessFilter extends OncePerRequestFilter {
             if (!ipAccessService.isAllowed(principal.getUserId(), clientIp)) {
                 log.warn("IP 접근 거부: userId={} ip={} uri={}",
                         principal.getUserId(), clientIp, request.getRequestURI());
+                safeAuditBlocked(principal, clientIp, request.getRequestURI());
                 writeForbidden(response);
                 return;
             }
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private void safeAuditBlocked(UserPrincipal principal, String clientIp, String uri) {
+        try {
+            auditService.record(AuditAction.ACL_BLOCKED, AuditResult.BLOCKED,
+                    "User", String.valueOf(principal.getUserId()),
+                    uri, // detail = 차단된 요청 URI
+                    principal.getUserId(), principal.getEmail(), clientIp);
+        } catch (Exception ignore) {
+            // 감사 실패는 차단 응답에 영향 주지 않음
+        }
     }
 
     private void writeForbidden(HttpServletResponse response) throws IOException {
