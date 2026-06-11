@@ -90,6 +90,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/admin/AccountsView.vue'),
     meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '계정 관리' },
   },
+  // v19.14 (AUDIT-3) — 감사 로그 뷰어. SecurityConfig /audit/** 는 v18.9.5 기보유.
+  {
+    path: '/audit',
+    name: 'audit-logs',
+    component: () => import('@/views/admin/AuditLogView.vue'),
+    meta: { requiresAuth: true, roles: ['admin'], layout: 'admin', title: '감사 로그' },
+  },
   {
     path: '/settings',
     name: 'settings',

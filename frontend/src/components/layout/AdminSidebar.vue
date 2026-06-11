@@ -59,6 +59,8 @@ const menuGroups = [
     label: '시스템',
     items: [
       { routeName: 'accounts', icon: 'pi-users', label: '계정 관리' },
+      // v19.14 (AUDIT-3)
+      { routeName: 'audit-logs', icon: 'pi-history', label: '감사 로그' },
       { routeName: 'settings', icon: 'pi-cog', label: '설정' },
     ],
   },
