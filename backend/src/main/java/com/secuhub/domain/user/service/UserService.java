@@ -2,6 +2,8 @@ package com.secuhub.domain.user.service;
 
 import com.secuhub.common.exception.BusinessException;
 import com.secuhub.common.exception.ResourceNotFoundException;
+import com.secuhub.config.audit.Auditable;
+import com.secuhub.domain.audit.AuditAction;
 import com.secuhub.domain.user.dto.UserDto;
 import com.secuhub.domain.user.entity.User;
 import com.secuhub.domain.user.entity.UserRole;
@@ -21,28 +23,8 @@ import java.util.List;
 /**
  * Phase 5-15e (v15.9) — admin 사용자 관리 + 사용자 본인 비밀번호 변경 service.
  *
- * <p>도입 동기는 {@link com.secuhub.domain.user.controller.UserController} javadoc 참조.</p>
- *
- * <p>Phase 3 cleanup (2026-05-04): permissionVuln 처리 일괄 제거 (create / update).
- * 단일 권한 plane.</p>
- *
- * <h3>주요 동작 요약</h3>
- * <ul>
- *   <li><b>create</b> — email 중복 체크 + 비번 hash + status=active 기본</li>
- *   <li><b>update</b> — 부분 수정. {@link User} entity mutator 활용 — null 필드 자연 보존</li>
- *   <li><b>delete</b> — soft delete (status=inactive). hard delete 미지원</li>
- *   <li><b>list</b> — JPA Specification 없이 단순 조건 분기 + name/email LIKE search (Q3=A)</li>
- *   <li><b>changePassword</b> — 현재 비번 검증 후 새 비번 hash (Q2=A)</li>
- * </ul>
- *
- * <h3>get / list 의 비밀번호 비노출</h3>
- * <p>{@link UserDto.DetailResponse} 가 hashedPassword 를 포함하지 않음 ({@code of()}
- * 팩토리에서 explicit 미매핑). entity 에 비번이 잔존해도 wire 에서 자연 차단.</p>
- *
- * <h3>delete 의 soft 선택</h3>
- * <p>hard delete 시 FK cascade 영향 (evidence_files.uploaded_by / reviewed_by 등
- * 참조 지점 다수). soft delete 로 ID 보존 + status=inactive 표시 → 운영 안전. 본
- * 프로젝트 기존 패턴 정합.</p>
+ * <p>AUDIT-1: create/update/delete 에 {@code @Auditable} (targetId 포함).
+ * (changePassword 감사는 선택 — 가이드 참조.)</p>
  */
 @Slf4j
 @Service
@@ -69,6 +51,8 @@ public class UserService {
         return UserDto.DetailResponse.of(findOrThrow(id));
     }
 
+    @Auditable(action = AuditAction.USER_CREATE, targetType = "User",
+            targetId = "#result.id", detail = "#a0.email")
     @Transactional
     public UserDto.DetailResponse create(UserDto.CreateRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
@@ -89,10 +73,10 @@ public class UserService {
         return UserDto.DetailResponse.of(saved);
     }
 
+    @Auditable(action = AuditAction.USER_UPDATE, targetType = "User", targetId = "#a0")
     @Transactional
     public UserDto.DetailResponse update(Long id, UserDto.UpdateRequest request) {
         User user = findOrThrow(id);
-        // entity mutator 활용 — null 필드는 mutator 안 가드로 자연 보존
         if (request.getName() != null || request.getTeam() != null) {
             user.updateProfile(request.getName(), request.getTeam());
         }
@@ -108,6 +92,7 @@ public class UserService {
         return UserDto.DetailResponse.of(user);
     }
 
+    @Auditable(action = AuditAction.USER_DELETE, targetType = "User", targetId = "#a0")
     @Transactional
     public void delete(Long id) {
         User user = findOrThrow(id);
@@ -136,9 +121,7 @@ public class UserService {
     }
 
     /**
-     * 본인 비밀번호 변경. {@link UserController#changePassword} 가 호출.
-     *
-     * <p>Q2=A: 현재 비번 검증 (보안 표준) → 새 비번 hash → 저장.</p>
+     * 본인 비밀번호 변경. Q2=A: 현재 비번 검증 → 새 비번 hash → 저장.
      */
     @Transactional
     public void changePassword(String email, UserDto.ChangePasswordRequest request) {
@@ -160,7 +143,6 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("사용자를 찾을 수 없습니다. id=" + id));
     }
 
-    /** 빈 문자열 / 공백 → null. JPQL 의 IS NULL 분기 정합. */
     private String normalize(String search) {
         return (search == null || search.isBlank()) ? null : search.trim();
     }

@@ -11,6 +11,11 @@ import com.secuhub.domain.evidence.repository.*;
 //                wildcard import 그대로 사용 (Control 삭제 후 ControlNode + NodeType + ControlNodeRepository 자연 매칭).
 import com.secuhub.domain.user.entity.User;
 import com.secuhub.domain.user.repository.UserRepository;
+import com.secuhub.config.audit.Auditable;
+import com.secuhub.domain.audit.AuditAction;
+import com.secuhub.domain.audit.AuditResult;
+import com.secuhub.domain.audit.AuditService;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +41,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import java.util.Map;
+
 
 /**
  * 증빙 파일 서비스.
@@ -63,6 +70,13 @@ import java.util.zip.ZipOutputStream;
  *       ({@link EvidenceAssetService#gcIfUnused})</li>
  *   <li>{@link #saveFile} — {@code @Deprecated}, v18.6b 마이그레이션 후 제거 예정</li>
  * </ul>
+ *
+ * <h3>AUDIT-1c — 감사 상세 보강</h3>
+ * <ul>
+ *   <li>approve/reject/upload/linkExistingAsset — {@code @Auditable}(targetId/detail) AOP 기록</li>
+ *   <li>delete — 명시 기록(파일명 포함). AOP 는 로드된 엔티티를 못 보므로 "무엇을 삭제했는지"는 명시 호출</li>
+ *   <li>download/downloadZip — FILE_DOWNLOAD 명시 기록(증빙 접근 추적)</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -79,6 +93,7 @@ public class EvidenceFileService {
     private final EvidenceAssetService evidenceAssetService;
     private final EvidenceAssetRepository evidenceAssetRepository;
     private final FileUploadValidator fileUploadValidator;
+    private final AuditService auditService; // AUDIT-1c
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
@@ -98,6 +113,7 @@ public class EvidenceFileService {
      * @param note     승인 코멘트 (optional, null 허용)
      * @return 갱신된 파일 DTO
      */
+    @Auditable(action = AuditAction.EVIDENCE_APPROVE, targetType = "EvidenceFile", targetId = "#a0")  // a0=fileId
     @Transactional
     public EvidenceFileDto.Response approve(Long fileId, UserPrincipal reviewer, String note) {
         EvidenceFile file = evidenceFileRepository.findById(fileId)
@@ -126,6 +142,7 @@ public class EvidenceFileService {
      * @param note     반려 사유 (DTO 에서 검증됨)
      * @return 갱신된 파일 DTO
      */
+    @Auditable(action = AuditAction.EVIDENCE_REJECT, targetType = "EvidenceFile", targetId = "#a0")   // a0=fileId
     @Transactional
     public EvidenceFileDto.Response reject(Long fileId, UserPrincipal reviewer, String note) {
         EvidenceFile file = evidenceFileRepository.findById(fileId)
@@ -194,6 +211,8 @@ public class EvidenceFileService {
      *   <li>담당자 → pending (관리자 검토 대기)</li>
      * </ul>
      */
+    @Auditable(action = AuditAction.FILE_UPLOAD, targetType = "EvidenceFile",
+               targetId = "#a0", detail = "#a1.originalFilename")  // a0=evidenceTypeId, a1=MultipartFile
     @Transactional
     public EvidenceFileDto.UploadResponse upload(Long evidenceTypeId,
                                                   MultipartFile file,
@@ -269,6 +288,8 @@ public class EvidenceFileService {
      * <p>fileName 정책 (Q6 = link 단위 보존): {@code fileName} 명시값 우선,
      * null/blank 시 {@code asset.originalFileName} fallback.</p>
      */
+    @Auditable(action = AuditAction.FILE_UPLOAD, targetType = "EvidenceFile",
+               targetId = "#a0", detail = "#a2")  // a0=evidenceTypeId, a2=fileName
     @Transactional
     public EvidenceFileDto.Response linkExistingAsset(Long evidenceTypeId,
                                                        Long assetId,
@@ -359,6 +380,10 @@ public class EvidenceFileService {
 
             String contentType = determineContentType(file.getFileName());
 
+            // AUDIT-1c — 증빙 파일 다운로드(접근) 기록
+            safeAudit(AuditAction.FILE_DOWNLOAD, AuditResult.SUCCESS, "EvidenceFile",
+                    String.valueOf(fileId), file.getFileName());
+
             return EvidenceFileDto.DownloadResponse.builder()
                     .resource(resource)
                     .fileName(file.getFileName())
@@ -437,6 +462,10 @@ public class EvidenceFileService {
 
             log.info("ZIP 다운로드 완료: 통제항목 {} - {}개 파일", leaf.getCode(), fileCount);
 
+            // AUDIT-1c — 일괄(ZIP) 다운로드 기록
+            safeAudit(AuditAction.FILE_DOWNLOAD, AuditResult.SUCCESS, "ControlNode",
+                    String.valueOf(nodeId), leaf.getCode() + " ZIP (" + fileCount + " files)");
+
         } catch (IOException e) {
             log.error("ZIP 다운로드 실패: 통제항목 {} - {}", leaf.getCode(), e.getMessage(), e);
             throw new BusinessException("ZIP 파일 생성에 실패했습니다.");
@@ -492,11 +521,18 @@ public class EvidenceFileService {
      *       위임. reference_count == 0 시 물리 + asset entity 자동 정리 (Q10)</li>
      *   <li>asset == null (옛 데이터, transitional) → 옛 filePath 직접 삭제 + entity 삭제</li>
      * </ul>
+     *
+     * <p>AUDIT-1c: "무엇을 삭제했는지"(파일명)는 AOP 로 못 잡으므로 삭제 전 스냅샷을 떠
+     * 명시 기록한다(@Auditable 미사용).</p>
      */
     @Transactional
     public void delete(Long fileId) {
         EvidenceFile file = evidenceFileRepository.findById(fileId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
+
+        // AUDIT-1c — 삭제 전 스냅샷 (삭제 후/세션 밖에서도 남도록 미리 캡처)
+        String deletedName = file.getFileName();
+        Long etId = (file.getEvidenceType() != null) ? file.getEvidenceType().getId() : null;
 
         // v18.6a — asset 채널과 옛 filePath 채널 분기
         Long assetIdToGc = (file.getAsset() != null) ? file.getAsset().getId() : null;
@@ -519,11 +555,31 @@ public class EvidenceFileService {
         if (assetIdToGc != null) {
             evidenceAssetService.gcIfUnused(assetIdToGc);
         }
+
+        // AUDIT-1c — 무엇을 삭제했는지 (파일명 포함)
+        safeAudit(AuditAction.FILE_DELETE, AuditResult.SUCCESS, "EvidenceFile",
+                String.valueOf(fileId),
+                auditService.toJson(Map.of(
+                        "fileName", String.valueOf(deletedName),
+                        "evidenceTypeId", String.valueOf(etId))));
     }
 
     // ========================================
     // 내부 유틸
     // ========================================
+
+    /**
+     * 감사 기록 — 실패가 업무 흐름을 막지 않도록 삼킴.
+     * {@code auditService.record} 는 REQUIRES_NEW 라 readOnly tx(다운로드) 안에서도 적재된다.
+     */
+    private void safeAudit(AuditAction action, AuditResult result,
+                           String targetType, String targetId, String detail) {
+        try {
+            auditService.record(action, result, targetType, targetId, detail);
+        } catch (Exception ignore) {
+            // 감사 실패는 본 흐름에 영향 없음
+        }
+    }
 
     /**
      * 옛 저장 흐름 — {@code {storage}/evidence/{controlCode}/{etId}/UUID_{filename}}.

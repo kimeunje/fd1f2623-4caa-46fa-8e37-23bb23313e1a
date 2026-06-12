@@ -7,18 +7,26 @@ import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.context.expression.MethodBasedEvaluationContext;
+import org.springframework.core.DefaultParameterNameDiscoverer;
+import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.core.annotation.Order;
+import org.springframework.expression.EvaluationContext;
+import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.stereotype.Component;
+
+import java.lang.reflect.Method;
 
 /**
  * {@link Auditable} 가 붙은 메서드의 성공/실패를 감사 로그로 기록한다.
  *
- * <p><b>@Order(0)</b> — 트랜잭션 advice(기본 LOWEST_PRECEDENCE)보다 <b>바깥</b>에서 돌게 한다.
- * 그래야 {@code proceed()} 가 업무 트랜잭션 commit 까지 포함하고, SUCCESS 기록은 항상
- * 업무가 실제 커밋된 뒤 남는다. (예외 시엔 업무 tx 롤백 + FAILURE 기록은 REQUIRES_NEW 로 보존.)
+ * <p><b>@Order(0)</b> — 트랜잭션 advice(LOWEST_PRECEDENCE)보다 바깥에서 돌아, SUCCESS 기록은
+ * 업무 commit 이후 남는다. 예외 시 FAILURE 기록(REQUIRES_NEW 로 보존) 후 재전파.</p>
  *
- * <p>감사 기록은 {@code REQUIRES_NEW} 새 트랜잭션이므로, 여기서 try-catch 로 감싸 감사 실패가
- * 절대 업무 흐름을 깨지 않도록 한다.
+ * <p><b>targetId / detail</b> 는 {@link Auditable} 의 SpEL 을 메서드 인자({@code #a0..}/파라미터명)
+ * 와 반환값({@code #result})에 대해 평가해 채운다. 평가/기록 실패는 업무 흐름에 영향 없다(삼킴).</p>
  */
 @Slf4j
 @Aspect
@@ -29,26 +37,59 @@ public class AuditAspect {
 
     private final AuditService auditService;
 
+    private final ExpressionParser parser = new SpelExpressionParser();
+    private final ParameterNameDiscoverer paramDiscoverer = new DefaultParameterNameDiscoverer();
+
     @Around("@annotation(auditable)")
     public Object around(ProceedingJoinPoint pjp, Auditable auditable) throws Throwable {
-        Object result;
+        Object result = null;
+        Throwable thrown = null;
         try {
             result = pjp.proceed();
         } catch (Throwable ex) {
-            safeRecord(auditable, AuditResult.FAILURE,
-                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
-            throw ex;
+            thrown = ex;
         }
-        safeRecord(auditable, AuditResult.SUCCESS, null);
+
+        AuditResult auditResult = (thrown == null) ? AuditResult.SUCCESS : AuditResult.FAILURE;
+        String targetId = evalSpel(auditable.targetId(), pjp, result);
+        String detail = (thrown != null)
+                ? (thrown.getClass().getSimpleName() + ": " + thrown.getMessage())
+                : evalSpel(auditable.detail(), pjp, result);
+
+        safeRecord(auditable, auditResult, targetId, detail);
+
+        if (thrown != null) {
+            throw thrown;
+        }
         return result;
     }
 
-    private void safeRecord(Auditable auditable, AuditResult result, String detail) {
+    private void safeRecord(Auditable auditable, AuditResult result, String targetId, String detail) {
         try {
             String targetType = auditable.targetType().isBlank() ? null : auditable.targetType();
-            auditService.record(auditable.action(), result, targetType, null, detail);
+            auditService.record(auditable.action(), result, targetType, targetId, detail);
         } catch (Throwable t) {
             log.warn("[audit] 기록 실패 (업무 흐름 영향 없음): {}", t.toString());
+        }
+    }
+
+    /** SpEL 평가 — 인자(#a0../파라미터명) + 반환값(#result). 공백/실패 시 null. */
+    private String evalSpel(String expr, ProceedingJoinPoint pjp, Object result) {
+        if (expr == null || expr.isBlank()) {
+            return null;
+        }
+        try {
+            MethodSignature signature = (MethodSignature) pjp.getSignature();
+            Method method = signature.getMethod();
+            MethodBasedEvaluationContext ctx = new MethodBasedEvaluationContext(
+                    pjp.getTarget(), method, pjp.getArgs(), paramDiscoverer);
+            ctx.setVariable("result", result);
+            EvaluationContext evalCtx = ctx;
+            Object value = parser.parseExpression(expr).getValue(evalCtx);
+            return value == null ? null : String.valueOf(value);
+        } catch (Throwable t) {
+            log.debug("[audit] SpEL 평가 실패 (무시): expr={}, {}", expr, t.toString());
+            return null;
         }
     }
 }

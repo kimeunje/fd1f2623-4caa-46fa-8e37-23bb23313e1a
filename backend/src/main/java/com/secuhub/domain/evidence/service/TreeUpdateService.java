@@ -10,6 +10,8 @@ import com.secuhub.domain.evidence.entity.Framework;
 import com.secuhub.domain.evidence.entity.NodeType;
 import com.secuhub.domain.evidence.repository.ControlNodeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
+import com.secuhub.config.audit.Auditable;
+import com.secuhub.domain.audit.AuditAction;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
@@ -99,6 +101,7 @@ public class TreeUpdateService {
     @PersistenceContext
     private EntityManager entityManager;
 
+    @Auditable(action = AuditAction.TREE_CHANGE, targetType = "Framework", targetId = "#a0")  // a0=frameworkId
     @Transactional
     public TreeUpdateDto.Response updateTree(Long frameworkId, TreeUpdateDto.Request req) {
         // -----------------------------------------------------------

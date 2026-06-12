@@ -1,7 +1,9 @@
 package com.secuhub.domain.evidence.service;
 
 import com.secuhub.common.exception.BusinessException;
+import com.secuhub.config.audit.Auditable;
 import com.secuhub.config.jwt.UserPrincipal;
+import com.secuhub.domain.audit.AuditAction;
 import com.secuhub.domain.evidence.dto.ScriptManagementDto;
 import com.secuhub.domain.evidence.dto.ScriptVersionDto;
 import com.secuhub.domain.evidence.entity.Script;
@@ -30,10 +32,8 @@ import java.util.UUID;
  * v18.8.2 — Python 스크립트 UID 기반 관리.
  * v19.4 — 버전 이력 + 롤백 (carry-over ⑤).
  *
- * <p>스크립트 본문은 기존대로 {@code {base-dir}/{uuid}.py} 파일에 저장·실행되고(실행 경로
- * 무변경), 저장(create/update)할 때마다 {@link ScriptVersion} 으로 스냅샷이 적재된다.
- * 롤백은 옛 버전 내용을 복사한 "새 버전"을 만들어 전진하므로 이력은 사라지지 않고,
- * "실행 파일 = 항상 최신 versionNo" 불변식이 유지된다.</p>
+ * <p>AUDIT-1: create/update/delete/rollback 에 {@code @Auditable} (targetId 포함) —
+ * AuditAspect 가 성공/실패 + 대상 id 기록.</p>
  */
 @Slf4j
 @Service
@@ -47,16 +47,14 @@ public class ScriptManagementService {
     @Value("${app.scripts.base-dir:./scripts}")
     private String scriptsBaseDir;
 
-    /** 파일 크기 제한 — 1MB (Python 스크립트로 충분). */
+    /** 파일 크기 제한 — 1MB. */
     private static final long MAX_SCRIPT_SIZE = 1024 * 1024L;
 
     // ========================================
     // CRUD
     // ========================================
 
-    /**
-     * 신규 작성 — UUID 부여 + {uuid}.py 파일 저장 + entity save + v1 기록.
-     */
+    @Auditable(action = AuditAction.SCRIPT_CREATE, targetType = "Script", targetId = "#result.id")
     @Transactional
     public ScriptManagementDto.ScriptResponse create(ScriptManagementDto.CreateRequest req) {
         validateContentSize(req.getContent());
@@ -80,7 +78,6 @@ public class ScriptManagementService {
                     .build();
             Script saved = scriptRepository.save(script);
 
-            // v19.4 — 최초 버전 기록
             recordVersion(saved.getId(), 1, req.getContent(), "최초 작성");
 
             log.info("v18.8.3 스크립트 신규 등록: id={}, uuid={}, size={}",
@@ -92,12 +89,7 @@ public class ScriptManagementService {
         }
     }
 
-    /**
-     * 기존 스크립트 수정 — 같은 file_path 에 덮어쓰기 + 새 버전 기록.
-     *
-     * <p>레거시(버저닝 이전) 스크립트는 수정 직전 현재 내용을 v1 로 자동 시드한 뒤,
-     * 새 내용을 다음 버전으로 기록한다.</p>
-     */
+    @Auditable(action = AuditAction.SCRIPT_UPDATE, targetType = "Script", targetId = "#a0")
     @Transactional
     public ScriptManagementDto.ScriptResponse update(Long id, ScriptManagementDto.UpdateRequest req) {
         validateContentSize(req.getContent());
@@ -105,7 +97,7 @@ public class ScriptManagementService {
         Script script = scriptRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("스크립트가 존재하지 않습니다: id=" + id));
 
-        ensureSeedVersion(script); // v19.4 — 레거시 시드
+        ensureSeedVersion(script);
 
         Path target = resolveTargetPath(script.getFilePath());
         try {
@@ -119,7 +111,6 @@ public class ScriptManagementService {
         script.setContentSize((long) req.getContent().getBytes(StandardCharsets.UTF_8).length);
         Script saved = scriptRepository.save(script);
 
-        // v19.4 — 새 버전 기록 (메모 입력은 FE sub-phase 에서 추가 예정; 지금은 고정값)
         int next = scriptVersionRepository.findMaxVersionNo(id) + 1;
         recordVersion(id, next, req.getContent(), "수정");
 
@@ -127,18 +118,13 @@ public class ScriptManagementService {
         return toResponse(saved, req.getContent());
     }
 
-    /**
-     * 스크립트 내용 조회 — FE 의 ScriptEditorDialog 가 편집 모드 진입 시 호출.
-     */
     public ScriptManagementDto.ScriptResponse getContent(Long id) {
         Script script = scriptRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("스크립트가 존재하지 않습니다: id=" + id));
         return toResponse(script, readFile(script));
     }
 
-    /**
-     * v18.8.7 — 스크립트 삭제 (Hard delete). 버전 이력은 FK ON DELETE CASCADE 로 동반 삭제.
-     */
+    @Auditable(action = AuditAction.SCRIPT_DELETE, targetType = "Script", targetId = "#a0")
     @Transactional
     public void delete(Long id) {
         Script script = scriptRepository.findById(id)
@@ -171,9 +157,6 @@ public class ScriptManagementService {
     // v19.4 — 버전 이력 / 롤백
     // ========================================
 
-    /**
-     * 버전 목록 (오래된 순). 레거시 스크립트는 현재 내용을 v1 로 시드한 뒤 반환.
-     */
     @Transactional
     public List<ScriptVersionDto.VersionResponse> listVersions(Long scriptId) {
         Script script = scriptRepository.findById(scriptId)
@@ -184,9 +167,6 @@ public class ScriptManagementService {
                 .toList();
     }
 
-    /**
-     * 특정 버전 내용 (미리보기).
-     */
     @Transactional
     public ScriptVersionDto.VersionContentResponse getVersionContent(Long scriptId, int versionNo) {
         Script script = scriptRepository.findById(scriptId)
@@ -198,10 +178,8 @@ public class ScriptManagementService {
         return ScriptVersionDto.VersionContentResponse.from(v);
     }
 
-    /**
-     * 롤백 — 대상 버전 내용을 실행 파일에 다시 쓰고, 그 내용으로 "새 버전"을 전진 기록.
-     * 이력은 사라지지 않으며 "실행 파일 = 최신 버전" 불변식 유지.
-     */
+    @Auditable(action = AuditAction.SCRIPT_ROLLBACK, targetType = "Script",
+            targetId = "#a0", detail = "'v' + #a1")
     @Transactional
     public ScriptManagementDto.ScriptResponse rollback(Long scriptId, int versionNo) {
         Script script = scriptRepository.findById(scriptId)
@@ -238,7 +216,6 @@ public class ScriptManagementService {
     // 내부 helper
     // ========================================
 
-    /** 레거시(버전 0건) 스크립트면 현재 파일 내용을 v1 로 시드. */
     private void ensureSeedVersion(Script script) {
         if (scriptVersionRepository.existsByScriptId(script.getId())) {
             return;
