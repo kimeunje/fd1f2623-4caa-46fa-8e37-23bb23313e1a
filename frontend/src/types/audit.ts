@@ -1,4 +1,4 @@
-// 감사 로그 타입 (AUDIT-3). BE DTO 와 1:1 정합 — Long→number, LocalDateTime→string(ISO), nullable Java→`| null`.
+// 감사 로그 타입 — BE DTO(AuditLogResponse / AuditLogPageResponse)와 1:1.
 
 export type AuditAction =
   | 'LOGIN_SUCCESS'
@@ -17,38 +17,39 @@ export type AuditAction =
   | 'FRAMEWORK_CHANGE'
   | 'TREE_CHANGE'
   | 'FILE_UPLOAD'
-  | 'FILE_DELETE';
+  | 'FILE_DOWNLOAD'
+  | 'FILE_DELETE'
 
-export type AuditResult = 'SUCCESS' | 'FAILURE' | 'BLOCKED';
+export type AuditResult = 'SUCCESS' | 'FAILURE' | 'BLOCKED'
 
 export interface AuditLog {
-  id: number;
-  actorUserId: number | null;
-  actorEmail: string | null;
-  action: AuditAction;
-  targetType: string | null;
-  targetId: string | null;
-  detail: string | null;
-  clientIp: string | null;
-  result: AuditResult;
-  createdAt: string; // ISO-8601
+  id: number
+  actorUserId: number | null
+  actorEmail: string | null
+  action: AuditAction
+  targetType: string | null
+  targetId: string | null
+  detail: string | null
+  clientIp: string | null
+  result: AuditResult
+  createdAt: string
 }
 
 export interface AuditLogPage {
-  content: AuditLog[];
-  page: number;
-  size: number;
-  totalElements: number;
-  totalPages: number;
-  hasNext: boolean;
+  content: AuditLog[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+  hasNext: boolean
 }
 
 export interface AuditLogSearchParams {
-  actorUserId?: number;
-  action?: AuditAction;
-  result?: AuditResult;
-  from?: string; // ISO LocalDateTime (예: 2026-06-09T12:34)
-  to?: string;
-  page?: number;
-  size?: number;
+  actorUserId?: number
+  action?: AuditAction
+  result?: AuditResult
+  from?: string
+  to?: string
+  page?: number
+  size?: number
 }

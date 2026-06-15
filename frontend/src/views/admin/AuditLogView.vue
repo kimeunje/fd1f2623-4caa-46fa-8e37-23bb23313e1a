@@ -26,6 +26,7 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   FRAMEWORK_CHANGE: '프레임워크 변경',
   TREE_CHANGE: '통제 트리 변경',
   FILE_UPLOAD: '파일 업로드',
+  FILE_DOWNLOAD: '파일 다운로드',
   FILE_DELETE: '파일 삭제',
 }
 
@@ -73,7 +74,7 @@ async function load() {
       pageData.value = null
       return
     }
-    pageData.value = body.data // 봉투의 data = AuditLogPage
+    pageData.value = body.data
   } catch (e: any) {
     error.value = e?.response?.data?.message ?? '조회 중 오류가 발생했습니다.'
     pageData.value = null
@@ -159,8 +160,25 @@ function actor(row: AuditLog): string {
 
 function target(row: AuditLog): string {
   if (!row.targetType && !row.targetId) return '-'
-  if (row.targetType && row.targetId) return `${row.targetType}:${row.targetId}`
+  if (row.targetType && row.targetId) return `${row.targetType} #${row.targetId}`
   return row.targetType ?? row.targetId ?? '-'
+}
+
+/** IPv6 루프백/IPv4-mapped 를 보기 좋게 정규화. */
+function formatIp(ip: string | null): string {
+  if (!ip) return '-'
+  if (ip === '::1' || ip === '0:0:0:0:0:0:0:1') return '127.0.0.1'
+  const mapped = ip.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i)
+  return mapped ? mapped[1] : ip
+}
+
+/** detail 이 JSON 이면 보기 좋게 pretty-print, 아니면 원문. */
+function formatDetail(detail: string): string {
+  try {
+    return JSON.stringify(JSON.parse(detail), null, 2)
+  } catch {
+    return detail
+  }
 }
 
 onMounted(load)
@@ -182,7 +200,7 @@ onMounted(load)
     <!-- 필터 -->
     <div class="flex flex-wrap items-end gap-3 p-4 bg-gray-50 border border-gray-200 rounded-lg mb-4">
       <label class="flex flex-col gap-1 text-xs text-gray-600">
-        <span>액션</span>
+        <span>활동</span>
         <select v-model="filters.action" class="border border-gray-300 rounded-md px-2 py-1.5 text-sm bg-white">
           <option value="">전체</option>
           <option v-for="a in ACTION_OPTIONS" :key="a" :value="a">{{ actionLabel(a) }}</option>
@@ -198,7 +216,7 @@ onMounted(load)
       </label>
 
       <label class="flex flex-col gap-1 text-xs text-gray-600">
-        <span>행위자 ID</span>
+        <span>사용자 ID</span>
         <input
           v-model="filters.actorUserId"
           type="number"
@@ -248,19 +266,20 @@ onMounted(load)
       <table class="w-full text-sm">
         <thead>
           <tr class="bg-gray-50 text-gray-500">
-            <th class="px-3 py-2.5 text-left font-semibold whitespace-nowrap">시각</th>
-            <th class="px-3 py-2.5 text-left font-semibold">행위자</th>
-            <th class="px-3 py-2.5 text-left font-semibold">액션</th>
+            <th class="px-3 py-2.5 text-left font-semibold whitespace-nowrap">사용자 · 일시</th>
+            <th class="px-3 py-2.5 text-left font-semibold">활동</th>
             <th class="px-3 py-2.5 text-left font-semibold">결과</th>
             <th class="px-3 py-2.5 text-left font-semibold">대상</th>
-            <th class="px-3 py-2.5 text-left font-semibold whitespace-nowrap">IP</th>
-            <th class="px-3 py-2.5 text-left font-semibold">상세</th>
+            <th class="px-3 py-2.5 text-left font-semibold whitespace-nowrap">접속 IP</th>
+            <th class="px-3 py-2.5 text-left font-semibold">상세 내용</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="row in pageData.content" :key="row.id" class="border-t border-gray-100 align-top">
-            <td class="px-3 py-2.5 whitespace-nowrap text-gray-700">{{ formatDateTime(row.createdAt) }}</td>
-            <td class="px-3 py-2.5 text-gray-700">{{ actor(row) }}</td>
+            <td class="px-3 py-2.5">
+              <div class="text-gray-800">{{ actor(row) }}</div>
+              <div class="text-xs text-gray-400 whitespace-nowrap">{{ formatDateTime(row.createdAt) }}</div>
+            </td>
             <td class="px-3 py-2.5 text-gray-800">{{ actionLabel(row.action) }}</td>
             <td class="px-3 py-2.5">
               <span :class="['inline-block px-2 py-0.5 rounded-full text-xs font-semibold', resultBadgeClass(row.result)]">
@@ -268,7 +287,7 @@ onMounted(load)
               </span>
             </td>
             <td class="px-3 py-2.5 text-gray-700">{{ target(row) }}</td>
-            <td class="px-3 py-2.5 whitespace-nowrap text-gray-700 tabular-nums">{{ row.clientIp ?? '-' }}</td>
+            <td class="px-3 py-2.5 whitespace-nowrap text-gray-700 tabular-nums">{{ formatIp(row.clientIp) }}</td>
             <td class="px-3 py-2.5">
               <template v-if="row.detail">
                 <button class="text-blue-600 text-xs hover:underline" @click="toggleDetail(row.id)">
@@ -277,7 +296,7 @@ onMounted(load)
                 <pre
                   v-if="expandedId === row.id"
                   class="mt-1.5 p-2 bg-gray-900 text-gray-100 rounded-md text-xs whitespace-pre-wrap break-all max-w-xs"
-                >{{ row.detail }}</pre>
+                >{{ formatDetail(row.detail) }}</pre>
               </template>
               <span v-else class="text-gray-400">-</span>
             </td>
