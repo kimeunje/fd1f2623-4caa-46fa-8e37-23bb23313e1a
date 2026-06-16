@@ -23,8 +23,9 @@ import java.util.List;
 /**
  * Phase 5-15e (v15.9) — admin 사용자 관리 + 사용자 본인 비밀번호 변경 service.
  *
- * <p>AUDIT-1: create/update/delete 에 {@code @Auditable} (targetId 포함).
- * (changePassword 감사는 선택 — 가이드 참조.)</p>
+ * <p>AUDIT-1/B: create/update/delete 에 {@code @Auditable}. create/update 는 반환 DTO 에서
+ * targetName(사용자명)을 캡처. delete 는 void(반환 없음)라 표시명 생략 — soft-delete 라 users
+ * 행이 보존되어 이름은 계정 화면에서 여전히 확인 가능. (changePassword 감사는 선택.)</p>
  */
 @Slf4j
 @Service
@@ -52,7 +53,7 @@ public class UserService {
     }
 
     @Auditable(action = AuditAction.USER_CREATE, targetType = "User",
-            targetId = "#result.id", detail = "#a0.email")
+            targetId = "#result.id", targetName = "#result.name", detail = "#a0.email")
     @Transactional
     public UserDto.DetailResponse create(UserDto.CreateRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
@@ -73,7 +74,8 @@ public class UserService {
         return UserDto.DetailResponse.of(saved);
     }
 
-    @Auditable(action = AuditAction.USER_UPDATE, targetType = "User", targetId = "#a0")
+    @Auditable(action = AuditAction.USER_UPDATE, targetType = "User",
+            targetId = "#a0", targetName = "#result.name")
     @Transactional
     public UserDto.DetailResponse update(Long id, UserDto.UpdateRequest request) {
         User user = findOrThrow(id);

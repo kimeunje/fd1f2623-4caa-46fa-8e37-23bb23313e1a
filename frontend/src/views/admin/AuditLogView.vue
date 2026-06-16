@@ -158,7 +158,8 @@ function actor(row: AuditLog): string {
   return '시스템/익명'
 }
 
-function target(row: AuditLog): string {
+/** 타입 #id 표기 (대상 보조 라인). 둘 다 없으면 '-'. */
+function targetRef(row: AuditLog): string {
   if (!row.targetType && !row.targetId) return '-'
   if (row.targetType && row.targetId) return `${row.targetType} #${row.targetId}`
   return row.targetType ?? row.targetId ?? '-'
@@ -286,7 +287,13 @@ onMounted(load)
                 {{ resultLabel(row.result) }}
               </span>
             </td>
-            <td class="px-3 py-2.5 text-gray-700">{{ target(row) }}</td>
+            <td class="px-3 py-2.5">
+              <template v-if="row.targetName">
+                <div class="text-gray-800 font-medium break-all">{{ row.targetName }}</div>
+                <div class="text-xs text-gray-400">{{ targetRef(row) }}</div>
+              </template>
+              <span v-else class="text-gray-700">{{ targetRef(row) }}</span>
+            </td>
             <td class="px-3 py-2.5 whitespace-nowrap text-gray-700 tabular-nums">{{ formatIp(row.clientIp) }}</td>
             <td class="px-3 py-2.5">
               <template v-if="row.detail">

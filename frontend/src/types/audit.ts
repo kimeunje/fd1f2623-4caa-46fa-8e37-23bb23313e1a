@@ -29,6 +29,7 @@ export interface AuditLog {
   action: AuditAction
   targetType: string | null
   targetId: string | null
+  targetName: string | null
   detail: string | null
   clientIp: string | null
   result: AuditResult

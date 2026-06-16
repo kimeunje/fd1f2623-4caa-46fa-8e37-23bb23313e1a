@@ -12,7 +12,6 @@ import org.springframework.context.expression.MethodBasedEvaluationContext;
 import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.core.annotation.Order;
-import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.stereotype.Component;
@@ -22,11 +21,11 @@ import java.lang.reflect.Method;
 /**
  * {@link Auditable} 가 붙은 메서드의 성공/실패를 감사 로그로 기록한다.
  *
- * <p><b>@Order(0)</b> — 트랜잭션 advice(LOWEST_PRECEDENCE)보다 바깥에서 돌아, SUCCESS 기록은
- * 업무 commit 이후 남는다. 예외 시 FAILURE 기록(REQUIRES_NEW 로 보존) 후 재전파.</p>
+ * <p><b>@Order(0)</b> — 트랜잭션 advice 보다 바깥에서 돌아, SUCCESS 기록은 업무 commit 이후.
+ * 예외 시 FAILURE 기록(REQUIRES_NEW 로 보존) 후 재전파.</p>
  *
- * <p><b>targetId / detail</b> 는 {@link Auditable} 의 SpEL 을 메서드 인자({@code #a0..}/파라미터명)
- * 와 반환값({@code #result})에 대해 평가해 채운다. 평가/기록 실패는 업무 흐름에 영향 없다(삼킴).</p>
+ * <p><b>targetId / targetName / detail</b> 는 {@link Auditable} 의 SpEL 을 메서드 인자({@code #a0..}/
+ * 파라미터명)와 반환값({@code #result})에 대해 평가해 채운다. 평가/기록 실패는 업무 흐름에 영향 없다.</p>
  */
 @Slf4j
 @Aspect
@@ -52,11 +51,12 @@ public class AuditAspect {
 
         AuditResult auditResult = (thrown == null) ? AuditResult.SUCCESS : AuditResult.FAILURE;
         String targetId = evalSpel(auditable.targetId(), pjp, result);
+        String targetName = evalSpel(auditable.targetName(), pjp, result);
         String detail = (thrown != null)
                 ? (thrown.getClass().getSimpleName() + ": " + thrown.getMessage())
                 : evalSpel(auditable.detail(), pjp, result);
 
-        safeRecord(auditable, auditResult, targetId, detail);
+        safeRecord(auditable, auditResult, targetId, targetName, detail);
 
         if (thrown != null) {
             throw thrown;
@@ -64,10 +64,11 @@ public class AuditAspect {
         return result;
     }
 
-    private void safeRecord(Auditable auditable, AuditResult result, String targetId, String detail) {
+    private void safeRecord(Auditable auditable, AuditResult result,
+                            String targetId, String targetName, String detail) {
         try {
             String targetType = auditable.targetType().isBlank() ? null : auditable.targetType();
-            auditService.record(auditable.action(), result, targetType, targetId, detail);
+            auditService.record(auditable.action(), result, targetType, targetId, targetName, detail);
         } catch (Throwable t) {
             log.warn("[audit] 기록 실패 (업무 흐름 영향 없음): {}", t.toString());
         }
@@ -84,8 +85,7 @@ public class AuditAspect {
             MethodBasedEvaluationContext ctx = new MethodBasedEvaluationContext(
                     pjp.getTarget(), method, pjp.getArgs(), paramDiscoverer);
             ctx.setVariable("result", result);
-            EvaluationContext evalCtx = ctx;
-            Object value = parser.parseExpression(expr).getValue(evalCtx);
+            Object value = parser.parseExpression(expr).getValue(ctx);
             return value == null ? null : String.valueOf(value);
         } catch (Throwable t) {
             log.debug("[audit] SpEL 평가 실패 (무시): expr={}, {}", expr, t.toString());

@@ -19,9 +19,11 @@ import java.time.LocalDateTime;
 /**
  * 감사 로그 1건. append-only — 수정/삭제는 보존정책 GC(AuditRetentionGcService)만 수행.
  *
- * <p>스키마: {@code V_v19_12__create_audit_logs.sql} (prod). dev/test 는 본 매핑으로 ddl-auto 생성.
+ * <p>스키마: {@code V_v19_12__create_audit_logs.sql} + {@code V_v19_13__add_audit_target_name.sql} (prod).
+ * dev/test 는 본 매핑으로 ddl-auto 생성.
  * <p>FK: actor_user_id → users(id) ON DELETE SET NULL (계정 삭제돼도 로그 보존, actor 만 NULL).
  * <p>{@code detail} 은 @Lob 대신 columnDefinition="LONGTEXT" 명시 (L_LOB_STRING_DIALECT).
+ * <p>{@code targetName} (B) — 대상의 표시명 스냅샷. 삭제/개명 뒤에도 "무엇을" 보존.
  */
 @Entity
 @Table(name = "audit_logs")
@@ -53,6 +55,10 @@ public class AuditLog {
     @Column(name = "target_id", length = 128)
     private String targetId;
 
+    /** 대상 표시명 스냅샷 (파일명/사용자명 등). 기록 시점 값 — 이후 삭제/개명돼도 보존. nullable. */
+    @Column(name = "target_name", length = 255)
+    private String targetName;
+
     /** 부가 정보(JSON 권장). LONGTEXT. */
     @Column(name = "detail", columnDefinition = "LONGTEXT")
     private String detail;
@@ -71,13 +77,14 @@ public class AuditLog {
 
     @Builder
     private AuditLog(Long actorUserId, String actorEmail, AuditAction action,
-                     String targetType, String targetId, String detail,
+                     String targetType, String targetId, String targetName, String detail,
                      String clientIp, AuditResult result) {
         this.actorUserId = actorUserId;
         this.actorEmail = actorEmail;
         this.action = action;
         this.targetType = targetType;
         this.targetId = targetId;
+        this.targetName = targetName;
         this.detail = detail;
         this.clientIp = clientIp;
         this.result = result;

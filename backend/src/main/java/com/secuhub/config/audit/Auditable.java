@@ -12,17 +12,20 @@ import java.lang.annotation.Target;
  *
  * <p>대상은 보안 + 민감 변경 메서드로 한정(조회성 GET 금지 — L_OVER_ENGINEER_DETECT).</p>
  *
- * <p><b>targetId / detail (SpEL)</b> — AuditAspect 가 메서드 인자/반환값을 대상으로 평가.
- * 인자는 위치 변수 {@code #a0, #a1, ...}(항상 사용 가능) 또는 파라미터명({@code #fileId},
- * {@code -parameters} 컴파일 시) 으로, 반환값은 {@code #result} 로 참조. 평가 실패/공백이면 null.</p>
+ * <p><b>targetId / targetName / detail (SpEL)</b> — AuditAspect 가 메서드 인자/반환값을 평가.
+ * 인자는 {@code #a0, #a1, ...}(항상 사용 가능) 또는 파라미터명({@code #fileId}, {@code -parameters} 시),
+ * 반환값은 {@code #result} 로 참조. 평가 실패/공백이면 null.</p>
  *
  * <pre>{@code
- * @Auditable(action = AuditAction.SCRIPT_DELETE, targetType = "Script", targetId = "#a0")
- * public void delete(Long scriptId) { ... }
+ * // 반환 DTO 에 이름이 있으면 #result 로:
+ * @Auditable(action = AuditAction.USER_UPDATE, targetType = "User",
+ *            targetId = "#a0", targetName = "#result.name")
+ * public UserDto.DetailResponse update(Long id, UserDto.UpdateRequest req) { ... }
  *
- * @Auditable(action = AuditAction.USER_CREATE, targetType = "User",
- *            targetId = "#result.id", detail = "#a0.email")
- * public UserDto.DetailResponse create(UserDto.CreateRequest request) { ... }
+ * // 인자에 이름이 있으면 #aN 으로:
+ * @Auditable(action = AuditAction.FILE_UPLOAD, targetType = "EvidenceFile",
+ *            targetId = "#a0", targetName = "#a1.originalFilename")
+ * public ... upload(Long evidenceTypeId, MultipartFile file, ...) { ... }
  * }</pre>
  */
 @Target(ElementType.METHOD)
@@ -38,6 +41,9 @@ public @interface Auditable {
     /** 대상 식별자 SpEL (예: "#a0", "#result.id"). 비우면 null. */
     String targetId() default "";
 
-    /** 부가 상세 SpEL (예: "#a1.originalFilename", "'v' + #a1"). 비우면 null. */
+    /** 대상 표시명 SpEL (예: "#result.name", "#a1.originalFilename"). 비우면 null. */
+    String targetName() default "";
+
+    /** 부가 상세 SpEL (예: "'v' + #a1"). 비우면 null. */
     String detail() default "";
 }

@@ -8,11 +8,10 @@ import com.secuhub.domain.audit.AuditResult;
 import java.time.LocalDateTime;
 
 /**
- * 감사 로그 1건 응답 (AUDIT-2).
+ * 감사 로그 1건 응답 (AUDIT-2, B: targetName).
  *
- * <p>enum 은 Jackson 이 name 으로 직렬화(예: "LOGIN_SUCCESS"/"SUCCESS"),
- * LocalDateTime 은 ISO-8601 문자열 자동 직렬화(본 프로젝트 컨벤션).
- * null 필드는 응답에서 생략(TreeDto 의 NON_NULL 패턴 정합).</p>
+ * <p>enum 은 Jackson 이 name 으로 직렬화, LocalDateTime 은 ISO-8601 자동 직렬화.
+ * null 필드는 응답에서 생략(NON_NULL) — targetName 이 없는 행(스크립트/트리 등)은 키 자체가 빠진다.</p>
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AuditLogResponse(
@@ -22,6 +21,7 @@ public record AuditLogResponse(
         AuditAction action,
         String targetType,
         String targetId,
+        String targetName,
         String detail,
         String clientIp,
         AuditResult result,
@@ -35,6 +35,7 @@ public record AuditLogResponse(
                 a.getAction(),
                 a.getTargetType(),
                 a.getTargetId(),
+                a.getTargetName(),
                 a.getDetail(),
                 a.getClientIp(),
                 a.getResult(),
