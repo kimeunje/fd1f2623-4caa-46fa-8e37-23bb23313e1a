@@ -15,11 +15,10 @@ import java.time.LocalDateTime;
 /**
  * 감사 로그 조회 API (AUDIT-2). admin 전용 — class 레벨 @PreAuthorize(대문자, 본 프로젝트 컨벤션).
  *
- * <p>{@code GET /api/v1/admin/audit-logs?actorUserId=&action=&result=&from=&to=&page=&size=}
- * 모든 필터 optional. 정렬 created_at DESC 고정. 페이지네이션.</p>
+ * <p>{@code GET /api/v1/admin/audit-logs?keyword=&action=&result=&from=&to=&page=&size=}
+ * 모든 필터 optional. keyword 는 이메일/IP/대상명 부분일치. 정렬 created_at DESC 고정. 페이지네이션.</p>
  *
- * <p>비로그인 = 401(SecurityConfig anyRequest().authenticated()),
- * 비admin = 403(@PreAuthorize) — 다른 admin 컨트롤러와 동일.</p>
+ * <p>비로그인 = 401, 비admin = 403(@PreAuthorize) — 다른 admin 컨트롤러와 동일.</p>
  */
 @RestController
 @RequestMapping("/api/v1/admin/audit-logs")
@@ -31,7 +30,7 @@ public class AuditLogQueryController {
 
     @GetMapping
     public ApiResponse<AuditLogPageResponse> search(
-            @RequestParam(required = false) Long actorUserId,
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) AuditAction action,
             @RequestParam(required = false) AuditResult result,
             @RequestParam(required = false)
@@ -42,6 +41,6 @@ public class AuditLogQueryController {
             @RequestParam(defaultValue = "20") int size) {
 
         return ApiResponse.ok(
-                auditQueryService.search(actorUserId, action, result, from, to, page, size));
+                auditQueryService.search(keyword, action, result, from, to, page, size));
     }
 }

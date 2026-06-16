@@ -49,9 +49,9 @@ const page = ref(0)
 const size = ref(20)
 
 const filters = reactive({
+  keyword: '' as string,
   action: '' as AuditAction | '',
   result: '' as AuditResult | '',
-  actorUserId: '' as string,
   from: '' as string,
   to: '' as string,
 })
@@ -61,9 +61,9 @@ async function load() {
   error.value = ''
   try {
     const params: AuditLogSearchParams = { page: page.value, size: size.value }
+    if (filters.keyword.trim() !== '') params.keyword = filters.keyword.trim()
     if (filters.action) params.action = filters.action
     if (filters.result) params.result = filters.result
-    if (filters.actorUserId.trim() !== '') params.actorUserId = Number(filters.actorUserId)
     if (filters.from) params.from = filters.from
     if (filters.to) params.to = filters.to
 
@@ -89,9 +89,9 @@ function applyFilters() {
 }
 
 function resetFilters() {
+  filters.keyword = ''
   filters.action = ''
   filters.result = ''
-  filters.actorUserId = ''
   filters.from = ''
   filters.to = ''
   page.value = 0
@@ -201,6 +201,17 @@ onMounted(load)
     <!-- 필터 -->
     <div class="flex flex-wrap items-end gap-3 p-4 bg-gray-50 border border-gray-200 rounded-lg mb-4">
       <label class="flex flex-col gap-1 text-xs text-gray-600">
+        <span>검색</span>
+        <input
+          v-model="filters.keyword"
+          type="text"
+          placeholder="이메일 · IP · 파일명"
+          class="border border-gray-300 rounded-md px-2 py-1.5 text-sm bg-white w-56"
+          @keyup.enter="applyFilters"
+        />
+      </label>
+
+      <label class="flex flex-col gap-1 text-xs text-gray-600">
         <span>활동</span>
         <select v-model="filters.action" class="border border-gray-300 rounded-md px-2 py-1.5 text-sm bg-white">
           <option value="">전체</option>
@@ -214,17 +225,6 @@ onMounted(load)
           <option value="">전체</option>
           <option v-for="r in RESULT_OPTIONS" :key="r" :value="r">{{ resultLabel(r) }}</option>
         </select>
-      </label>
-
-      <label class="flex flex-col gap-1 text-xs text-gray-600">
-        <span>사용자 ID</span>
-        <input
-          v-model="filters.actorUserId"
-          type="number"
-          min="1"
-          placeholder="users.id"
-          class="border border-gray-300 rounded-md px-2 py-1.5 text-sm bg-white w-28"
-        />
       </label>
 
       <label class="flex flex-col gap-1 text-xs text-gray-600">
@@ -276,38 +276,47 @@ onMounted(load)
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in pageData.content" :key="row.id" class="border-t border-gray-100 align-top">
-            <td class="px-3 py-2.5">
-              <div class="text-gray-800">{{ actor(row) }}</div>
-              <div class="text-xs text-gray-400 whitespace-nowrap">{{ formatDateTime(row.createdAt) }}</div>
-            </td>
-            <td class="px-3 py-2.5 text-gray-800">{{ actionLabel(row.action) }}</td>
-            <td class="px-3 py-2.5">
-              <span :class="['inline-block px-2 py-0.5 rounded-full text-xs font-semibold', resultBadgeClass(row.result)]">
-                {{ resultLabel(row.result) }}
-              </span>
-            </td>
-            <td class="px-3 py-2.5">
-              <template v-if="row.targetName">
-                <div class="text-gray-800 font-medium break-all">{{ row.targetName }}</div>
-                <div class="text-xs text-gray-400">{{ targetRef(row) }}</div>
-              </template>
-              <span v-else class="text-gray-700">{{ targetRef(row) }}</span>
-            </td>
-            <td class="px-3 py-2.5 whitespace-nowrap text-gray-700 tabular-nums">{{ formatIp(row.clientIp) }}</td>
-            <td class="px-3 py-2.5">
-              <template v-if="row.detail">
-                <button class="text-blue-600 text-xs hover:underline" @click="toggleDetail(row.id)">
+          <template v-for="row in pageData.content" :key="row.id">
+            <!-- 데이터 행 -->
+            <tr class="border-t border-gray-100 align-top">
+              <td class="px-3 py-2.5">
+                <div class="text-gray-800">{{ actor(row) }}</div>
+                <div class="text-xs text-gray-400 whitespace-nowrap">{{ formatDateTime(row.createdAt) }}</div>
+              </td>
+              <td class="px-3 py-2.5 text-gray-800">{{ actionLabel(row.action) }}</td>
+              <td class="px-3 py-2.5">
+                <span :class="['inline-block px-2 py-0.5 rounded-full text-xs font-semibold', resultBadgeClass(row.result)]">
+                  {{ resultLabel(row.result) }}
+                </span>
+              </td>
+              <td class="px-3 py-2.5">
+                <template v-if="row.targetName">
+                  <div class="text-gray-800 font-medium break-all">{{ row.targetName }}</div>
+                  <div class="text-xs text-gray-400">{{ targetRef(row) }}</div>
+                </template>
+                <span v-else class="text-gray-700">{{ targetRef(row) }}</span>
+              </td>
+              <td class="px-3 py-2.5 whitespace-nowrap text-gray-700 tabular-nums">{{ formatIp(row.clientIp) }}</td>
+              <td class="px-3 py-2.5">
+                <button
+                  v-if="row.detail"
+                  class="text-blue-600 text-xs hover:underline"
+                  @click="toggleDetail(row.id)"
+                >
                   {{ expandedId === row.id ? '접기' : '보기' }}
                 </button>
+                <span v-else class="text-gray-400">-</span>
+              </td>
+            </tr>
+            <!-- 상세 행 (전체 폭, 바로 아래) -->
+            <tr v-if="expandedId === row.id && row.detail" class="bg-gray-50">
+              <td colspan="6" class="px-3 pb-3 pt-0">
                 <pre
-                  v-if="expandedId === row.id"
-                  class="mt-1.5 p-2 bg-gray-900 text-gray-100 rounded-md text-xs whitespace-pre-wrap break-all max-w-xs"
+                  class="p-3 bg-gray-900 text-gray-100 rounded-md text-xs whitespace-pre-wrap break-all overflow-x-auto"
                 >{{ formatDetail(row.detail) }}</pre>
-              </template>
-              <span v-else class="text-gray-400">-</span>
-            </td>
-          </tr>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
     </div>

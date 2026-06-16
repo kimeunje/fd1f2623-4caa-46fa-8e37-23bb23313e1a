@@ -46,7 +46,7 @@ export interface AuditLogPage {
 }
 
 export interface AuditLogSearchParams {
-  actorUserId?: number
+  keyword?: string // 이메일 / IP / 대상명(파일명 등) 부분일치
   action?: AuditAction
   result?: AuditResult
   from?: string

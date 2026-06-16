@@ -28,8 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * AUDIT-2 — 감사 로그 조회 API (admin 전용, 필터 + 페이지네이션).
  *
- * <p>레퍼런스(ControlListPendingTest) 형식: 실제 User 시드 + JWT 토큰 + MockMvc.
- * 표준 인프라 어노테이션(@AutoConfigureMockMvc + @Autowired MockMvc, L_TEST_MOCKMVC_BUILD_PATTERN).</p>
+ * <p>v19.14 — actorUserId 필터 케이스를 통합 검색어(keyword: 이메일/IP/대상명) 케이스로 교체.</p>
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -71,10 +70,12 @@ class AuditLogQueryTest {
         developerToken = jwtTokenProvider.createToken(developer.getId(), developer.getEmail(), "developer");
 
         // 4건 시드 (created_at 을 서로 다른 과거로 보정 → 정렬/기간 필터 결정적)
-        Long r1 = saveAudit(AuditAction.LOGIN_SUCCESS, AuditResult.SUCCESS, admin.getId(), admin.getEmail());
-        Long r2 = saveAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE, null, "attempt@test.com");
-        Long r3 = saveAudit(AuditAction.ACL_BLOCKED, AuditResult.BLOCKED, admin.getId(), admin.getEmail());
-        Long r4 = saveAudit(AuditAction.SCRIPT_DELETE, AuditResult.SUCCESS, admin.getId(), admin.getEmail());
+        // r4 에는 targetName("패치 관리 내역.txt") 부여 → keyword(파일명) 검색 검증용.
+        Long r1 = saveAudit(AuditAction.LOGIN_SUCCESS, AuditResult.SUCCESS, admin.getId(), admin.getEmail(), null);
+        Long r2 = saveAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE, null, "attempt@test.com", null);
+        Long r3 = saveAudit(AuditAction.ACL_BLOCKED, AuditResult.BLOCKED, admin.getId(), admin.getEmail(), null);
+        Long r4 = saveAudit(AuditAction.SCRIPT_DELETE, AuditResult.SUCCESS, admin.getId(), admin.getEmail(),
+                "패치 관리 내역.txt");
         backdate(r1, LocalDateTime.now().minusDays(10));
         backdate(r2, LocalDateTime.now().minusDays(5));
         backdate(r3, LocalDateTime.now().minusDays(1));
@@ -138,13 +139,30 @@ class AuditLogQueryTest {
 
     @Test
     @Order(6)
-    @DisplayName("[Filter:actor] actorUserId=admin → admin 행위만")
-    void testFilterByActor() throws Exception {
+    @DisplayName("[Filter:keyword] 검색어 — 파일명/이메일/IP 부분일치")
+    void testFilterByKeyword() throws Exception {
+        // (1) 대상명(파일명) 부분일치 → r4
         mockMvc.perform(get(URL).header("Authorization", "Bearer " + adminToken)
-                        .param("actorUserId", String.valueOf(admin.getId())))
+                        .param("keyword", "패치"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.totalElements").value(3)); // r1, r3, r4
-        System.out.println("✅ [Filter:actor] actor 필터 확인");
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].action").value("SCRIPT_DELETE"))
+                .andExpect(jsonPath("$.data.content[0].targetName").value("패치 관리 내역.txt"));
+
+        // (2) 이메일 부분일치 → r2
+        mockMvc.perform(get(URL).header("Authorization", "Bearer " + adminToken)
+                        .param("keyword", "attempt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].actorEmail").value("attempt@test.com"));
+
+        // (3) IP 부분일치 → 전체 4건(모두 10.0.0.1)
+        mockMvc.perform(get(URL).header("Authorization", "Bearer " + adminToken)
+                        .param("keyword", "10.0.0.1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(4));
+
+        System.out.println("✅ [Filter:keyword] 파일명/이메일/IP 검색 확인");
     }
 
     @Test
@@ -179,10 +197,12 @@ class AuditLogQueryTest {
     // helpers
     // ==================================================================
 
-    private Long saveAudit(AuditAction action, AuditResult result, Long actorUserId, String actorEmail) {
+    private Long saveAudit(AuditAction action, AuditResult result,
+                           Long actorUserId, String actorEmail, String targetName) {
         AuditLog row = auditLogRepository.save(AuditLog.builder()
                 .action(action).result(result)
                 .actorUserId(actorUserId).actorEmail(actorEmail)
+                .targetName(targetName)
                 .clientIp("10.0.0.1")
                 .build());
         return row.getId();
