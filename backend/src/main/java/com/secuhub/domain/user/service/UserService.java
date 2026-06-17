@@ -125,6 +125,8 @@ public class UserService {
     /**
      * 본인 비밀번호 변경. Q2=A: 현재 비번 검증 → 새 비번 hash → 저장.
      */
+    @Auditable(action = AuditAction.USER_UPDATE, targetType = "User",
+               targetName = "#a0", detail = "'비밀번호 변경'")   // a0=email
     @Transactional
     public void changePassword(String email, UserDto.ChangePasswordRequest request) {
         User user = userRepository.findByEmail(email)

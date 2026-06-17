@@ -8,6 +8,8 @@ import com.secuhub.domain.evidence.entity.Framework;
 import com.secuhub.domain.evidence.entity.NodeType;
 import com.secuhub.domain.evidence.repository.ControlNodeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
+import com.secuhub.config.audit.Auditable;
+import com.secuhub.domain.audit.AuditAction;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
@@ -103,6 +105,8 @@ public class FrameworkExportService {
      * @throws ResourceNotFoundException Framework 미존재
      * @throws BusinessException IO 에러
      */
+    @Auditable(action = AuditAction.FILE_DOWNLOAD, targetType = "Framework",
+               targetId = "#a0", targetName = "#result.fileName")   // a0=frameworkId, result.fileName=xlsx명
     @Transactional(readOnly = true)
     public ExportResult export(Long frameworkId) {
         Framework framework = frameworkRepository.findById(frameworkId)

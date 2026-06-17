@@ -1,6 +1,10 @@
 package com.secuhub.domain.evidence.service;
 
 import com.secuhub.common.exception.ResourceNotFoundException;
+import com.secuhub.config.audit.Auditable;
+import com.secuhub.domain.audit.AuditAction;
+import com.secuhub.domain.audit.AuditResult;
+import com.secuhub.domain.audit.AuditService;
 import com.secuhub.domain.evidence.dto.FrameworkDto;
 import com.secuhub.domain.evidence.entity.CollectionJob;
 import com.secuhub.domain.evidence.entity.ControlNode;
@@ -35,6 +39,15 @@ import java.util.Map;
  *       {@code countGroupByControlIdInFramework} → {@code countGroupByControlNodeIdInFramework}</li>
  *   <li>{@code import ControlNodeRepository} 중복 정리 (pre-existing cosmetic 버그)</li>
  * </ul>
+ *
+ * <h3>AUDIT (A-1) — FRAMEWORK_CHANGE 배선</h3>
+ * <ul>
+ *   <li>create / update / inherit — {@code @Auditable}. 반환 DTO 의 이름을 targetName 으로,
+ *       detail 로 변경 종류(생성/수정/상속)를 남긴다.</li>
+ *   <li>delete — void 반환이라 명시 기록(삭제 전 이름 스냅샷 → targetName). "무엇을 삭제했는지" 보존.
+ *       {@code existsById} → {@code findById} 로 바꿔 이름을 읽는다(404 동작 동일).</li>
+ *   <li>조회(findAll/findById)는 미감사(L_OVER_ENGINEER_DETECT).</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -46,6 +59,7 @@ public class FrameworkService {
     private final EvidenceTypeRepository evidenceTypeRepository;
     private final CollectionJobRepository collectionJobRepository;
     private final EvidenceFileRepository evidenceFileRepository;
+    private final AuditService auditService;   // A-1: 프레임워크 변경 감사(delete 명시 기록)
 
     @Transactional(readOnly = true)
     public List<FrameworkDto.Response> findAll() {
@@ -61,6 +75,8 @@ public class FrameworkService {
         return toResponseWithCounts(framework);
     }
 
+    @Auditable(action = AuditAction.FRAMEWORK_CHANGE, targetType = "Framework",
+            targetId = "#result.id", targetName = "#result.name", detail = "'생성'")
     @Transactional
     public FrameworkDto.Response create(FrameworkDto.CreateRequest request) {
         Framework framework = Framework.builder()
@@ -70,6 +86,8 @@ public class FrameworkService {
         return FrameworkDto.Response.from(frameworkRepository.save(framework));
     }
 
+    @Auditable(action = AuditAction.FRAMEWORK_CHANGE, targetType = "Framework",
+            targetId = "#a0", targetName = "#result.name", detail = "'수정'")
     @Transactional
     public FrameworkDto.Response update(Long id, FrameworkDto.UpdateRequest request) {
         Framework framework = frameworkRepository.findById(id)
@@ -80,10 +98,15 @@ public class FrameworkService {
 
     @Transactional
     public void delete(Long id) {
-        if (!frameworkRepository.existsById(id)) {
-            throw new ResourceNotFoundException("프레임워크", id);
-        }
+        // AUDIT(A-1) — 삭제 전 이름 스냅샷을 위해 existsById → findById 로 로드(404 동작 동일).
+        Framework framework = frameworkRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("프레임워크", id));
+        String deletedName = framework.getName();
+
         frameworkRepository.deleteById(id);
+
+        // AUDIT — 무엇을 삭제했는지(이름 보존)
+        safeAudit(id, deletedName);
     }
 
     // ------------------------------------------------------------------
@@ -117,6 +140,8 @@ public class FrameworkService {
      *
      * @throws ResourceNotFoundException source Framework 가 존재하지 않으면
      */
+    @Auditable(action = AuditAction.FRAMEWORK_CHANGE, targetType = "Framework",
+            targetId = "#result.id", targetName = "#result.name", detail = "'상속(복제)'")
     @Transactional
     public FrameworkDto.Response inherit(FrameworkDto.InheritRequest request) {
         Framework source = frameworkRepository.findById(request.getSourceFrameworkId())
@@ -247,5 +272,15 @@ public class FrameworkService {
 
         return FrameworkDto.Response.from(fw, (int) controlCount, evidenceTypeCount,
                 (int) jobCount, pendingReviewCount);
+    }
+
+    /** 프레임워크 삭제 명시 기록 — 삭제 후에도 "무엇을" 보존. 실패는 삼킴(REQUIRES_NEW). */
+    private void safeAudit(Long id, String name) {
+        try {
+            auditService.record(AuditAction.FRAMEWORK_CHANGE, AuditResult.SUCCESS, "Framework",
+                    id == null ? null : String.valueOf(id), name, "삭제");
+        } catch (Exception ignore) {
+            // 감사 실패는 본 흐름에 영향 없음
+        }
     }
 }
