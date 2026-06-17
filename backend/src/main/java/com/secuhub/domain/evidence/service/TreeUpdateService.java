@@ -10,8 +10,9 @@ import com.secuhub.domain.evidence.entity.Framework;
 import com.secuhub.domain.evidence.entity.NodeType;
 import com.secuhub.domain.evidence.repository.ControlNodeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
-import com.secuhub.config.audit.Auditable;
 import com.secuhub.domain.audit.AuditAction;
+import com.secuhub.domain.audit.AuditResult;
+import com.secuhub.domain.audit.AuditService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
@@ -24,68 +25,21 @@ import java.util.*;
 /**
  * Phase 5-14d — PATCH /api/v1/frameworks/{id}/tree 핵심 서비스.
  *
- * <p>spec §3.3.1.4 의 12개 검증 규칙을 단일 트랜잭션 안에서 실행하고,
- * 모든 검증 통과 시 INSERT/UPDATE/MOVE/DELETE 를 적용한다.</p>
+ * <p>spec §3.3.1.4 의 검증 규칙을 단일 트랜잭션 안에서 실행하고, 모든 검증 통과 시
+ * INSERT/UPDATE/MOVE/DELETE 를 적용한다.</p>
  *
- * <h3>v15 Phase 5-15a — Hybrid 모델 채택 (검증 규칙 12 → 10)</h3>
- * <p>spec §3.3.1.9 의 hybrid 모델 채택에 따라 다음 2 검증 제거:</p>
- * <ul>
- *   <li><b>parent_must_be_category</b> — leaf 아래에 자식 노드 추가/이동 가능
- *       (validateCreated number 분기 + tempId 분기 + validateMoved number 분기 +
- *       tempId 분기, 총 4 occurrence 제거)</li>
- *   <li><b>leaf_with_evidence</b> — entity 가드 ({@link ControlNode#addEvidenceType})
- *       에서만 enforce 되고 있어 5-15a 의 ControlNode 가드 제거와 동시에 자연 무력화.
- *       본 service 측 별도 변경 없음</li>
- * </ul>
+ * <h3>v15 Phase 5-15a — Hybrid 모델 (검증 12 → 10)</h3>
+ * <p>spec §3.3.1.9 hybrid 채택으로 parent_must_be_category / leaf_with_evidence 2 검증 제거.</p>
  *
- * <p>나머지 10 검증은 그대로 유지 (blank_name, blank_code, invalid_node_type,
- * parent_not_found, depth_mismatch, max_depth_exceeded, unresolved_temp_id,
- * invalid_parent_type, node_type_change_not_allowed, cycle_detected,
- * sibling_code_duplicate, node_not_found).</p>
+ * <h3>v18.3 — DELETE 정공 fix</h3>
+ * <p>native SQL {@code DELETE FROM control_nodes WHERE id=:id} 1줄 + entity {@code @OnDelete(CASCADE)}
+ * 로 DB cascade chain(control_nodes self-FK → evidence_types → collection_jobs → evidence_files).
+ * {@code entityManager.clear()} 미사용(UPDATE/MOVE dirty 보존).</p>
  *
- * <h3>v18.3 — DELETE 정공 fix (L_SPEC_SCHEMA_MISMATCH + L_HIBERNATE_CASCADE_SILENT 종결)</h3>
- * <p>v18.2 의 native SQL 우회 fix (helper {@code collectNodeAndDescendantIds} +
- * 사전 evidence_files / collection_jobs / evidence_types 명시 삭제 3 블록) 를 모두
- * 제거. {@code V_v18_3} Flyway + entity {@code @OnDelete(CASCADE)} 3 추가로 DB
- * 레벨 cascade chain 이 다음을 처리:</p>
- * <pre>
- *   control_nodes (self-FK CASCADE)
- *     → 자손 control_nodes (cascade)
- *     → 매달린 evidence_types (v18.3 신규 CASCADE)
- *     → 매달린 collection_jobs (v18.3 신규 CASCADE)
- *     → 매달린 evidence_files (v18.3 신규 CASCADE)
- * </pre>
- *
- * <p>native SQL {@code DELETE FROM control_nodes WHERE id = :id} 1줄. Hibernate
- * {@code em.remove()} silent skip 패턴 (L_HIBERNATE_CASCADE_SILENT) 회피. UPDATE /
- * MOVE 액션의 dirty 변경 보존을 위해 {@code entityManager.clear()} 는 사용 안 함
- * (v18.3 회귀 fix — clear() 가 dirty 무효화로 moved 변경이 DB 미반영되는 사례 확인).</p>
- *
- * <h3>알고리즘 흐름</h3>
- * <ol>
- *   <li>Framework lookup (404 fallback)</li>
- *   <li>expectedVersion 일치 확인 → 불일치 시 즉시 409
- *       ({@link OptimisticLockMismatchException})</li>
- *   <li>모든 검증 (3~10) 실행, details 누적</li>
- *   <li>tempId 의존성 그래프 분석 (Kahn's 위상 정렬, 순환 검출)</li>
- *   <li>details 비어있지 않으면 422 ({@link TreeValidationException})</li>
- *   <li>위상 정렬 순서로 created INSERT (tempId → newId 매핑 누적)</li>
- *   <li>updated 적용 (code/name/description 부분 갱신)</li>
- *   <li>moved 적용 (parent/displayOrder/depth 갱신)</li>
- *   <li>deleted 적용 — v18.3 정공: native SQL DELETE 1줄 + DB FK 4단 cascade chain</li>
- *   <li>Framework.@Version 강제 증가 (Framework.touchVersion + flush)</li>
- *   <li>Response { version, mappings }</li>
- * </ol>
- *
- * <h3>5-14d 정책 결정</h3>
- * <ul>
- *   <li>updated 의 nodeType 변경: 거부 (v2 또는 delete+create 로 우회).
- *       v15 5-15a 시점에도 보존 (transitional, 5-15b 일괄 정리)</li>
- *   <li>moved 의 newParentId 가 leaf 노드: <s>거부</s> →
- *       <b>v15 5-15a 에서 허용</b> (hybrid)</li>
- *   <li>evidence 매달림 카운트 검증: 5-14f (매핑 이주 후) 본격 구현</li>
- *   <li>lastEditedBy / lastEditedAt: 5-14d 범위 외 (Q1=B), 후속 phase</li>
- * </ul>
+ * <h3>AUDIT (A-2) — 트리 변경 감사</h3>
+ * <p>{@code @Auditable} 대신 명시 기록. 반환 DTO 에 framework 이름이 없어, 메서드 안에서 로드한
+ * {@code fw.getName()} 을 targetName 으로, created/updated/moved/deleted 건수를 detail 로 남긴다.
+ * 성공·실패(409/422/404) 모두 기록. 통제 노드 생성("관리항목 생성")은 created 건수로 포착된다.</p>
  */
 @Slf4j
 @Service
@@ -97,191 +51,186 @@ public class TreeUpdateService {
 
     private final FrameworkRepository frameworkRepository;
     private final ControlNodeRepository controlNodeRepository;
+    private final AuditService auditService;   // A-2: 트리 변경 감사
 
     @PersistenceContext
     private EntityManager entityManager;
 
-    @Auditable(action = AuditAction.TREE_CHANGE, targetType = "Framework", targetId = "#a0")  // a0=frameworkId
     @Transactional
     public TreeUpdateDto.Response updateTree(Long frameworkId, TreeUpdateDto.Request req) {
-        // -----------------------------------------------------------
-        // 1. Framework lookup
-        // -----------------------------------------------------------
-        Framework fw = frameworkRepository.findById(frameworkId)
-                .orElseThrow(() -> new ResourceNotFoundException("프레임워크", frameworkId));
+        Framework fw = null;
+        try {
+            // -----------------------------------------------------------
+            // 1. Framework lookup
+            // -----------------------------------------------------------
+            fw = frameworkRepository.findById(frameworkId)
+                    .orElseThrow(() -> new ResourceNotFoundException("프레임워크", frameworkId));
 
-        // -----------------------------------------------------------
-        // 2. 검증 규칙 1 — expectedVersion 일치
-        // -----------------------------------------------------------
-        if (req.getExpectedVersion() == null
-                || !req.getExpectedVersion().equals(fw.getVersion())) {
-            throw new OptimisticLockMismatchException(
-                    fw.getVersion() == null ? 0L : fw.getVersion());
-        }
-
-        // -----------------------------------------------------------
-        // 3. 변경 항목 정규화 (null 처리)
-        // -----------------------------------------------------------
-        List<TreeUpdateDto.CreatedNode> created = nullToEmpty(getCreated(req));
-        List<TreeUpdateDto.UpdatedNode> updated = nullToEmpty(getUpdated(req));
-        List<TreeUpdateDto.MovedNode>   moved   = nullToEmpty(getMoved(req));
-        List<TreeUpdateDto.DeletedNode> deleted = nullToEmpty(getDeleted(req));
-
-        // -----------------------------------------------------------
-        // 4. 기존 노드 모두 로드 (검증 + 매핑용)
-        // -----------------------------------------------------------
-        // 5-14c 의 LEFT JOIN FETCH 메서드 재사용 — parent 까지 한 번에 hydrate
-        List<ControlNode> existingList =
-                controlNodeRepository.findByFrameworkIdOrderByDepthAscDisplayOrderAsc(frameworkId);
-        Map<Long, ControlNode> existingNodes = new HashMap<>();
-        for (ControlNode cn : existingList) existingNodes.put(cn.getId(), cn);
-
-        // -----------------------------------------------------------
-        // 5. 검증 — details 누적
-        // -----------------------------------------------------------
-        List<ValidationDetail> details = new ArrayList<>();
-
-        // tempId 색인 (검증 + 위상 정렬 + parentId 다형 해석에 필요)
-        Map<String, TreeUpdateDto.CreatedNode> byTempId = new HashMap<>();
-        for (TreeUpdateDto.CreatedNode c : created) {
-            if (c.getTempId() != null) byTempId.put(c.getTempId(), c);
-        }
-
-        validateCreated(created, existingNodes, byTempId, details);
-        validateUpdated(updated, existingNodes, details);
-        validateMoved(moved, existingNodes, byTempId, details);
-        validateDeleted(deleted, existingNodes, details);
-        validateSiblingCodes(created, updated, moved, deleted, existingNodes, details);
-
-        // 위상 정렬 — created 내 tempId 의존성 (순환 검출 + INSERT 순서 결정)
-        List<TreeUpdateDto.CreatedNode> sortedCreated =
-                topologicalSort(created, byTempId, details);
-
-        if (!details.isEmpty()) {
-            throw new TreeValidationException(details);
-        }
-
-        // -----------------------------------------------------------
-        // 6. INSERT (위상 정렬 순서)
-        // -----------------------------------------------------------
-        Map<String, Long> tempIdToNewId = new HashMap<>();
-        for (TreeUpdateDto.CreatedNode c : sortedCreated) {
-            ControlNode parent = resolveParent(c.getParentId(), existingNodes, tempIdToNewId);
-            int depth = c.getDepth() != null
-                    ? c.getDepth()
-                    : (parent == null ? 1 : parent.getDepth() + 1);
-            int displayOrder = c.getDisplayOrder() != null ? c.getDisplayOrder() : 0;
-
-            ControlNode saved = controlNodeRepository.save(ControlNode.builder()
-                    .framework(fw)
-                    .parent(parent)
-                    .nodeType(NodeType.valueOf(c.getNodeType()))
-                    .code(c.getCode())
-                    .name(c.getName())
-                    .description(c.getDescription())
-                    .displayOrder(displayOrder)
-                    .depth(depth)
-                    .build());
-
-            existingNodes.put(saved.getId(), saved);
-            if (c.getTempId() != null) {
-                tempIdToNewId.put(c.getTempId(), saved.getId());
+            // -----------------------------------------------------------
+            // 2. 검증 규칙 1 — expectedVersion 일치
+            // -----------------------------------------------------------
+            if (req.getExpectedVersion() == null
+                    || !req.getExpectedVersion().equals(fw.getVersion())) {
+                throw new OptimisticLockMismatchException(
+                        fw.getVersion() == null ? 0L : fw.getVersion());
             }
+
+            // -----------------------------------------------------------
+            // 3. 변경 항목 정규화 (null 처리)
+            // -----------------------------------------------------------
+            List<TreeUpdateDto.CreatedNode> created = nullToEmpty(getCreated(req));
+            List<TreeUpdateDto.UpdatedNode> updated = nullToEmpty(getUpdated(req));
+            List<TreeUpdateDto.MovedNode>   moved   = nullToEmpty(getMoved(req));
+            List<TreeUpdateDto.DeletedNode> deleted = nullToEmpty(getDeleted(req));
+
+            // -----------------------------------------------------------
+            // 4. 기존 노드 모두 로드 (검증 + 매핑용)
+            // -----------------------------------------------------------
+            List<ControlNode> existingList =
+                    controlNodeRepository.findByFrameworkIdOrderByDepthAscDisplayOrderAsc(frameworkId);
+            Map<Long, ControlNode> existingNodes = new HashMap<>();
+            for (ControlNode cn : existingList) existingNodes.put(cn.getId(), cn);
+
+            // -----------------------------------------------------------
+            // 5. 검증 — details 누적
+            // -----------------------------------------------------------
+            List<ValidationDetail> details = new ArrayList<>();
+
+            // tempId 색인 (검증 + 위상 정렬 + parentId 다형 해석에 필요)
+            Map<String, TreeUpdateDto.CreatedNode> byTempId = new HashMap<>();
+            for (TreeUpdateDto.CreatedNode c : created) {
+                if (c.getTempId() != null) byTempId.put(c.getTempId(), c);
+            }
+
+            validateCreated(created, existingNodes, byTempId, details);
+            validateUpdated(updated, existingNodes, details);
+            validateMoved(moved, existingNodes, byTempId, details);
+            validateDeleted(deleted, existingNodes, details);
+            validateSiblingCodes(created, updated, moved, deleted, existingNodes, details);
+
+            // 위상 정렬 — created 내 tempId 의존성 (순환 검출 + INSERT 순서 결정)
+            List<TreeUpdateDto.CreatedNode> sortedCreated =
+                    topologicalSort(created, byTempId, details);
+
+            if (!details.isEmpty()) {
+                throw new TreeValidationException(details);
+            }
+
+            // -----------------------------------------------------------
+            // 6. INSERT (위상 정렬 순서)
+            // -----------------------------------------------------------
+            Map<String, Long> tempIdToNewId = new HashMap<>();
+            for (TreeUpdateDto.CreatedNode c : sortedCreated) {
+                ControlNode parent = resolveParent(c.getParentId(), existingNodes, tempIdToNewId);
+                int depth = c.getDepth() != null
+                        ? c.getDepth()
+                        : (parent == null ? 1 : parent.getDepth() + 1);
+                int displayOrder = c.getDisplayOrder() != null ? c.getDisplayOrder() : 0;
+
+                ControlNode saved = controlNodeRepository.save(ControlNode.builder()
+                        .framework(fw)
+                        .parent(parent)
+                        .nodeType(NodeType.valueOf(c.getNodeType()))
+                        .code(c.getCode())
+                        .name(c.getName())
+                        .description(c.getDescription())
+                        .displayOrder(displayOrder)
+                        .depth(depth)
+                        .build());
+
+                existingNodes.put(saved.getId(), saved);
+                if (c.getTempId() != null) {
+                    tempIdToNewId.put(c.getTempId(), saved.getId());
+                }
+            }
+
+            // -----------------------------------------------------------
+            // 7. UPDATE (updated) — PATCH 의미상 displayOrder/depth 는 null (위치는 moved 책임)
+            // -----------------------------------------------------------
+            for (TreeUpdateDto.UpdatedNode u : updated) {
+                ControlNode node = existingNodes.get(u.getId());
+                // null safety: 검증 단계가 not-found 처리. 여기 도달 시 node != null
+                node.update(u.getCode(), u.getName(), u.getDescription(), null, null);
+            }
+
+            // -----------------------------------------------------------
+            // 8. MOVE (moved) — ControlNode.move() 5-14d 신규 메서드
+            // -----------------------------------------------------------
+            for (TreeUpdateDto.MovedNode m : moved) {
+                ControlNode node = existingNodes.get(m.getId());
+                ControlNode newParent = resolveParent(m.getNewParentId(), existingNodes, tempIdToNewId);
+                int newDepth = m.getNewDepth() != null
+                        ? m.getNewDepth()
+                        : (newParent == null ? 1 : newParent.getDepth() + 1);
+                int newDisplayOrder = m.getNewDisplayOrder() != null ? m.getNewDisplayOrder() : 0;
+                node.move(newParent, newDisplayOrder, newDepth);
+            }
+
+            // -----------------------------------------------------------
+            // 9. DELETE (deleted) — v18.3 정공: native SQL DELETE 1줄 + DB FK 4단 cascade.
+            //    Hibernate em.remove silent skip (L_HIBERNATE_CASCADE_SILENT) 회피.
+            // -----------------------------------------------------------
+            for (TreeUpdateDto.DeletedNode d : deleted) {
+                entityManager.createNativeQuery(
+                        "DELETE FROM control_nodes WHERE id = :id")
+                    .setParameter("id", d.getId())
+                    .executeUpdate();
+            }
+
+            // v18.3 회귀 fix — entityManager.clear() 미사용 (UPDATE/MOVE dirty 보존; flush 시 동반 반영).
+
+            // -----------------------------------------------------------
+            // 10. Framework.@Version 강제 증가 (touchVersion + flush)
+            // -----------------------------------------------------------
+            fw.touchVersion();
+            entityManager.flush();
+
+            // -----------------------------------------------------------
+            // 11. Response
+            // -----------------------------------------------------------
+            List<TreeUpdateDto.NodeMapping> nodeMappings = new ArrayList<>();
+            for (Map.Entry<String, Long> e : tempIdToNewId.entrySet()) {
+                nodeMappings.add(TreeUpdateDto.NodeMapping.builder()
+                        .tempId(e.getKey()).id(e.getValue()).build());
+            }
+
+            TreeUpdateDto.Response response = TreeUpdateDto.Response.builder()
+                    .version(fw.getVersion())
+                    .mappings(TreeUpdateDto.Mappings.builder().nodes(nodeMappings).build())
+                    .build();
+
+            // AUDIT — 성공: framework 이름 + 변경 건수 요약
+            safeAudit(AuditResult.SUCCESS, frameworkId, fw.getName(),
+                    auditService.toJson(Map.of(
+                            "created", created.size(),
+                            "updated", updated.size(),
+                            "moved", moved.size(),
+                            "deleted", deleted.size())));
+
+            return response;
+
+        } catch (RuntimeException ex) {
+            // AUDIT — 실패 (fw 로드 전 404 면 이름 null)
+            safeAudit(AuditResult.FAILURE, frameworkId, fw != null ? fw.getName() : null,
+                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            throw ex;
         }
+    }
 
-        // -----------------------------------------------------------
-        // 7. UPDATE (updated)
-        //    ControlNode 의 기존 update 메서드 재활용 (5-14a 작성).
-        //    PATCH 의미상 displayOrder/depth 는 null 전달 — 위치 변경은
-        //    moved 액션의 책임.
-        // -----------------------------------------------------------
-        for (TreeUpdateDto.UpdatedNode u : updated) {
-            ControlNode node = existingNodes.get(u.getId());
-            // null safety: 검증 단계가 not-found 처리. 여기 도달 시 node != null
-            node.update(u.getCode(), u.getName(), u.getDescription(), null, null);
+    /** 감사 기록 — 실패가 업무 흐름을 막지 않도록 삼킴(REQUIRES_NEW 라 별도 tx). */
+    private void safeAudit(AuditResult result, Long frameworkId, String frameworkName, String detail) {
+        try {
+            auditService.record(AuditAction.TREE_CHANGE, result, "Framework",
+                    frameworkId == null ? null : String.valueOf(frameworkId), frameworkName, detail);
+        } catch (Exception ignore) {
+            // 감사 실패는 본 흐름에 영향 없음
         }
-
-        // -----------------------------------------------------------
-        // 8. MOVE (moved) — ControlNode.move() 5-14d 신규 메서드
-        // -----------------------------------------------------------
-        for (TreeUpdateDto.MovedNode m : moved) {
-            ControlNode node = existingNodes.get(m.getId());
-            ControlNode newParent = resolveParent(m.getNewParentId(), existingNodes, tempIdToNewId);
-            int newDepth = m.getNewDepth() != null
-                    ? m.getNewDepth()
-                    : (newParent == null ? 1 : newParent.getDepth() + 1);
-            int newDisplayOrder = m.getNewDisplayOrder() != null ? m.getNewDisplayOrder() : 0;
-            node.move(newParent, newDisplayOrder, newDepth);
-        }
-
-        // -----------------------------------------------------------
-        // 9. DELETE (deleted) — v18.3 정공 fix
-        //
-        // v18.2 fix 의 우회 코드 (helper collectNodeAndDescendantIds + 사전
-        // evidence_files/collection_jobs/evidence_types 명시 삭제 3 블록) 를
-        // 모두 제거. V_v18_3 Flyway + entity @OnDelete(CASCADE) 3 정공 fix 로
-        // DB cascade chain 이 다음을 처리:
-        //   control_nodes (self-FK CASCADE)
-        //     → 자손 control_nodes (cascade)
-        //     → 매달린 evidence_types (v18.3 신규 CASCADE)
-        //     → 매달린 collection_jobs (v18.3 신규 CASCADE)
-        //     → 매달린 evidence_files (v18.3 신규 CASCADE)
-        //
-        // native SQL DELETE 는 보존 — Hibernate em.remove silent skip 패턴
-        // (L_HIBERNATE_CASCADE_SILENT) 회피.
-        // -----------------------------------------------------------
-        for (TreeUpdateDto.DeletedNode d : deleted) {
-            entityManager.createNativeQuery(
-                    "DELETE FROM control_nodes WHERE id = :id")
-                .setParameter("id", d.getId())
-                .executeUpdate();
-        }
-
-        // v18.3 회귀 fix — entityManager.clear() 제거:
-        // 직전 7번 (UPDATE) + 8번 (MOVE) 의 ControlNode dirty 가 영속성 컨텍스트에
-        // 있는 상태에서 clear() 호출 시 dirty 가 flush 전 무효화 → DB UPDATE SQL
-        // 발행 안 됨. v18.2 의 clear() 는 native SQL 사전 명시 삭제의 stale managed
-        // entity 무효화 목적이었으나, v18.3 정공 fix 는 DB CASCADE 가 처리하므로
-        // clear() 자체가 불필요. 메서드 끝에서 return 이라 후속 read 없음.
-
-        // -----------------------------------------------------------
-        // 10. Framework.@Version 강제 증가
-        //
-        // children (control_nodes) 변경만으로는 Hibernate dirty-checking 이
-        // Framework 의 @Version 을 자동 증가시키지 않으므로, 명시적으로 처리.
-        //
-        // touchVersion() 이 @Version 필드를 직접 +1 → dirty 마킹 → flush 시
-        // UPDATE frameworks SET version = ? WHERE id = ? AND version = ?
-        // SQL 발행. Optimistic lock 검증 + entity version 갱신 동시 처리.
-        //
-        // 이 패턴이 entityManager.lock(OPTIMISTIC_FORCE_INCREMENT) 의
-        // Hibernate 6 commit-시점 동작 의존성을 회피한다.
-        //
-        // v18.3: flush() 시점에 UPDATE / MOVE 액션의 dirty 변경 (ControlNode.parent
-        // 등) 도 함께 DB 에 반영됨. entityManager.clear() 제거로 dirty 보존.
-        // -----------------------------------------------------------
-        fw.touchVersion();
-        entityManager.flush();
-
-        // -----------------------------------------------------------
-        // 11. Response
-        // -----------------------------------------------------------
-        List<TreeUpdateDto.NodeMapping> nodeMappings = new ArrayList<>();
-        for (Map.Entry<String, Long> e : tempIdToNewId.entrySet()) {
-            nodeMappings.add(TreeUpdateDto.NodeMapping.builder()
-                    .tempId(e.getKey()).id(e.getValue()).build());
-        }
-
-        return TreeUpdateDto.Response.builder()
-                .version(fw.getVersion())
-                .mappings(TreeUpdateDto.Mappings.builder().nodes(nodeMappings).build())
-                .build();
     }
 
     // ========================================================================
     // 검증 — created
-    //   규칙 3 (이름/코드 not blank), 4 (nodeType 유효),
-    //   5 (parentId 유효), 6 (depth 일관성), 7 (depth ≤ 10)
+    //   규칙 3 (이름/코드 not blank), 4 (nodeType 유효), 5 (parentId 유효),
+    //   6 (depth 일관성), 7 (depth ≤ 10)
     //
     // v15 Phase 5-15a — 9-부분 (parent 가 leaf 면 거부) 제거. hybrid 모델 채택.
     // ========================================================================
@@ -358,9 +307,6 @@ public class TreeUpdateService {
     // ========================================================================
     // 검증 — updated
     //   규칙 5 (id 유효), 9-부분 (nodeType 변경 거부)
-    //
-    // v15 Phase 5-15a 시점에 nodeType 변경 거부 보존 (transitional).
-    // 5-15b 또는 그 이후 enum 일괄 제거 시 함께 정리 검토.
     // ========================================================================
     private void validateUpdated(List<TreeUpdateDto.UpdatedNode> updated,
                                   Map<Long, ControlNode> existingNodes,
