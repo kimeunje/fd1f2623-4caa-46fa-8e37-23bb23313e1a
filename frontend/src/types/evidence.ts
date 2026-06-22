@@ -218,10 +218,10 @@ export interface CollectionJobCreatePayload {
 export interface CollectionJobUpdatePayload {
   name?: string
   description?: string
-  /** v18.8.2 — scriptId 갱신 */
   scriptId?: number
   scriptPath?: string
   scheduleCron?: string
+  evidenceTypeId?: number | null   // ← 추가: 재매핑
 }
 
 export interface ExecutionSummary {

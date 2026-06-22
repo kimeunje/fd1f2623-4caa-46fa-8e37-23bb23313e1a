@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { jobsApi } from '@/services/evidenceApi'
+import { jobsApi, frameworksApi, treeApi, controlNodesApi } from '@/services/evidenceApi'
 import type { CollectionJobItem, CollectionJobDetail, ExecutionSummary } from '@/types/evidence'
 import FailureDiagnosisPanel from '@/components/admin/FailureDiagnosisPanel.vue'
 import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
@@ -33,11 +33,55 @@ const newJob = ref<{
   scriptId: number | null
   scriptPath: string
   scheduleCron: string
+  evidenceTypeId: number | null
   // edit 모드 read-only 표시용 (v18.9.4)
   evidenceTypeName?: string
   controlNodeCode?: string
   controlNodeName?: string
-}>({ name: '', description: '', jobType: 'web_scraping', scriptId: null, scriptPath: '', scheduleCron: '' })
+}>({ name: '', description: '', jobType: 'web_scraping', scriptId: null, scriptPath: '', scheduleCron: '', evidenceTypeId: null })
+
+// ── 증빙 유형 매핑 캐스케이드 (Framework → 관리 항목(leaf) → 증빙 유형) ──
+const fwOptions = ref<{ id: number; name: string }[]>([])
+const nodeOptions = ref<{ id: number; code: string; name: string }[]>([])
+const etOptions = ref<{ id: number; name: string }[]>([])
+const selFrameworkId = ref<number | null>(null)
+const selNodeId = ref<number | null>(null)
+
+async function loadFrameworks() {
+  try {
+    const { data } = await frameworksApi.list()
+    if (data.success) fwOptions.value = data.data.map((f: any) => ({ id: f.id, name: f.name }))
+  } catch (e) { console.error(e) }
+}
+
+// 프레임워크 선택 → 그 트리의 leaf(통제) 노드만 관리항목 후보로
+async function onFrameworkChange() {
+  selNodeId.value = null
+  nodeOptions.value = []
+  etOptions.value = []
+  newJob.value.evidenceTypeId = null
+  if (selFrameworkId.value == null) return
+  try {
+    const { data } = await treeApi.getTree(selFrameworkId.value)
+    if (data.success) {
+      nodeOptions.value = data.data.nodes
+        .filter((n: any) => n.nodeType === 'control')   // 관리 항목 = leaf 통제 노드
+        .map((n: any) => ({ id: n.id, code: n.code, name: n.name }))
+        .sort((a: any, b: any) => (a.code || '').localeCompare(b.code || ''))
+    }
+  } catch (e) { console.error(e) }
+}
+
+// 관리 항목 선택 → 그 노드의 증빙 유형 후보
+async function onNodeChange() {
+  etOptions.value = []
+  newJob.value.evidenceTypeId = null
+  if (selNodeId.value == null) return
+  try {
+    const { data } = await controlNodesApi.getEvidenceTypes(selNodeId.value)
+    if (data.success) etOptions.value = data.data.map((et: any) => ({ id: et.id, name: et.name }))
+  } catch (e) { console.error(e) }
+}
 
 // v18.7 — 진단 패널 진입 상태 (풀폭 swap)
 const selectedExecution = ref<ExecutionSummary | null>(null)
@@ -119,27 +163,49 @@ function goToEvidenceType(job: CollectionJobItem) {
 function openCreateDialog() {
   newJob.value = {
     name: '', description: '', jobType: 'web_scraping',
-    scriptId: null, scriptPath: '', scheduleCron: '',
+    scriptId: null, scriptPath: '', scheduleCron: '', evidenceTypeId: null,
   }
+  selFrameworkId.value = null
+  selNodeId.value = null
+  nodeOptions.value = []
+  etOptions.value = []
   editingJobId.value = null
   jobDialogMode.value = 'create'
+  loadFrameworks()
 }
 
-function openEditDialog() {
+async function openEditDialog() {
   if (!selectedJob.value) return
+  const j = selectedJob.value
   newJob.value = {
-    name: selectedJob.value.name,
-    description: selectedJob.value.description ?? '',
-    jobType: selectedJob.value.jobType,
-    scriptId: selectedJob.value.scriptId ?? null,
-    scriptPath: selectedJob.value.scriptPath ?? '',
-    scheduleCron: selectedJob.value.scheduleCron ?? '',
-    evidenceTypeName: selectedJob.value.evidenceTypeName,
-    controlNodeCode: selectedJob.value.controlNodeCode,
-    controlNodeName: selectedJob.value.controlNodeName,
+    name: j.name,
+    description: j.description ?? '',
+    jobType: j.jobType,
+    scriptId: j.scriptId ?? null,
+    scriptPath: j.scriptPath ?? '',
+    scheduleCron: j.scheduleCron ?? '',
+    evidenceTypeId: j.evidenceTypeId ?? null,
+    evidenceTypeName: j.evidenceTypeName,
+    controlNodeCode: j.controlNodeCode,
+    controlNodeName: j.controlNodeName,
   }
-  editingJobId.value = selectedJob.value.id
+  editingJobId.value = j.id
   jobDialogMode.value = 'edit'
+
+  // 캐스케이드를 현재 매핑 상태로 prefill
+  selFrameworkId.value = j.frameworkId ?? null
+  selNodeId.value = null
+  nodeOptions.value = []
+  etOptions.value = []
+  await loadFrameworks()
+  if (j.frameworkId != null) {
+    await onFrameworkChange()            // nodeOptions 채움
+    selNodeId.value = j.controlNodeId ?? null
+    if (j.controlNodeId != null) {
+      await onNodeChange()               // etOptions 채움
+      newJob.value.evidenceTypeId = j.evidenceTypeId ?? null
+    }
+  }
 }
 
 function closeJobDialog() {
@@ -155,9 +221,10 @@ async function handleSubmit() {
         name: newJob.value.name,
         description: newJob.value.description || undefined,
         jobType: newJob.value.jobType,
-        scriptId: newJob.value.scriptId ?? undefined,         // v18.8.2
-        scriptPath: newJob.value.scriptPath || undefined,     // legacy fallback
+        scriptId: newJob.value.scriptId ?? undefined,
+        scriptPath: newJob.value.scriptPath || undefined,
         scheduleCron: newJob.value.scheduleCron || undefined,
+        evidenceTypeId: newJob.value.evidenceTypeId ?? undefined,   // ← 추가
       })
     } else if (jobDialogMode.value === 'edit' && editingJobId.value != null) {
       await jobsApi.update(editingJobId.value, {
@@ -166,6 +233,7 @@ async function handleSubmit() {
         scriptId: newJob.value.scriptId ?? undefined,
         scriptPath: newJob.value.scriptPath || undefined,
         scheduleCron: newJob.value.scheduleCron || undefined,
+        evidenceTypeId: newJob.value.evidenceTypeId ?? undefined,   // ← 추가
       })
       // 변경 반영 위해 상세 패널 reload
       if (selectedJob.value?.id === editingJobId.value) {
@@ -631,7 +699,7 @@ onMounted(async () => {
             </select>
           </div>
 
-          <!-- v18.9.4 — edit 모드 read-only 영역 (유형 + 증빙 유형). BE 정합. -->
+          <!-- edit 모드 read-only 영역 (유형만 — BE 가 jobType 변경 미허용). 증빙 유형은 아래 캐스케이드에서 재매핑. -->
           <template v-else>
             <div class="bg-gray-50 px-3 py-2 rounded-lg relative">
               <span class="absolute top-2 right-2 text-xs text-gray-400">변경 불가</span>
@@ -645,14 +713,32 @@ onMounted(async () => {
                 }}
               </p>
             </div>
-            <div v-if="newJob.evidenceTypeName" class="bg-gray-50 px-3 py-2 rounded-lg relative">
-              <span class="absolute top-2 right-2 text-xs text-gray-400">변경 불가</span>
-              <label class="block text-xs text-gray-500 mb-0.5">증빙 유형</label>
-              <p class="text-sm text-gray-700">
-                <template v-if="newJob.controlNodeCode">{{ newJob.controlNodeCode }} {{ newJob.controlNodeName }} ▸ </template>{{ newJob.evidenceTypeName }}
-              </p>
-            </div>
           </template>
+
+          <!-- 증빙 유형 매핑 (Framework → 관리 항목 → 증빙 유형). create/edit 공용. -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">증빙 유형 매핑</label>
+            <div class="space-y-2">
+              <select v-model="selFrameworkId" @change="onFrameworkChange"
+                class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+                <option :value="null">프레임워크 선택…</option>
+                <option v-for="f in fwOptions" :key="f.id" :value="f.id">{{ f.name }}</option>
+              </select>
+              <select v-model="selNodeId" @change="onNodeChange" :disabled="selFrameworkId == null"
+                class="w-full px-3 py-2 border rounded-lg text-sm bg-white disabled:bg-gray-100 disabled:text-gray-400">
+                <option :value="null">관리 항목 선택…</option>
+                <option v-for="n in nodeOptions" :key="n.id" :value="n.id">{{ n.code }} {{ n.name }}</option>
+              </select>
+              <select v-model="newJob.evidenceTypeId" :disabled="selNodeId == null"
+                class="w-full px-3 py-2 border rounded-lg text-sm bg-white disabled:bg-gray-100 disabled:text-gray-400">
+                <option :value="null">증빙 유형 선택…</option>
+                <option v-for="et in etOptions" :key="et.id" :value="et.id">{{ et.name }}</option>
+              </select>
+            </div>
+            <p class="mt-1 text-xs text-gray-400">
+              미선택 시 전역(미매핑) 작업으로 저장됩니다. 매핑해야 결과가 해당 증빙 유형에 적재됩니다.
+            </p>
+          </div>
 
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">스크립트</label>
