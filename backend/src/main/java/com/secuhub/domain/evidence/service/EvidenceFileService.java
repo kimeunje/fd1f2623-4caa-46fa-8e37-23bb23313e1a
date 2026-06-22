@@ -14,6 +14,7 @@ import com.secuhub.config.audit.Auditable;
 import com.secuhub.domain.audit.AuditAction;
 import com.secuhub.domain.audit.AuditResult;
 import com.secuhub.domain.audit.AuditService;
+import com.secuhub.config.approval.ApprovalProperties;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -69,6 +70,7 @@ public class EvidenceFileService {
     private final EvidenceAssetRepository evidenceAssetRepository;
     private final FileUploadValidator fileUploadValidator;
     private final AuditService auditService; // AUDIT-1c
+    private final ApprovalProperties approvalProperties; // 승인 on/off
 
     @Value("${app.storage.path:./storage}")
     private String storagePath;
@@ -81,6 +83,7 @@ public class EvidenceFileService {
                targetId = "#a0", targetName = "#result.fileName")  // a0=fileId
     @Transactional
     public EvidenceFileDto.Response approve(Long fileId, UserPrincipal reviewer, String note) {
+        assertApprovalEnabled();
         EvidenceFile file = evidenceFileRepository.findById(fileId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
 
@@ -99,6 +102,7 @@ public class EvidenceFileService {
                targetId = "#a0", targetName = "#result.fileName")  // a0=fileId
     @Transactional
     public EvidenceFileDto.Response reject(Long fileId, UserPrincipal reviewer, String note) {
+        assertApprovalEnabled();
         EvidenceFile file = evidenceFileRepository.findById(fileId)
                 .orElseThrow(() -> new ResourceNotFoundException("증빙 파일", fileId));
 
@@ -116,6 +120,9 @@ public class EvidenceFileService {
 
     @Transactional(readOnly = true)
     public Page<EvidenceFileDto.Response> findPending(Pageable pageable) {
+        if (!approvalProperties.isEnabled()) {
+            return Page.empty(pageable);
+        }
         return evidenceFileRepository.findByReviewStatus(ReviewStatus.pending, pageable)
                 .map(EvidenceFileDto.Response::from);
     }
@@ -181,8 +188,7 @@ public class EvidenceFileService {
                 .orElse(0) + 1;
 
         boolean isAdmin = "admin".equalsIgnoreCase(uploader.getRole());
-        ReviewStatus initialStatus = isAdmin ?
-                ReviewStatus.auto_approved : ReviewStatus.pending;
+        ReviewStatus initialStatus = resolveInitialStatus(isAdmin);
 
         EvidenceFile evidenceFile = EvidenceFile.builder()
                 .evidenceType(evidenceType)
@@ -228,8 +234,7 @@ public class EvidenceFileService {
                 .orElse(0) + 1;
 
         boolean isAdmin = "admin".equalsIgnoreCase(uploader.getRole());
-        ReviewStatus initialStatus = isAdmin ?
-                ReviewStatus.auto_approved : ReviewStatus.pending;
+        ReviewStatus initialStatus = resolveInitialStatus(isAdmin);
 
         String resolvedFileName = (fileName != null && !fileName.isBlank())
                 ? fileName
@@ -485,6 +490,21 @@ public class EvidenceFileService {
             return filePath.toString();
         } catch (IOException e) {
             throw new BusinessException("파일 저장에 실패했습니다: " + e.getMessage());
+        }
+    }
+
+    /** 승인 단계 off 면 역할 무관 즉시 승인 간주. on 이면 기존(admin=auto_approved, 그 외=pending). */
+    private ReviewStatus resolveInitialStatus(boolean isAdmin) {
+        if (!approvalProperties.isEnabled()) {
+            return ReviewStatus.auto_approved;
+        }
+        return isAdmin ? ReviewStatus.auto_approved : ReviewStatus.pending;
+    }
+
+    /** 승인 단계 off 면 승인/반려 차단(방어용 — FE 는 메뉴 자체를 숨김). */
+    private void assertApprovalEnabled() {
+        if (!approvalProperties.isEnabled()) {
+            throw new BusinessException("증빙 승인 기능이 비활성화되어 있습니다.");
         }
     }
 
