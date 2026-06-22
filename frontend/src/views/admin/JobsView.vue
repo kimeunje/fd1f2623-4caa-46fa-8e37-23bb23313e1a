@@ -6,6 +6,7 @@ import type { CollectionJobItem, CollectionJobDetail, ExecutionSummary } from '@
 import FailureDiagnosisPanel from '@/components/admin/FailureDiagnosisPanel.vue'
 import ScriptEditorDialog from '@/components/admin/ScriptEditorDialog.vue'
 import CronBuilder from '@/components/admin/CronBuilder.vue'
+import SearchableSelect from '@/components/admin/SearchableSelect.vue'
 import { formatCronToKorean } from '@/utils/cron'
 
 // v18.9 — query param ?jobId=N 진입 + pathline 클릭 시 router.push 위해 추가
@@ -81,6 +82,16 @@ async function onNodeChange() {
     const { data } = await controlNodesApi.getEvidenceTypes(selNodeId.value)
     if (data.success) etOptions.value = data.data.map((et: any) => ({ id: et.id, name: et.name }))
   } catch (e) { console.error(e) }
+}
+
+// 검색형 선택(SearchableSelect) → 캐스케이드 갱신
+function pickFramework(v: number | null) {
+  selFrameworkId.value = v
+  onFrameworkChange()
+}
+function pickNode(v: number | null) {
+  selNodeId.value = v
+  onNodeChange()
 }
 
 // v18.7 — 진단 패널 진입 상태 (풀폭 swap)
@@ -214,7 +225,7 @@ function closeJobDialog() {
 }
 
 async function handleSubmit() {
-  if (!newJob.value.name) return
+  if (!newJob.value.name || newJob.value.evidenceTypeId == null) return
   try {
     if (jobDialogMode.value === 'create') {
       await jobsApi.create({
@@ -715,28 +726,35 @@ onMounted(async () => {
             </div>
           </template>
 
-          <!-- 증빙 유형 매핑 (Framework → 관리 항목 → 증빙 유형). create/edit 공용. -->
+          <!-- 증빙 유형 매핑 (검색형 선택: Framework → 관리 항목 → 증빙 유형). 필수. -->
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">증빙 유형 매핑</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              증빙 유형 매핑 <span class="text-red-500">*</span>
+            </label>
             <div class="space-y-2">
-              <select v-model="selFrameworkId" @change="onFrameworkChange"
-                class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
-                <option :value="null">프레임워크 선택…</option>
-                <option v-for="f in fwOptions" :key="f.id" :value="f.id">{{ f.name }}</option>
-              </select>
-              <select v-model="selNodeId" @change="onNodeChange" :disabled="selFrameworkId == null"
-                class="w-full px-3 py-2 border rounded-lg text-sm bg-white disabled:bg-gray-100 disabled:text-gray-400">
-                <option :value="null">관리 항목 선택…</option>
-                <option v-for="n in nodeOptions" :key="n.id" :value="n.id">{{ n.code }} {{ n.name }}</option>
-              </select>
-              <select v-model="newJob.evidenceTypeId" :disabled="selNodeId == null"
-                class="w-full px-3 py-2 border rounded-lg text-sm bg-white disabled:bg-gray-100 disabled:text-gray-400">
-                <option :value="null">증빙 유형 선택…</option>
-                <option v-for="et in etOptions" :key="et.id" :value="et.id">{{ et.name }}</option>
-              </select>
+              <SearchableSelect
+                :model-value="selFrameworkId"
+                :options="fwOptions.map(f => ({ value: f.id, label: f.name }))"
+                placeholder="프레임워크 검색·선택…"
+                @update:model-value="pickFramework"
+              />
+              <SearchableSelect
+                :model-value="selNodeId"
+                :options="nodeOptions.map(n => ({ value: n.id, label: `${n.code} ${n.name}` }))"
+                placeholder="관리 항목 검색 (코드·이름)…"
+                :disabled="selFrameworkId == null"
+                @update:model-value="pickNode"
+              />
+              <SearchableSelect
+                :model-value="newJob.evidenceTypeId"
+                :options="etOptions.map(et => ({ value: et.id, label: et.name }))"
+                placeholder="증빙 유형 검색·선택…"
+                :disabled="selNodeId == null"
+                @update:model-value="(v) => (newJob.evidenceTypeId = v)"
+              />
             </div>
-            <p class="mt-1 text-xs text-gray-400">
-              미선택 시 전역(미매핑) 작업으로 저장됩니다. 매핑해야 결과가 해당 증빙 유형에 적재됩니다.
+            <p class="mt-1 text-xs" :class="newJob.evidenceTypeId == null ? 'text-red-500' : 'text-gray-400'">
+              수집 작업은 증빙 유형에 매핑되어야 저장할 수 있습니다.
             </p>
           </div>
 
@@ -778,7 +796,7 @@ onMounted(async () => {
         </div>
         <div class="flex justify-end gap-2 mt-4">
           <button @click="closeJobDialog" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
-          <button @click="handleSubmit" :disabled="!newJob.name"
+          <button @click="handleSubmit" :disabled="!newJob.name || newJob.evidenceTypeId == null"
             class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
             {{ jobDialogMode === 'create' ? '등록' : '저장' }}
           </button>
