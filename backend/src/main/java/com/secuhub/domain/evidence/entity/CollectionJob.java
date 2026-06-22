@@ -95,6 +95,11 @@ public class CollectionJob extends BaseEntity {
         this.script = script;
     }
 
+    /** v19.x — 증빙 유형(매핑) 갱신. CollectionJobService.update 재매핑용. */
+    public void setEvidenceType(EvidenceType evidenceType) {
+        this.evidenceType = evidenceType;
+    }
+
     public void activate() {
         this.isActive = true;
     }

@@ -140,6 +140,13 @@ public class CollectionJobService {
             job.setScript(script);
         }
 
+        // v19.x — 재매핑: evidenceTypeId 제공 시 증빙 유형 변경 (null 이면 기존 유지)
+        if (request.getEvidenceTypeId() != null) {
+            EvidenceType evidenceType = evidenceTypeRepository.findById(request.getEvidenceTypeId())
+                    .orElseThrow(() -> new ResourceNotFoundException("증빙 유형", request.getEvidenceTypeId()));
+            job.setEvidenceType(evidenceType);
+        }
+
         job.update(request.getName(), request.getDescription(), request.getScriptPath(), request.getScheduleCron());
 
         List<JobExecution> execs = jobExecutionRepository.findByJobIdOrderByCreatedAtDesc(job.getId());

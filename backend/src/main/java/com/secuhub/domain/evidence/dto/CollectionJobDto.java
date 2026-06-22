@@ -53,6 +53,8 @@ public class CollectionJobDto {
         private Long scriptId;
         private String scriptPath;
         private String scheduleCron;
+        /** v19.x — 재매핑(증빙 유형 변경/지정). null 이면 기존 매핑 유지. */
+        private Long evidenceTypeId;
     }
 
     @Getter
