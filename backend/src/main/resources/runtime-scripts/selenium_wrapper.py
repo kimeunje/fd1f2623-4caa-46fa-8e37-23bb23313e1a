@@ -41,6 +41,7 @@ import ast
 import inspect
 import json
 import os
+import shutil
 import sys
 import textwrap
 import traceback
@@ -76,6 +77,7 @@ KOREAN_ERROR_MAP = {
     "StaleElementReferenceException":   "참조한 요소가 페이지 갱신으로 무효화되었습니다",
     "WebDriverException":               "브라우저 드라이버 통신에서 문제가 발생했습니다",
     "InvalidSelectorException":         "selector 문법이 잘못되었습니다",
+    "NoSuchDriverException":            "chromedriver 를 확보하지 못했습니다 (폐쇄망에서 Selenium Manager 의 외부 자동 다운로드가 차단됐을 가능성)",
     # v18.8.5 — driver init 시점에 흔히 발생하는 예외 추가
     "SessionNotCreatedException":       "chrome driver 세션을 생성할 수 없습니다 (driver 버전 불일치 가능성)",
     "FileNotFoundError":                "chromedriver 또는 chrome/chromium 바이너리를 찾을 수 없습니다",
@@ -90,6 +92,7 @@ PRIMARY_CAUSE_MAP = {
     "StaleElementReferenceException":   "페이지가 동적으로 갱신되어 요소가 교체되었습니다. 재조회 로직 추가 필요.",
     "WebDriverException":               "chromedriver 버전 불일치 또는 브라우저 충돌 가능성. 사내 미러의 driver 버전 확인.",
     "InvalidSelectorException":         "selector 표기 오류. CSS 또는 XPath 문법 점검.",
+    "NoSuchDriverException":            "폐쇄망에서 Selenium Manager 가 외부(googlechromelabs.github.io)로 chromedriver 를 받으려다 실패했을 가능성이 큽니다. 사내 미러의 chromedriver 를 배치하고 CHROMEDRIVER_PATH 환경변수(또는 app.scripts.chromedriver-path 설정)로 경로를 지정하세요.",
     "SessionNotCreatedException":       "chromedriver 와 chromium 버전이 호환되지 않을 가능성. 사내 미러의 두 패키지 버전 확인.",
     "FileNotFoundError":                "chromedriver 또는 chrome/chromium 가 설치되지 않았거나 PATH 에 없습니다. CHROMEDRIVER_PATH 환경변수 확인.",
     "PermissionError":                  "chromedriver / chrome 실행 권한 누락. chmod +x 또는 sudo 설치 필요.",
@@ -398,10 +401,65 @@ def execute_with_diagnosis(scenario: Callable, *, output_dir: Optional[str] = No
 # 내부 helper — chrome driver 생성 + 진단 JSON 직렬화
 # ──────────────────────────────────────────────────────────────────────
 
+def _is_executable_file(path: str) -> bool:
+    return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+# 사내 고정 배포 위치 (secuhub_task.py 와 동일 목록 유지).
+_CANDIDATE_CHROMEDRIVER_PATHS = [
+    "/home/dnbapp/SEMS/chromedriver-linux64/chromedriver",
+    "/var/lib/secuhub/chromedriver-linux64/chromedriver",
+    "/usr/local/bin/chromedriver",
+    "/usr/bin/chromedriver",
+    "/opt/chromedriver-linux64/chromedriver",
+]
+
+_CANDIDATE_CHROME_BINARIES = [
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/opt/google/chrome/chrome",
+]
+
+
+def _resolve_chromedriver() -> Optional[str]:
+    """chromedriver 경로 해석. Selenium Manager(외부 다운로드)는 절대 사용 안 함.
+    우선순위: CHROMEDRIVER_PATH → 알려진 후보 경로 → PATH."""
+    env_path = os.environ.get("CHROMEDRIVER_PATH", "").strip()
+    if _is_executable_file(env_path):
+        return env_path
+    for c in _CANDIDATE_CHROMEDRIVER_PATHS:
+        if _is_executable_file(c):
+            return c
+    found = shutil.which("chromedriver")
+    if found and _is_executable_file(found):
+        return found
+    return None
+
+
+def _resolve_chrome_binary() -> Optional[str]:
+    """chrome/chromium 바이너리 경로 해석 (표준 위치면 None 반환해도 무방)."""
+    env_bin = os.environ.get("CHROME_BINARY", "").strip()
+    if _is_executable_file(env_bin):
+        return env_bin
+    for c in _CANDIDATE_CHROME_BINARIES:
+        if _is_executable_file(c):
+            return c
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        found = shutil.which(name)
+        if found and _is_executable_file(found):
+            return found
+    return None
+
+
 def _build_driver() -> webdriver.Chrome:
     """
     Rocky 8.9 사내 미러 + chromium/chrome RPM + chromedriver tarball 가정.
     headless 기본, --no-sandbox 폐쇄망 컨테이너 호환.
+
+    v19.18 — driver 를 _resolve_chromedriver() 로 직접 해석 후 Service 로만 기동.
+    Selenium Manager(외부 다운로드)로 절대 fallback 하지 않음. 못 찾으면 명확히 실패.
     """
     options = Options()
     options.add_argument("--headless=new")
@@ -410,13 +468,25 @@ def _build_driver() -> webdriver.Chrome:
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-gpu")
 
-    # 운영 환경 별 chromedriver 경로 (사내 미러 표준).
-    # 환경 변수 우선, 없으면 PATH 의 chromedriver.
-    chromedriver_path = os.environ.get("CHROMEDRIVER_PATH", "")
-    if chromedriver_path:
-        service = Service(executable_path=chromedriver_path)
-        return webdriver.Chrome(service=service, options=options)
-    return webdriver.Chrome(options=options)
+    chrome_bin = _resolve_chrome_binary()
+    if chrome_bin:
+        options.binary_location = chrome_bin
+
+    driver_path = _resolve_chromedriver()
+    if not driver_path:
+        raise RuntimeError(
+            "chromedriver 를 찾을 수 없습니다. 폐쇄망에서는 Selenium Manager 의 "
+            "외부 자동 다운로드가 불가합니다. CHROMEDRIVER_PATH 환경변수, "
+            "app.scripts.chromedriver-path 설정, 또는 아래 후보 경로 중 하나에 "
+            "사내 미러 chromedriver 를 배치하세요. 확인한 후보: "
+            + ", ".join(_CANDIDATE_CHROMEDRIVER_PATHS)
+        )
+
+    print(f"[wrapper] chromedriver 사용: {driver_path}"
+          + (f" / chrome: {chrome_bin}" if chrome_bin else ""), file=sys.stderr)
+
+    service = Service(executable_path=driver_path)
+    return webdriver.Chrome(service=service, options=options)
 
 
 def _write_driver_init_failure(
