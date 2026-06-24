@@ -55,6 +55,7 @@ import functools
 import inspect
 import json
 import os
+import shutil
 import sys
 import textwrap
 import traceback
@@ -450,6 +451,72 @@ def _write_driver_init_failure(output_dir: Path, exc: Exception,
 
 
 # ============================================================================
+# v19.18 — chromedriver / chrome 바이너리 경로 자동 해석 (폐쇄망 정합)
+#
+# 폐쇄망에서는 Selenium Manager 의 외부 자동 다운로드(googlechromelabs.github.io)가
+# 불가하므로, driver 를 절대 Selenium Manager 에 맡기지 않는다. 아래 순서로 직접 해석:
+#   1) CHROMEDRIVER_PATH 환경변수 (BE 주입 또는 수동 export)
+#   2) 알려진 후보 경로 (사내 고정 배포 위치)
+#   3) PATH 의 chromedriver
+# 셋 다 실패하면 외부로 나가지 않고 명확한 한국어 메시지로 즉시 실패.
+# (chrome 바이너리도 동일 방식으로 탐색 — 비표준 위치면 binary_location 주입)
+# ============================================================================
+
+# 사내 고정 배포 위치. 운영 경로가 바뀌면 이 목록에 추가만 하면 됨.
+_CANDIDATE_CHROMEDRIVER_PATHS = [
+    "/home/dnbapp/SEMS/chromedriver-linux64/chromedriver",
+    "/var/lib/secuhub/chromedriver-linux64/chromedriver",
+    "/usr/local/bin/chromedriver",
+    "/usr/bin/chromedriver",
+    "/opt/chromedriver-linux64/chromedriver",
+]
+
+_CANDIDATE_CHROME_BINARIES = [
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/opt/google/chrome/chrome",
+]
+
+
+def _is_executable_file(path: str) -> bool:
+    return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def _resolve_chromedriver() -> Optional[str]:
+    """chromedriver 실행 파일 경로 해석. Selenium Manager(외부 다운로드)는 절대 사용 안 함."""
+    # 1) 환경변수 (BE 의 CHROMEDRIVER_PATH 주입 또는 수동 export)
+    env_path = os.environ.get("CHROMEDRIVER_PATH", "").strip()
+    if _is_executable_file(env_path):
+        return env_path
+    # 2) 알려진 후보 경로
+    for c in _CANDIDATE_CHROMEDRIVER_PATHS:
+        if _is_executable_file(c):
+            return c
+    # 3) PATH
+    found = shutil.which("chromedriver")
+    if found and _is_executable_file(found):
+        return found
+    return None
+
+
+def _resolve_chrome_binary() -> Optional[str]:
+    """chrome/chromium 바이너리 경로 해석 (선택 — 표준 위치면 None 반환해도 무방)."""
+    env_bin = os.environ.get("CHROME_BINARY", "").strip()
+    if _is_executable_file(env_bin):
+        return env_bin
+    for c in _CANDIDATE_CHROME_BINARIES:
+        if _is_executable_file(c):
+            return c
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        found = shutil.which(name)
+        if found and _is_executable_file(found):
+            return found
+    return None
+
+
+# ============================================================================
 # driver 생성 — 운영 옵션 + 사용자 옵션 merge + download 경로 자동 주입
 # ============================================================================
 def _build_driver(
@@ -465,10 +532,12 @@ def _build_driver(
     - --no-sandbox / --disable-dev-shm-usage (Linux 운영 안정성)
     - download.default_directory = output_dir (다운로드 자동 가로채기)
     - 사용자 chrome_options / chrome_prefs 는 그 위에 추가
-    - driver 해석은 selenium manager 자동 (외부 chromedriver 경로 강제 안 함 — 원본 동작 유지)
+    - v19.18: driver 를 _resolve_chromedriver() 로 직접 해석 후 Service 로만 기동.
+      Selenium Manager(외부 다운로드)로 절대 fallback 하지 않음. 못 찾으면 명확히 실패.
     """
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
 
     opts = Options()
 
@@ -482,6 +551,11 @@ def _build_driver(
     for arg in (chrome_options or []):
         opts.add_argument(arg)
 
+    # ── chrome 바이너리 비표준 위치면 명시 ──
+    chrome_bin = _resolve_chrome_binary()
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+
     # ── 다운로드 경로 자동 주입 (사용자 가로채기 핵심) ──
     base_prefs = {
         "download.default_directory": str(output_dir.resolve()),
@@ -493,12 +567,22 @@ def _build_driver(
     base_prefs.update(chrome_prefs or {})
     opts.add_experimental_option("prefs", base_prefs)
 
-    # selenium 4.x = selenium manager 자동 driver (executable_path 불필요).
-    # 주의: 원본 동작 유지 — CHROMEDRIVER_PATH 등 외부 경로를 강제하지 않는다.
-    # (selenium manager 가 설치된 chrome 버전에 맞는 driver 를 자동 해석. 환경에 깔린
-    #  stale 한 chromedriver 경로로 라우팅하면 SessionNotCreated 등 init 실패 유발.)
-    driver = webdriver.Chrome(options=opts)
-    return driver
+    # ── driver 경로 직접 해석 (Selenium Manager 차단) ──
+    driver_path = _resolve_chromedriver()
+    if not driver_path:
+        raise RuntimeError(
+            "chromedriver 를 찾을 수 없습니다. 폐쇄망에서는 Selenium Manager 의 "
+            "외부 자동 다운로드가 불가합니다. CHROMEDRIVER_PATH 환경변수, "
+            "app.scripts.chromedriver-path 설정, 또는 아래 후보 경로 중 하나에 "
+            "사내 미러 chromedriver 를 배치하세요. 확인한 후보: "
+            + ", ".join(_CANDIDATE_CHROMEDRIVER_PATHS)
+        )
+
+    print(f"[secuhub_task] chromedriver 사용: {driver_path}"
+          + (f" / chrome: {chrome_bin}" if chrome_bin else ""), file=sys.stderr)
+
+    service = Service(executable_path=driver_path)
+    return webdriver.Chrome(service=service, options=opts)
 
 
 # ============================================================================
