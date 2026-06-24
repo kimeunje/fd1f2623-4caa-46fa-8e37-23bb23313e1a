@@ -463,11 +463,10 @@ def _build_driver(
     - --no-sandbox / --disable-dev-shm-usage (Linux 운영 안정성)
     - download.default_directory = output_dir (다운로드 자동 가로채기)
     - 사용자 chrome_options / chrome_prefs 는 그 위에 추가
-    - CHROMEDRIVER_PATH 환경변수 지정 시 해당 Service 사용 (사내 미러 표준)
+    - driver 해석은 selenium manager 자동 (외부 chromedriver 경로 강제 안 함 — 원본 동작 유지)
     """
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
 
     opts = Options()
 
@@ -492,11 +491,12 @@ def _build_driver(
     base_prefs.update(chrome_prefs or {})
     opts.add_experimental_option("prefs", base_prefs)
 
-    # 사내 미러 표준 chromedriver 경로 (selenium_wrapper 와 정합). 미지정 시 selenium manager 자동.
-    chromedriver_path = os.environ.get("CHROMEDRIVER_PATH", "")
-    if chromedriver_path:
-        return webdriver.Chrome(service=Service(executable_path=chromedriver_path), options=opts)
-    return webdriver.Chrome(options=opts)
+    # selenium 4.x = selenium manager 자동 driver (executable_path 불필요).
+    # 주의: 원본 동작 유지 — CHROMEDRIVER_PATH 등 외부 경로를 강제하지 않는다.
+    # (selenium manager 가 설치된 chrome 버전에 맞는 driver 를 자동 해석. 환경에 깔린
+    #  stale 한 chromedriver 경로로 라우팅하면 SessionNotCreated 등 init 실패 유발.)
+    driver = webdriver.Chrome(options=opts)
+    return driver
 
 
 # ============================================================================
