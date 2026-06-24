@@ -139,18 +139,18 @@ function scrollToPending() {
          데이터 있음
          ======================================== -->
     <template v-else-if="summary">
-      <!-- KPI 카드 (1열 또는 2열, 향후 KPI 증설 대비 grid) -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- KPI 카드 — 승인 KPI 는 승인 단계 ON 일 때만 (app.approval.enabled) -->
+      <div v-if="authStore.approvalEnabled" class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <KpiCard
           :count="summary.kpi.pendingApprovalCount"
           @click="scrollToPending" />
         <!-- 향후 KPI 추가 시 여기에 카드 추가 -->
       </div>
 
-      <!-- 하단 2 위젯 -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- 승인 대기 목록 -->
-        <div id="pending-approvals-section" class="scroll-mt-6">
+      <!-- 하단 위젯 — 승인 단계 OFF 면 Framework 진척만 풀폭 -->
+      <div class="grid grid-cols-1 gap-6" :class="authStore.approvalEnabled ? 'lg:grid-cols-2' : ''">
+        <!-- 승인 대기 목록 (승인 단계 ON 일 때만) -->
+        <div v-if="authStore.approvalEnabled" id="pending-approvals-section" class="scroll-mt-6">
           <PendingApprovalsList :items="summary.pendingApprovals" />
         </div>
 

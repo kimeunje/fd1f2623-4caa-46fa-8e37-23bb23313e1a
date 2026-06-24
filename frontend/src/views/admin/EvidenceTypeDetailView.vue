@@ -34,6 +34,7 @@
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { controlNodesApi, evidenceFilesApi, evidenceTypesApi, jobsApi } from '@/services/evidenceApi'
+import { useAuthStore } from '@/stores/auth'
 import type {
   ControlDetail,
   EvidenceTypeResponse,
@@ -149,6 +150,7 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
 // Computed
 // ========================================
 const latestFile = computed<EvidenceFileItem | null>(() => files.value[0] ?? null)
+const authStore = useAuthStore()
 const isPending = computed(() => latestFile.value?.reviewStatus === 'pending')
 
 const historyTabLabel = computed(() => `파일 이력 (${files.value.length})`)
@@ -850,7 +852,7 @@ function executionDotCls(status?: string): string {
                 · {{ methodLabel(latestFile.collectionMethod) }}
               </span>
               <span
-                v-if="reviewStatusBadge(latestFile.reviewStatus)"
+                v-if="authStore.approvalEnabled && reviewStatusBadge(latestFile.reviewStatus)"
                 class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded"
                 :class="reviewStatusBadge(latestFile.reviewStatus)!.cls">
                 {{ reviewStatusBadge(latestFile.reviewStatus)!.label }}
@@ -868,8 +870,8 @@ function executionDotCls(status?: string): string {
         </div>
       </div>
 
-      <!-- 검토 알림 박스 (pending 상태만) -->
-      <div v-if="isPending && latestFile" class="bg-blue-50 border border-blue-200 rounded-md p-4 mb-4">
+      <!-- 검토 알림 박스 (승인 단계 ON + pending 상태만) -->
+      <div v-if="authStore.approvalEnabled && isPending && latestFile" class="bg-blue-50 border border-blue-200 rounded-md p-4 mb-4">
         <div class="flex gap-3 items-start">
           <i class="pi pi-info-circle text-blue-600 shrink-0 mt-0.5 text-sm"></i>
           <div class="flex-1 min-w-0">
@@ -1010,7 +1012,7 @@ function executionDotCls(status?: string): string {
             <td class="py-2.5 px-2">
               <div class="flex items-center gap-1.5 min-w-0">
                 <span
-                  v-if="reviewStatusBadge(file.reviewStatus)"
+                  v-if="authStore.approvalEnabled && reviewStatusBadge(file.reviewStatus)"
                   class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded shrink-0"
                   :class="reviewStatusBadge(file.reviewStatus)!.cls">
                   {{ reviewStatusBadge(file.reviewStatus)!.label }}

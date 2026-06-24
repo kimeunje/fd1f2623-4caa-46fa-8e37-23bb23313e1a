@@ -43,7 +43,7 @@ app:
       - http://localhost:5173
       - http://localhost:3000
   approval:
-    enabled: ${APPROVAL_ENABLED:true}   # 증빙 결재/승인 단계 on/off. false 면 업로드 즉시 auto_approved.
+    enabled: ${APPROVAL_ENABLED:false}   # 증빙 결재/승인 단계 on/off. false 면 업로드 즉시 auto_approved.
 
 springdoc:
   swagger-ui:

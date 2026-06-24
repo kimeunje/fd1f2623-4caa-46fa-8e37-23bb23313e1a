@@ -2,12 +2,16 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User, LoginPayload } from '@/types'
 import { authApi } from '@/services/api'
+import { configApi } from '@/services/configApi'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
+
+  // 기능 플래그 (서버 app.approval.enabled 파생). 기본 true(승인 UI 노출이 안전한 기본값).
+  const approvalEnabled = ref(true)
 
   // ========================================
   // Getters
@@ -37,6 +41,7 @@ export const useAuthStore = defineStore('auth', () => {
         logout()
       }
     }
+    if (token.value) fetchFeatures()
   }
 
   /**
@@ -71,6 +76,7 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('access_token', jwtToken)
       localStorage.setItem('user', JSON.stringify(userData))
 
+      await fetchFeatures()
       return userData
     } catch (err: any) {
       // 백엔드 에러 응답: { success: false, message: "..." }
@@ -112,6 +118,21 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * 기능 플래그 조회 (서버 app.approval.enabled 등). 로그인 직후 + 앱 복원 시 호출.
+   * 실패 시 기본값(approvalEnabled=true) 유지.
+   */
+  async function fetchFeatures() {
+    try {
+      const res = await configApi.getFeatures()
+      if (res.data.success && res.data.data) {
+        approvalEnabled.value = res.data.data.approvalEnabled
+      }
+    } catch {
+      // 무시 — 기본값 유지
+    }
+  }
+
+  /**
    * 로그아웃
    */
   function logout() {
@@ -127,6 +148,7 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     loading,
     error,
+    approvalEnabled,
     // Getters
     isAuthenticated,
     isAdmin,
@@ -137,6 +159,7 @@ export const useAuthStore = defineStore('auth', () => {
     initialize,
     login,
     fetchMe,
+    fetchFeatures,
     logout,
   }
 })
