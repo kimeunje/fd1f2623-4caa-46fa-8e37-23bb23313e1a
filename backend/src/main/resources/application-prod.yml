@@ -44,6 +44,8 @@ app:
     base-dir: /home/scripts
     framework-dir: /home/scripts-framework
     python-command: python3.11
+    chromedriver-path: /usr/local/bin/chromedriver
+
   storage:
     path: /home/storage
     output-retention-days: 30     # 실행 산출 디렉터리 보관일수. 0 이하면 GC 비활성

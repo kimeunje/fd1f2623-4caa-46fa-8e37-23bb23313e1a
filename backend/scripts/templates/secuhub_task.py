@@ -79,6 +79,7 @@ KOREAN_ERROR_MAP = {
     "StaleElementReferenceException":   "참조한 요소가 페이지 갱신으로 무효화되었습니다",
     "WebDriverException":               "브라우저 드라이버 통신에서 문제가 발생했습니다",
     "InvalidSelectorException":         "selector 문법이 잘못되었습니다",
+    "NoSuchDriverException":            "chromedriver 를 확보하지 못했습니다 (폐쇄망에서 Selenium Manager 의 외부 자동 다운로드가 차단됐을 가능성)",
     "SessionNotCreatedException":       "chrome driver 세션을 생성할 수 없습니다 (driver 버전 불일치 가능성)",
     # 파일/권한 (driver init + 비-브라우저 작업 공통)
     "FileNotFoundError":                "대상 파일 또는 바이너리를 찾을 수 없습니다",
@@ -101,6 +102,7 @@ PRIMARY_CAUSE_MAP = {
     "StaleElementReferenceException":   "페이지가 동적으로 갱신되어 요소가 교체되었습니다. 재조회 로직 추가 필요.",
     "WebDriverException":               "chromedriver 버전 불일치 또는 브라우저 충돌 가능성. 사내 미러의 driver 버전 확인.",
     "InvalidSelectorException":         "selector 표기 오류. CSS 또는 XPath 문법 점검.",
+    "NoSuchDriverException":            "폐쇄망에서 Selenium Manager 가 외부(googlechromelabs.github.io)로 chromedriver 를 받으려다 실패했을 가능성이 큽니다. 사내 미러의 chromedriver 를 배치하고 CHROMEDRIVER_PATH 환경변수(또는 app.scripts.chromedriver-path 설정)로 경로를 지정하세요.",
     "SessionNotCreatedException":       "chromedriver 와 chromium 버전이 호환되지 않을 가능성. 사내 미러의 두 패키지 버전 확인.",
     "FileNotFoundError":                "경로가 잘못됐거나 대상 파일이 아직 생성되지 않았을 가능성. 절대/상대 경로와 선행 단계 산출물을 확인하세요.",
     "PermissionError":                  "파일 쓰기 권한 또는 실행 권한 누락. 저장 위치 권한과 chmod +x 여부를 확인하세요.",

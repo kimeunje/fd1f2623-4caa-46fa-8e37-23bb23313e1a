@@ -76,6 +76,7 @@ KOREAN_ERROR_MAP = {
     "StaleElementReferenceException":   "참조한 요소가 페이지 갱신으로 무효화되었습니다",
     "WebDriverException":               "브라우저 드라이버 통신에서 문제가 발생했습니다",
     "InvalidSelectorException":         "selector 문법이 잘못되었습니다",
+    "NoSuchDriverException":            "chromedriver 를 확보하지 못했습니다 (폐쇄망에서 Selenium Manager 의 외부 자동 다운로드가 차단됐을 가능성)",
     # v18.8.5 — driver init 시점에 흔히 발생하는 예외 추가
     "SessionNotCreatedException":       "chrome driver 세션을 생성할 수 없습니다 (driver 버전 불일치 가능성)",
     "FileNotFoundError":                "chromedriver 또는 chrome/chromium 바이너리를 찾을 수 없습니다",
@@ -90,6 +91,7 @@ PRIMARY_CAUSE_MAP = {
     "StaleElementReferenceException":   "페이지가 동적으로 갱신되어 요소가 교체되었습니다. 재조회 로직 추가 필요.",
     "WebDriverException":               "chromedriver 버전 불일치 또는 브라우저 충돌 가능성. 사내 미러의 driver 버전 확인.",
     "InvalidSelectorException":         "selector 표기 오류. CSS 또는 XPath 문법 점검.",
+    "NoSuchDriverException":            "폐쇄망에서 Selenium Manager 가 외부(googlechromelabs.github.io)로 chromedriver 를 받으려다 실패했을 가능성이 큽니다. 사내 미러의 chromedriver 를 배치하고 CHROMEDRIVER_PATH 환경변수(또는 app.scripts.chromedriver-path 설정)로 경로를 지정하세요.",
     "SessionNotCreatedException":       "chromedriver 와 chromium 버전이 호환되지 않을 가능성. 사내 미러의 두 패키지 버전 확인.",
     "FileNotFoundError":                "chromedriver 또는 chrome/chromium 가 설치되지 않았거나 PATH 에 없습니다. CHROMEDRIVER_PATH 환경변수 확인.",
     "PermissionError":                  "chromedriver / chrome 실행 권한 누락. chmod +x 또는 sudo 설치 필요.",

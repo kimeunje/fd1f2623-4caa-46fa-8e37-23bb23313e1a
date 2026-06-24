@@ -113,6 +113,15 @@ public class ScriptExecutionService {
     @Value("${app.scripts.python-command:python3}")
     private String pythonCommand;
 
+    // 폐쇄망 chromedriver 경로 (사내 미러에서 배포한 바이너리).
+    // 지정 시 자식 스크립트 프로세스에 CHROMEDRIVER_PATH 환경변수로 주입 →
+    // selenium / selenium_wrapper / secuhub_task 의 driver 생성이 Selenium Manager 의
+    // 외부 자동 다운로드(googlechromelabs.github.io 등 — 폐쇄망에서 "error sending
+    // request for url" 로 실패)를 건너뛰고 이 경로의 driver 를 직접 사용한다.
+    // 미지정(기본 빈 값) 시 PATH 의 chromedriver 또는 Selenium Manager fallback.
+    @Value("${app.scripts.chromedriver-path:}")
+    private String chromedriverPath;
+
     /**
      * 비동기 스크립트 실행 — {@code @Async("jobExecutor")} 로 별도 스레드에서 실행.
      *
@@ -250,6 +259,14 @@ public class ScriptExecutionService {
         Path frameworkPath = Paths.get(scriptsFrameworkDir).toAbsolutePath().normalize();
         String pythonPath = frameworkPath + java.io.File.pathSeparator + script.getParent().toString();
         pb.environment().put("PYTHONPATH", pythonPath);
+        // 폐쇄망 chromedriver 경로 명시 주입 (운영 안전망).
+        // 서버 환경변수 상속에 의존하지 않고 설정값(app.scripts.chromedriver-path)을
+        // 자식 프로세스에 직접 전달 → Selenium Manager 외부 자동 다운로드 회피.
+        // 빈 값이면 주입 생략 (PATH 또는 Selenium Manager fallback).
+        if (chromedriverPath != null && !chromedriverPath.isBlank()) {
+            pb.environment().put("CHROMEDRIVER_PATH", chromedriverPath.trim());
+            log.debug("CHROMEDRIVER_PATH 주입: {} (jobId={})", chromedriverPath.trim(), job.getId());
+        }
 
         Process process = null;
         try {
