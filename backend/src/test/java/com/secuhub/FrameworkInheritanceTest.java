@@ -8,6 +8,8 @@ import com.secuhub.domain.evidence.repository.*;
 import com.secuhub.domain.user.entity.User;
 import com.secuhub.domain.user.entity.UserRole;
 import com.secuhub.domain.user.repository.UserRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -15,12 +17,20 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -58,6 +68,28 @@ class FrameworkInheritanceTest {
     @Autowired private EvidenceTypeRepository evidenceTypeRepository;
     @Autowired private EvidenceFileRepository evidenceFileRepository;
     @Autowired private CollectionJobRepository collectionJobRepository;
+    @Autowired private ScriptRepository scriptRepository;                 // v19.19 — 스크립트 복제 검증
+    @Autowired private ScriptVersionRepository scriptVersionRepository;   // v19.19 — 정리용
+    @PersistenceContext private EntityManager entityManager;              // v19.19 — setUp 삭제 flush
+
+    /**
+     * v19.19 — 스크립트 복제는 실제 파일시스템(app.scripts.base-dir)에 .py 를 쓴다.
+     * 테스트가 운영/기본 scripts 디렉토리를 건드리지 않도록 임시 디렉토리로 오버라이드.
+     * static 초기화 블록에서 생성 → @DynamicPropertySource 보다 먼저 확정(컨텍스트 기동 전).
+     */
+    private static final Path TEMP_SCRIPTS_DIR;
+    static {
+        try {
+            TEMP_SCRIPTS_DIR = Files.createTempDirectory("secuhub-inherit-test-scripts");
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    @DynamicPropertySource
+    static void overrideScriptsBaseDir(DynamicPropertyRegistry registry) {
+        registry.add("app.scripts.base-dir", TEMP_SCRIPTS_DIR::toString);
+    }
 
     private String adminToken;
     private String developerToken;
@@ -65,12 +97,27 @@ class FrameworkInheritanceTest {
 
     @BeforeEach
     void setUp() {
-        evidenceFileRepository.deleteAll();
-        collectionJobRepository.deleteAll();
-        evidenceTypeRepository.deleteAll();
-        controlNodeRepository.deleteAll();   // v14 Phase 5-14f
-        frameworkRepository.deleteAll();
-        userRepository.deleteAll();
+        // v19.19 — @Transactional 테스트(setUp 이 tx 안에서 실행)에서만 deleteAll 이 큐잉되어,
+        //   IDENTITY save 의 즉시 INSERT 가 아직 flush 안 된 기존 row 와 unique 충돌할 수 있다.
+        //   해당 경우에만 각 단계 flush 로 child→parent 즉시 삭제 순서를 보장한다(FK 안전).
+        //   비-트랜잭션 테스트는 deleteAll 이 즉시 커밋되고 활성 tx 가 없어 flush 호출 시
+        //   TransactionRequiredException → isActualTransactionActive() 가드로 분기.
+        boolean txActive = TransactionSynchronizationManager.isActualTransactionActive();
+
+        evidenceFileRepository.deleteAll();      if (txActive) entityManager.flush();
+        collectionJobRepository.deleteAll();     if (txActive) entityManager.flush();
+        evidenceTypeRepository.deleteAll();      if (txActive) entityManager.flush();
+        controlNodeRepository.deleteAll();       if (txActive) entityManager.flush();   // v14 Phase 5-14f
+        frameworkRepository.deleteAll();         if (txActive) entityManager.flush();
+        userRepository.deleteAll();              if (txActive) entityManager.flush();
+        // 스크립트 정리는 마지막 + 격리(jobs 삭제 후라 FK 안전, 실패해도 핵심 정리 무영향).
+        try {
+            scriptVersionRepository.deleteAll();
+            scriptRepository.deleteAll();
+            if (txActive) entityManager.flush();
+        } catch (Exception e) {
+            System.out.println("[setUp] 스크립트 정리 경고(무시): " + e.getMessage());
+        }
 
         User admin = userRepository.save(User.builder()
                 .email("inherit-admin@test.com").name("관리자")
@@ -334,5 +381,107 @@ class FrameworkInheritanceTest {
                 .andExpect(status().isForbidden());
 
         System.out.println("✅ [Auth] developer 403 / admin 전용 유지");
+    }
+
+    // ------------------------------------------------------------------
+    // v19.19 — 스크립트 복제 (회귀 가드)
+    // ------------------------------------------------------------------
+
+    @Test
+    @Order(8)
+    @DisplayName("[Script Clone] script FK 작업 복제 시 새 Script/새 .py 독립 생성")
+    @Transactional   // lazy script 접근 + 같은 트랜잭션 내 검증
+    void testScriptClonedIndependently() throws Exception {
+        Framework source = frameworkRepository.save(Framework.builder().name("스크립트 원본").build());
+        ControlNode c = controlNodeRepository.save(ControlNode.builder()
+                .framework(source).parent(null).nodeType(NodeType.control)
+                .code("SC-1").name("통제").displayOrder(0).depth(1).build());
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(c).name("증빙").build());
+
+        // 원본 스크립트 — 실제 .py 파일 + Script entity (신규 방식)
+        String content = "print('hello secuhub')\n";
+        String srcFilename = UUID.randomUUID() + ".py";
+        Files.writeString(TEMP_SCRIPTS_DIR.resolve(srcFilename), content, StandardCharsets.UTF_8);
+        Script srcScript = scriptRepository.save(Script.builder()
+                .filePath(srcFilename)
+                .contentSize((long) content.getBytes(StandardCharsets.UTF_8).length)
+                .build());
+
+        collectionJobRepository.save(CollectionJob.builder()
+                .name("스크립트 작업").jobType(JobType.web_scraping)
+                .script(srcScript).evidenceType(et).build());
+
+        var body = objectMapper.writeValueAsString(new FrameworkDto.InheritRequest(
+                source.getId(), "스크립트 복제본", null));
+        mockMvc.perform(post("/api/v1/frameworks/inherit")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.jobCount").value(1));
+
+        Framework newFw = frameworkRepository.findAll().stream()
+                .filter(f -> !f.getId().equals(source.getId()))
+                .findFirst().orElseThrow();
+        CollectionJob clonedJob = collectionJobRepository.findAll().stream()
+                .filter(j -> j.getEvidenceType() != null
+                        && j.getEvidenceType().getControlNode().getFramework().getId().equals(newFw.getId()))
+                .findFirst().orElseThrow();
+
+        // 1) script FK 가 복제됨(null 아님) + 원본과 다른 Script
+        assertThat(clonedJob.getScript()).isNotNull();
+        assertThat(clonedJob.getScript().getId()).isNotEqualTo(srcScript.getId());
+        // 2) legacy scriptPath 는 사용 안 함
+        assertThat(clonedJob.getScriptPath()).isNull();
+        // 3) 새 .py 파일이 실제로 생성됨 + 파일명(uuid) 도 원본과 다름 + 내용 동일
+        String clonedFilename = clonedJob.getScript().getFilePath();
+        assertThat(clonedFilename).isNotEqualTo(srcFilename);
+        Path clonedFile = TEMP_SCRIPTS_DIR.resolve(clonedFilename);
+        assertThat(Files.exists(clonedFile)).isTrue();
+        assertThat(Files.readString(clonedFile, StandardCharsets.UTF_8)).isEqualTo(content);
+        // 4) 원본 파일/Script 는 그대로 (격리)
+        assertThat(Files.exists(TEMP_SCRIPTS_DIR.resolve(srcFilename))).isTrue();
+
+        System.out.println("✅ [Script Clone] script FK 독립 복제 / 새 uuid.py 생성 / 내용 동일");
+    }
+
+    @Test
+    @Order(9)
+    @DisplayName("[Legacy Script] scriptPath-only 작업은 경로 유지 / script=null")
+    @Transactional
+    void testLegacyScriptPathRetained() throws Exception {
+        Framework source = frameworkRepository.save(Framework.builder().name("legacy 원본").build());
+        ControlNode c = controlNodeRepository.save(ControlNode.builder()
+                .framework(source).parent(null).nodeType(NodeType.control)
+                .code("LG-1").name("통제").displayOrder(0).depth(1).build());
+        EvidenceType et = evidenceTypeRepository.save(EvidenceType.builder()
+                .controlNode(c).name("증빙").build());
+        collectionJobRepository.save(CollectionJob.builder()
+                .name("legacy 작업").jobType(JobType.excel_extract)
+                .scriptPath("/scripts/legacy.py").evidenceType(et).build());
+
+        var body = objectMapper.writeValueAsString(new FrameworkDto.InheritRequest(
+                source.getId(), "legacy 복제본", null));
+        mockMvc.perform(post("/api/v1/frameworks/inherit")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.jobCount").value(1));
+
+        Framework newFw = frameworkRepository.findAll().stream()
+                .filter(f -> !f.getId().equals(source.getId()))
+                .findFirst().orElseThrow();
+        CollectionJob clonedJob = collectionJobRepository.findAll().stream()
+                .filter(j -> j.getEvidenceType() != null
+                        && j.getEvidenceType().getControlNode().getFramework().getId().equals(newFw.getId()))
+                .findFirst().orElseThrow();
+
+        // legacy 작업은 script=null 이고 scriptPath 문자열만 그대로 유지
+        assertThat(clonedJob.getScript()).isNull();
+        assertThat(clonedJob.getScriptPath()).isEqualTo("/scripts/legacy.py");
+
+        System.out.println("✅ [Legacy Script] scriptPath 유지 / script=null");
     }
 }
