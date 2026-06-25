@@ -75,10 +75,31 @@ public class FrameworkController {
         return ResponseEntity.ok(ApiResponse.ok("프레임워크가 수정되었습니다.", frameworkService.update(id, request)));
     }
 
+    /**
+     * 프레임워크 보관(soft delete) — 2단계 삭제의 1단계.
+     *
+     * <p>{@code PATCH /api/v1/frameworks/{id}/archive}</p>
+     *
+     * <p>status 를 archived 로 전환(트리·작업·증빙 보존). 영구 삭제는 보관 후 DELETE.</p>
+     */
+    @PatchMapping("/{id}/archive")
+    public ResponseEntity<ApiResponse<FrameworkDto.Response>> archive(@PathVariable Long id) {
+        return ResponseEntity.ok(
+                ApiResponse.ok("프레임워크가 보관되었습니다.", frameworkService.archive(id)));
+    }
+
+    /**
+     * 프레임워크 영구 삭제(하드) — 2단계 삭제의 2단계.
+     *
+     * <p>{@code DELETE /api/v1/frameworks/{id}}</p>
+     *
+     * <p>보관(archived)된 프레임워크만 허용. active 상태로 호출하면 409. 삭제 시 DB cascade 로
+     * 트리·작업·증빙이 함께 영구 삭제된다(되돌릴 수 없음).</p>
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
         frameworkService.delete(id);
-        return ResponseEntity.ok(ApiResponse.ok("프레임워크가 삭제되었습니다."));
+        return ResponseEntity.ok(ApiResponse.ok("프레임워크가 영구 삭제되었습니다."));
     }
 
     /**

@@ -69,6 +69,25 @@ export const frameworksApi = {
   update(id: number, data: Partial<FrameworkCreatePayload>) {
     return api.put<ApiResponse<Framework>>(`/frameworks/${id}`, data)
   },
+
+  /**
+   * v19.22 — 프레임워크 보관(soft delete). 2단계 삭제의 1단계.
+   *
+   * status 를 archived 로 전환(트리·작업·증빙은 그대로 보존 — 이력 조회·상속 원본으로
+   * 계속 사용 가능). 영구 삭제는 보관 후 delete() 로 진행한다.
+   * PATCH /api/v1/frameworks/{id}/archive
+   */
+  archive(id: number) {
+    return api.patch<ApiResponse<Framework>>(`/frameworks/${id}/archive`)
+  },
+
+  /**
+   * v19.22 — 프레임워크 영구 삭제(하드). 2단계 삭제의 2단계.
+   *
+   * 보관(archived)된 프레임워크만 허용 — active 상태로 호출하면 BE 가 409 로 거부한다.
+   * 삭제 시 DB의 ON DELETE CASCADE 로 트리·작업·증빙이 함께 영구 삭제된다(되돌릴 수 없음).
+   * DELETE /api/v1/frameworks/{id}
+   */
   delete(id: number) {
     return api.delete(`/frameworks/${id}`)
   },

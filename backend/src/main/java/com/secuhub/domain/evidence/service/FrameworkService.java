@@ -1,5 +1,6 @@
 package com.secuhub.domain.evidence.service;
 
+import com.secuhub.common.exception.BusinessException;
 import com.secuhub.common.exception.ResourceNotFoundException;
 import com.secuhub.config.audit.Auditable;
 import com.secuhub.domain.audit.AuditAction;
@@ -10,6 +11,7 @@ import com.secuhub.domain.evidence.entity.CollectionJob;
 import com.secuhub.domain.evidence.entity.ControlNode;
 import com.secuhub.domain.evidence.entity.EvidenceType;
 import com.secuhub.domain.evidence.entity.Framework;
+import com.secuhub.domain.evidence.entity.FrameworkStatus;
 import com.secuhub.domain.evidence.entity.NodeType;
 import com.secuhub.domain.evidence.entity.ReviewStatus;
 import com.secuhub.domain.evidence.repository.CollectionJobRepository;
@@ -19,6 +21,7 @@ import com.secuhub.domain.evidence.repository.EvidenceTypeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -97,11 +100,46 @@ public class FrameworkService {
         return toResponseWithCounts(framework);
     }
 
+    /**
+     * 프레임워크 보관(soft delete). 2단계 삭제 정책의 1단계.
+     *
+     * <p>{@code status} 를 {@code archived} 로 바꿔 신규 작업 대상에서 제외하되, 트리·작업·증빙은
+     * 그대로 보존한다(이력 조회·상속 원본으로 계속 사용 가능). 이미 보관된 프레임워크에 다시 호출하면
+     * 멱등(no-op)으로 현재 상태를 그대로 반환한다.</p>
+     */
+    @Auditable(action = AuditAction.FRAMEWORK_CHANGE, targetType = "Framework",
+            targetId = "#a0", targetName = "#result.name", detail = "'보관'")
+    @Transactional
+    public FrameworkDto.Response archive(Long id) {
+        Framework framework = frameworkRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("프레임워크", id));
+        if (framework.getStatus() != FrameworkStatus.archived) {
+            framework.archive();
+            log.info("Framework archived: id={} name={}", framework.getId(), framework.getName());
+        }
+        return toResponseWithCounts(framework);
+    }
+
+    /**
+     * 프레임워크 하드 삭제(영구). 2단계 삭제 정책의 2단계.
+     *
+     * <p>되돌릴 수 없는 작업이라 <b>{@code archived} 상태만 허용</b>한다 — active 를 곧바로 삭제하면
+     * {@link BusinessException}(409)으로 거부하고 먼저 보관하도록 안내한다(실수로 증빙까지 영구
+     * 삭제되는 사고 방지). 삭제 시 DB의 ON DELETE CASCADE 체인으로 control_nodes / evidence_types /
+     * collection_jobs / evidence_files 가 함께 정리된다(v18.3).</p>
+     */
     @Transactional
     public void delete(Long id) {
         // AUDIT(A-1) — 삭제 전 이름 스냅샷을 위해 existsById → findById 로 로드(404 동작 동일).
         Framework framework = frameworkRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("프레임워크", id));
+
+        // 2단계 삭제 가드 — 보관(archived)된 것만 영구 삭제 허용
+        if (framework.getStatus() != FrameworkStatus.archived) {
+            throw new BusinessException(
+                    "보관된 프레임워크만 영구 삭제할 수 있습니다. 먼저 보관해 주세요.", HttpStatus.CONFLICT);
+        }
+
         String deletedName = framework.getName();
 
         frameworkRepository.deleteById(id);
