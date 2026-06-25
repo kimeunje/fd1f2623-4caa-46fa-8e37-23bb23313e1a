@@ -37,13 +37,6 @@ async function handleLogin() {
     loading.value = false
   }
 }
-
-// 데모 계정 바로 로그인
-function demoLogin(demoEmail: string, demoPassword: string) {
-  email.value = demoEmail
-  password.value = demoPassword
-  handleLogin()
-}
 </script>
 
 <template>
@@ -92,37 +85,6 @@ function demoLogin(demoEmail: string, demoPassword: string) {
           {{ loading ? '로그인 중...' : '로그인' }}
         </button>
       </form>
-
-      <!-- 데모 계정 -->
-      <div class="border-t border-gray-200 pt-4">
-        <p class="text-xs text-gray-400 mb-3 text-center">데모 계정으로 바로 로그인</p>
-        <div class="grid grid-cols-2 gap-2">
-          <button
-            @click="demoLogin('admin@company.com', 'admin1234')"
-            class="py-2 px-3 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 transition-colors"
-          >
-            관리자 (보안팀)
-          </button>
-          <button
-            @click="demoLogin('park_tl@company.com', 'park1234')"
-            class="py-2 px-3 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-medium hover:bg-emerald-100 transition-colors"
-          >
-            결재자 (박팀장)
-          </button>
-          <button
-            @click="demoLogin('kim@company.com', 'dev1234')"
-            class="py-2 px-3 bg-gray-50 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-100 transition-colors"
-          >
-            개발자 (김개발)
-          </button>
-          <button
-            @click="demoLogin('lee@company.com', 'dev1234')"
-            class="py-2 px-3 bg-gray-50 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-100 transition-colors"
-          >
-            개발자 (이보안)
-          </button>
-        </div>
-      </div>
     </div>
   </div>
 </template>

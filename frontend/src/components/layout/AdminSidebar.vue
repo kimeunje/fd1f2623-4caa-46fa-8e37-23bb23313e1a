@@ -61,7 +61,8 @@ const menuGroups = [
       { routeName: 'accounts', icon: 'pi-users', label: '계정 관리' },
       // v19.14 (AUDIT-3)
       { routeName: 'audit-logs', icon: 'pi-history', label: '감사 로그' },
-      { routeName: 'settings', icon: 'pi-cog', label: '설정' },
+      // 운영 임시 비활성화 — 설정 메뉴 숨김. 복원 시 아래 한 줄 주석 해제.
+      // { routeName: 'settings', icon: 'pi-cog', label: '설정' },
     ],
   },
 ]
