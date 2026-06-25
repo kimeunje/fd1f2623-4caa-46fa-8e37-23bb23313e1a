@@ -60,6 +60,7 @@ public class FrameworkService {
     private final CollectionJobRepository collectionJobRepository;
     private final EvidenceFileRepository evidenceFileRepository;
     private final AuditService auditService;   // A-1: 프레임워크 변경 감사(delete 명시 기록)
+    private final ScriptManagementService scriptManagementService;  // v19.19: 상속 시 스크립트 독립 복제
 
     @Transactional(readOnly = true)
     public List<FrameworkDto.Response> findAll() {
@@ -222,7 +223,12 @@ public class FrameworkService {
             }
         }
 
-        // 5) 수집 작업 복제 — 5-6 로직 그대로 (evidenceTypeIdMap 으로 재연결)
+        // 5) 수집 작업 복제 — evidenceTypeIdMap 으로 재연결.
+        //    v19.19: 스크립트도 함께 복제. 기존엔 scriptPath(legacy 문자열)만 복사하고
+        //    script(FK)는 누락 → 신규 방식 작업(script 만 있고 scriptPath=null)이
+        //    복제 시 script=null·scriptPath=null 이 되어 실행기가 "스크립트 경로 못 찾음".
+        //    - script FK 가 있으면 ScriptManagementService.cloneScript 로 새 uuid.py 독립 복제
+        //    - legacy(scriptPath 만 있는 옛 작업)는 기존 동작대로 경로 문자열 유지
         int jobCloneCount = 0;
         List<CollectionJob> allJobs = collectionJobRepository.findAll();
         for (CollectionJob sj : allJobs) {
@@ -230,16 +236,23 @@ public class FrameworkService {
             EvidenceType targetEt = evidenceTypeIdMap.get(sj.getEvidenceType().getId());
             if (targetEt == null) continue;  // 이 source 소속이 아닌 job
 
-            CollectionJob tj = CollectionJob.builder()
+            CollectionJob.CollectionJobBuilder tb = CollectionJob.builder()
                     .name(sj.getName())
                     .description(sj.getDescription())
                     .jobType(sj.getJobType())
-                    .scriptPath(sj.getScriptPath())
                     .evidenceType(targetEt)
                     .scheduleCron(sj.getScheduleCron())
-                    .isActive(sj.getIsActive())
-                    .build();
-            collectionJobRepository.save(tj);
+                    .isActive(sj.getIsActive());
+
+            if (sj.getScript() != null) {
+                // 신규 방식 — Script FK 독립 복제 (새 uuid.py 생성)
+                tb.script(scriptManagementService.cloneScript(sj.getScript().getId()));
+            } else if (sj.getScriptPath() != null) {
+                // legacy — 파일 문자열만 있는 옛 작업: 경로 그대로 유지
+                tb.scriptPath(sj.getScriptPath());
+            }
+
+            collectionJobRepository.save(tb.build());
             jobCloneCount++;
         }
 

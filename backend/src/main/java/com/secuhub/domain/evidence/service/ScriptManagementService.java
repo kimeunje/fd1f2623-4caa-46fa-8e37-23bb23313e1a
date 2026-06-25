@@ -118,6 +118,59 @@ public class ScriptManagementService {
         return toResponse(saved, req.getContent());
     }
 
+    /**
+     * v19.19 — 스크립트 독립 복제 (프레임워크 상속 시 사용).
+     *
+     * <p>원본 {@code {uuid}.py} 내용을 읽어 <b>새 uuid 의 .py 파일 + 새 Script entity</b> 를
+     * 생성한다. 복제본은 원본과 내용은 같지만 완전히 독립 — 복제본 수정이 원본에 영향 없음.
+     * FrameworkService.inherit 의 Job 복제에서 {@code script} FK 를 새 사본으로 연결하기 위함.</p>
+     *
+     * <p>감사(@Auditable) 없음 — 프레임워크 상속의 하위 작업이라 상위 FRAMEWORK_CHANGE 감사로
+     * 충분. 호출자(inherit)와 동일 트랜잭션에서 동작(파일 쓰기 실패 시 전체 롤백).</p>
+     *
+     * @param sourceScriptId 복제할 원본 Script id
+     * @return 새로 생성된 Script entity (file_path = 새 uuid.py)
+     */
+    @Transactional
+    public Script cloneScript(Long sourceScriptId) {
+        Script source = scriptRepository.findById(sourceScriptId)
+                .orElseThrow(() -> new BusinessException("원본 스크립트가 존재하지 않습니다: id=" + sourceScriptId));
+
+        // 원본 파일 내용 읽기 (부재 시 BusinessException → 트랜잭션 롤백)
+        String content = readFile(source);
+        validateContentSize(content);
+
+        String uuid = UUID.randomUUID().toString();
+        String filename = uuid + ".py";
+        Path target = resolveTargetPath(filename);
+
+        try {
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, content, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE_NEW);
+        } catch (IOException e) {
+            throw new BusinessException("스크립트 복제 파일 저장 실패: " + e.getMessage());
+        }
+
+        try {
+            Script cloned = scriptRepository.save(Script.builder()
+                    .filePath(filename)
+                    .contentSize((long) content.getBytes(StandardCharsets.UTF_8).length)
+                    .build());
+
+            recordVersion(cloned.getId(), 1, content,
+                    "프레임워크 복제 (원본 scriptId=" + sourceScriptId + ")");
+
+            log.info("v19.19 스크립트 독립 복제: sourceId={} → newId={}, uuid={}",
+                    sourceScriptId, cloned.getId(), uuid);
+            return cloned;
+        } catch (Exception e) {
+            // entity 저장 실패 시 방금 만든 파일 정리 (create 패턴 정합)
+            try { Files.deleteIfExists(target); } catch (IOException ignore) { }
+            throw new BusinessException("스크립트 복제 entity 저장 실패: " + e.getMessage());
+        }
+    }
+
     public ScriptManagementDto.ScriptResponse getContent(Long id) {
         Script script = scriptRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("스크립트가 존재하지 않습니다: id=" + id));
