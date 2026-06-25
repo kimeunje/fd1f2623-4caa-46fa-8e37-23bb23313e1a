@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { usersApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import IpRulesDialog from '@/components/admin/IpRulesDialog.vue'
+import UserFormDialog from '@/components/admin/UserFormDialog.vue'
 import type { User } from '@/types'
 
 const auth = useAuthStore()
@@ -19,6 +20,20 @@ const selectedUser = ref<User | null>(null)
 function openIpRules(user: User) {
   selectedUser.value = user
   showIpDialog.value = true
+}
+
+// 계정 생성/수정 다이얼로그
+const showFormDialog = ref(false)
+const editingUser = ref<User | null>(null)
+
+function openCreate() {
+  editingUser.value = null
+  showFormDialog.value = true
+}
+
+function openEdit(user: User) {
+  editingUser.value = user
+  showFormDialog.value = true
 }
 
 const roleLabels: Record<string, { label: string; bg: string; text: string }> = {
@@ -58,7 +73,10 @@ onMounted(loadUsers)
         />
         <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
       </div>
-      <button class="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600">
+      <button
+        class="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
+        @click="openCreate"
+      >
         <i class="pi pi-plus text-sm"></i>
         계정 추가
       </button>
@@ -136,7 +154,11 @@ onMounted(loadUsers)
                 >
                   <i class="pi pi-shield text-sm"></i>
                 </button>
-                <button class="p-1.5 text-gray-400 hover:text-blue-500" title="수정">
+                <button
+                  class="p-1.5 text-gray-400 hover:text-blue-500"
+                  title="수정"
+                  @click="openEdit(user)"
+                >
                   <i class="pi pi-pencil text-sm"></i>
                 </button>
               </div>
@@ -163,6 +185,13 @@ onMounted(loadUsers)
       :user-id="selectedUser?.id ?? null"
       :user-name="selectedUser?.name"
       :is-self="selectedUser?.id === auth.user?.id"
+    />
+
+    <!-- 계정 생성/수정 다이얼로그 -->
+    <UserFormDialog
+      v-model="showFormDialog"
+      :user="editingUser"
+      @saved="loadUsers"
     />
   </div>
 </template>
