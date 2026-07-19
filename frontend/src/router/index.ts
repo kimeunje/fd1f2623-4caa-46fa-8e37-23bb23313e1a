@@ -105,6 +105,22 @@ const routes: RouteRecordRaw[] = [
   },
 
   // ========================================
+  // v19.24 — 심사원(reviewer) 읽기 전용 뷰
+  //
+  //   /review → 심사원 랜딩. 관리 항목 + 항목 설명 + 항목별 최신 승인 파일(다운로드).
+  //   이력·스크립트·승인 UI 없음. 본체 구현은 v19.25.
+  //
+  // 현재는 PlaceholderView 로 라우팅만 성립시킨다 (v19.25 에서 ReviewView 로 교체).
+  // layout 은 v19.25 에서 reviewer 전용 레이아웃 확정 시 조정.
+  // ========================================
+  {
+    path: '/review',
+    name: 'review-home',
+    component: () => import('@/views/admin/PlaceholderView.vue'),
+    meta: { requiresAuth: true, roles: ['reviewer'], layout: 'blank', title: '심사' },
+  },
+
+  // ========================================
   // 개발자 / 결재자
   //
   // Phase 3 cleanup (2026-05-04): vuln 관련 4 라우트 제거
@@ -164,12 +180,26 @@ const router = createRouter({
 // ========================================
 // 네비게이션 가드
 // ========================================
+
+/**
+ * v19.24 — 역할별 홈 경로.
+ *   admin    → /dashboard
+ *   reviewer → /review        (심사원)
+ *   그 외    → /dev/dashboard  (레거시 담당자)
+ * 인증 후 접근 거부/로그인 리다이렉트 목적지를 한 곳에서 결정한다.
+ */
+function landingPath(authStore: ReturnType<typeof useAuthStore>): string {
+  if (authStore.isAdmin) return '/dashboard'
+  if (authStore.isReviewer) return '/review'
+  return '/dev/dashboard'
+}
+
 router.beforeEach((to, _from, next) => {
   const authStore = useAuthStore()
 
   if (to.meta.requiresAuth === false) {
     if (authStore.isAuthenticated && to.name === 'login') {
-      next(authStore.isAdmin ? '/dashboard' : '/dev/dashboard')
+      next(landingPath(authStore))
       return
     }
     next()
@@ -183,14 +213,14 @@ router.beforeEach((to, _from, next) => {
 
   const allowedRoles = to.meta.roles as string[] | undefined
   if (allowedRoles && !allowedRoles.includes(authStore.user?.role || '')) {
-    next(authStore.isAdmin ? '/dashboard' : '/dev/dashboard')
+    next(landingPath(authStore))
     return
   }
 
   // v11 Phase 5-5: permission_evidence 요구하는 라우트는 플래그도 추가로 체크
   const needsEvidencePerm = to.meta.requirePermissionEvidence as boolean | undefined
   if (needsEvidencePerm && !authStore.isAdmin && !authStore.hasEvidenceAccess) {
-    next(authStore.isAdmin ? '/dashboard' : '/dev/dashboard')
+    next(landingPath(authStore))
     return
   }
 

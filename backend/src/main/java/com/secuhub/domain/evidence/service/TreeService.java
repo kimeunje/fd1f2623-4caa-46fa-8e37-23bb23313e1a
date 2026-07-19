@@ -158,6 +158,8 @@ public class TreeService {
                 .evidenceTypeCount((int) etCount)
                 .collectedCount((int) ccCount)
                 .pendingReviewCount(prCount)
+                .descriptionUpdatedByName(node.getDescriptionUpdatedByName())  // v19.26
+                .descriptionUpdatedAt(node.getDescriptionUpdatedAt())          // v19.26
                 .build();
     }
 }

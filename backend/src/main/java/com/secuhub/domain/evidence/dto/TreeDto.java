@@ -125,5 +125,15 @@ public class TreeDto {
          * 노출 (Q1=A own only). 검토 대기 N 배지용.
          */
         private Long pendingReviewCount;
+
+        /**
+         * v19.26 — 인수인계 노트(description) 최종 작성자 이름(박제). null 허용
+         * (설명 없거나 레거시 행). FE 설명 패널의 "{이름} 수정" 표시용.
+         */private String descriptionUpdatedByName;
+
+        /**
+         * v19.26 — 인수인계 노트 최종 수정 시각. ISO-8601 문자열로 직렬화. null 허용.
+         */
+        private java.time.LocalDateTime descriptionUpdatedAt;
     }
 }

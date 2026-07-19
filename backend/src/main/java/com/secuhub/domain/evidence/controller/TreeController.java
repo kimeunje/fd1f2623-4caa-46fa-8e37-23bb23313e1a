@@ -1,6 +1,7 @@
 package com.secuhub.domain.evidence.controller;
 
 import com.secuhub.common.dto.ApiResponse;
+import com.secuhub.config.jwt.UserPrincipal;
 import com.secuhub.domain.evidence.dto.TreeDto;
 import com.secuhub.domain.evidence.dto.TreeUpdateDto;
 import com.secuhub.domain.evidence.service.TreeService;
@@ -8,6 +9,7 @@ import com.secuhub.domain.evidence.service.TreeUpdateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -64,8 +66,12 @@ public class TreeController {
     @PatchMapping("/frameworks/{frameworkId}/tree")
     public ResponseEntity<ApiResponse<TreeUpdateDto.Response>> patchTree(
             @PathVariable Long frameworkId,
-            @RequestBody TreeUpdateDto.Request request) {
-        TreeUpdateDto.Response response = treeUpdateService.updateTree(frameworkId, request);
+            @RequestBody TreeUpdateDto.Request request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        // v19.26 — 인수인계 노트 작성자 박제를 위해 현재 사용자 id 전달.
+        Long editorUserId = principal != null ? principal.getUserId() : null;
+        TreeUpdateDto.Response response =
+                treeUpdateService.updateTree(frameworkId, request, editorUserId);
         return ResponseEntity.ok(ApiResponse.ok(response));
     }
 }

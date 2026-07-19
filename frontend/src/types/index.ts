@@ -23,7 +23,8 @@ export interface MessageResponse {
 // ========================================
 // 사용자
 // ========================================
-export type UserRole = 'admin' | 'approver' | 'developer'
+// v19.24 — 'reviewer'(심사원, 읽기 전용) 추가. approver/developer 는 레거시 담당자.
+export type UserRole = 'admin' | 'approver' | 'developer' | 'reviewer'
 export type UserStatus = 'active' | 'inactive'
 
 export interface User {

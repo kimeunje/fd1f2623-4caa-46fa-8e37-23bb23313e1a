@@ -50,10 +50,12 @@ import {
 import { useControlTree, type LeafStatus } from '@/composables/useControlTree'
 import ControlNodeRow from '@/components/controls/ControlNodeRow.vue'
 import UnifiedControlsDialog from '@/components/controls/UnifiedControlsDialog.vue'
+import NodeDescriptionDialog from '@/components/controls/NodeDescriptionDialog.vue'
 import type {
   Framework,
   ControlDetail,
 } from '@/types/evidence'
+import type { UnifiedNode, TreeRootNode } from '@/composables/useControlTree'
 
 // ========================================
 // Props (v11 Phase 5-3: 라우트 /controls/:frameworkId 에서 전달)
@@ -295,6 +297,32 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
   setTimeout(() => {
     toast.value.show = false
   }, 3000)
+}
+
+// ─── v19.23 — 항목 설명 (본문, immediate 모드) ───
+// 본문 트리는 편집 다이얼로그와 달리 dirty 누적/푸터가 없으므로 ✎ 저장은 즉시 PATCH.
+// 선행 조건 dirtyCount === 0 (다이얼로그에 미저장 변경이 있으면 서버 version 이
+// 올라가 다이얼로그의 다음 [변경 저장] 이 409). 여기서 진입 자체를 막는다.
+const descTarget = ref<UnifiedNode | null>(null)
+const descOpen = ref(false)
+function onRequestDescription(node: TreeRootNode | UnifiedNode) {
+  if (tree.dirtyCount.value > 0) {
+    showToast('편집 중인 변경이 있습니다. 관리 항목 편집에서 먼저 저장해주세요.', 'error')
+    return
+  }
+  // 본문 노드는 모두 서버 존재 노드(_kind 없음) → setDescription 의 existing 분기가
+  // node.id 로 원본을 찾는다. 모달/저장이 읽는 필드(id/code/name/description)는
+  // TreeRootNode 에 모두 있으므로 UnifiedNode 로 취급해도 안전.
+  descTarget.value = node as UnifiedNode
+  descOpen.value = true
+}
+function onDescriptionSaved() {
+  showToast('설명을 저장했습니다.', 'success')
+}
+async function onDescriptionConflict() {
+  // 본문에는 전용 충돌 다이얼로그가 없다. 트리를 다시 불러와 최신 상태로 정렬.
+  await tree.reload()
+  showToast('다른 사용자가 트리를 변경해 최신 내용을 다시 불러왔습니다.', 'error')
 }
 
 // ========================================
@@ -826,6 +854,7 @@ watch(
           @zip-download="onZipDownload"
           @delete-evidence-type="onDeleteEvidenceType"
           @create-evidence-type="onCreateEvidenceType"
+          @request-description="onRequestDescription"
         />
       </div>
     </div>
@@ -837,6 +866,17 @@ watch(
       :tree-state="tree"
       :framework-name="currentFramework.name"
       @saved="onUnifiedSaved"
+    />
+
+    <!-- v19.23 — 본문 항목 설명 (immediate: 즉시 PATCH) -->
+    <NodeDescriptionDialog
+      v-model:open="descOpen"
+      :node="descTarget"
+      :tree-state="tree"
+      mode="immediate"
+      @saved="onDescriptionSaved"
+      @conflict="onDescriptionConflict"
+      @error="(m: string) => showToast(m, 'error')"
     />
 
   </div>

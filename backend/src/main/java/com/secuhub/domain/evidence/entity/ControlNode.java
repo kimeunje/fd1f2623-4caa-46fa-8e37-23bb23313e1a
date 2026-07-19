@@ -100,6 +100,20 @@ public class ControlNode extends BaseEntity {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    /**
+     * v19.26 — 인수인계 노트(description)를 마지막으로 수정한 사람의 이름(박제).
+     * FK 아님 — 작성 시점 이름을 그대로 저장해 퇴사/개명과 무관하게 "당시 누가" 를 보존.
+     * description 텍스트가 실제로 바뀔 때만 갱신 ({@link #update} 참조). NULL 허용.
+     */
+    @Column(name = "description_updated_by_name", length = 100)
+    private String descriptionUpdatedByName;
+
+    /**
+     * v19.26 — 인수인계 노트 최종 수정 시각. description 실제 변경 시에만 갱신. NULL 허용.
+     */
+    @Column(name = "description_updated_at")
+    private java.time.LocalDateTime descriptionUpdatedAt;
+
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
 
@@ -164,11 +178,22 @@ public class ControlNode extends BaseEntity {
      * <p>{@code TreeUpdateService} 의 updated 적용은 code/name/description 만
      * 받으므로 displayOrder/depth 에 null 을 전달한다 — 위치 변경은 별도
      * {@link #move(ControlNode, int, int)} 책임.</p>
+     *
+     * <p>v19.26 — {@code editorName}: 인수인계 노트 작성자(박제). description 이
+     * <b>실제로 바뀔 때만</b> descriptionUpdatedByName/At 을 갱신한다. 코드/이름만
+     * 수정하거나(description=null) 값이 이전과 동일하면 작성자/수정일은 불변 —
+     * "누가 언제 노트를 고쳤는지"의 의미를 정확히 유지한다. BE 가 실제 변경 여부의
+     * 최종 판정자이므로 FE dirty 상태와 무관하게 안전하다.</p>
      */
-    public void update(String code, String name, String description, Integer displayOrder, Integer depth) {
+    public void update(String code, String name, String description,
+                       Integer displayOrder, Integer depth, String editorName) {
         if (code != null) this.code = code;
         if (name != null) this.name = name;
-        if (description != null) this.description = description;
+        if (description != null && !description.equals(this.description)) {
+            this.description = description;
+            this.descriptionUpdatedByName = editorName;
+            this.descriptionUpdatedAt = java.time.LocalDateTime.now();
+        }
         if (displayOrder != null) this.displayOrder = displayOrder;
         if (depth != null) this.depth = depth;
     }

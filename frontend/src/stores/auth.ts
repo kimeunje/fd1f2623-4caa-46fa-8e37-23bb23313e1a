@@ -20,6 +20,8 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => user.value?.role === 'admin')
   const isApprover = computed(() => user.value?.role === 'approver')
   const isDeveloper = computed(() => user.value?.role === 'developer')
+  // v19.24 — 심사원(읽기 전용). 라우팅 랜딩 분기 + /review 접근 판정에 사용.
+  const isReviewer = computed(() => user.value?.role === 'reviewer')
   const hasEvidenceAccess = computed(() => user.value?.permissionEvidence ?? false)
 
   // ========================================
@@ -154,6 +156,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     isApprover,
     isDeveloper,
+    isReviewer,
     hasEvidenceAccess,
     // Actions
     initialize,

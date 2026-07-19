@@ -28,9 +28,11 @@ import {
   CONTROL_TREE_INJECTION_KEY,
   type ControlTreeApi,
   type UnifiedNode,
+  type TreeRootNode,
 } from '@/composables/useControlTree'
 import type { ImpactSummary, TreeValidationDetail } from '@/types/evidence'
 import ControlNodeRow from '@/components/controls/ControlNodeRow.vue'
+import NodeDescriptionDialog from '@/components/controls/NodeDescriptionDialog.vue'
 import ControlCodeChangeWarningDialog from '@/components/controls/ControlCodeChangeWarningDialog.vue'
 import MoveNodeDialog from '@/components/controls/MoveNodeDialog.vue'
 import TreeConflictDialog from '@/components/controls/TreeConflictDialog.vue'
@@ -50,6 +52,18 @@ const emit = defineEmits<{
 }>()
 
 provide(CONTROL_TREE_INJECTION_KEY, props.treeState)
+
+// ─── v19.23 — 항목 설명 편집 모달 (draft 모드) ───
+// [적용] 은 treeState.setDescription() 으로 dirty 에만 올린다. 실제 PATCH 는
+// 푸터 [변경 저장] — 낙관적 락 흐름을 하나로 유지.
+// emit 계약이 RowNode(view+dialog 공용)이므로 리스너도 RowNode 를 받는다.
+// dialog 컨텍스트에서는 항상 UnifiedNode 만 올라오므로 안전하게 좁힌다.
+const descTarget = ref<UnifiedNode | null>(null)
+const descOpen = ref(false)
+function handleRequestDescription(node: TreeRootNode | UnifiedNode): void {
+  descTarget.value = node as UnifiedNode
+  descOpen.value = true
+}
 
 // ============================================================================
 // 검색 input ref (⌘F 포커스용)
@@ -388,6 +402,7 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
               @leaf-code-blur="handleLeafCodeBlur"
               @request-move="handleRequestMove"
               @request-delete="handleRequestDelete"
+              @request-description="handleRequestDescription"
             />
             <div class="add-root-row" @click="handleAddRootCategory">
               <i class="pi pi-plus"></i>
@@ -438,6 +453,14 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
       :current-version="conflictData.currentVersion"
       @reload="handleConflictReload"
       @dismiss="handleConflictDismiss"
+    />
+
+    <!-- v19.23 — 항목 설명 편집 (draft: dirty 에만 반영, 저장은 푸터) -->
+    <NodeDescriptionDialog
+      v-model:open="descOpen"
+      :node="descTarget"
+      :tree-state="treeState"
+      mode="draft"
     />
   </Teleport>
 </template>

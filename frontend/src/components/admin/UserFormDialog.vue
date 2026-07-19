@@ -24,18 +24,31 @@ const emit = defineEmits<{
 
 const isEdit = computed(() => props.user !== null)
 
-const roleOptions: { value: UserRole; label: string }[] = [
-  { value: 'admin', label: '관리자' },
-  { value: 'approver', label: '결재자' },
-  { value: 'developer', label: '개발자' },
-]
+/**
+ * v19.24 — 신규 계정은 "관리자 / 심사원" 2택 (담당자 폐기).
+ * 수정 모드에서 현재 역할이 레거시(approver/developer)면 그 옵션을 유지해
+ * select 가 값을 잃거나 실수로 역할이 바뀌지 않게 한다. 신규 생성엔 미노출.
+ */
+const roleOptions = computed<{ value: UserRole; label: string }[]>(() => {
+  const base: { value: UserRole; label: string }[] = [
+    { value: 'admin', label: '관리자' },
+    { value: 'reviewer', label: '심사원' },
+  ]
+  if (isEdit.value && (role.value === 'approver' || role.value === 'developer')) {
+    base.push({
+      value: role.value,
+      label: role.value === 'approver' ? '결재자 (레거시)' : '개발자 (레거시)',
+    })
+  }
+  return base
+})
 
 // ── 폼 상태 ──
 const email = ref('')
 const name = ref('')
 const password = ref('')
 const team = ref('')
-const role = ref<UserRole>('developer')
+const role = ref<UserRole>('reviewer')
 const permissionEvidence = ref(false)
 const status = ref<UserStatus>('active')
 
@@ -62,7 +75,7 @@ watch(
       name.value = ''
       password.value = ''
       team.value = ''
-      role.value = 'developer'
+      role.value = 'reviewer'      // v19.24 — 신규 기본값: 심사원
       permissionEvidence.value = false
       status.value = 'active'
     }
@@ -200,18 +213,14 @@ async function save() {
           >
             <option v-for="opt in roleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
+          <p class="mt-1 text-xs text-gray-400">
+            심사원은 관리 항목과 최신 증빙을 열람·다운로드만 할 수 있습니다.
+          </p>
         </div>
 
-        <!-- 증빙 접근 권한 -->
-        <div class="flex items-center gap-2">
-          <input
-            id="perm-evidence"
-            v-model="permissionEvidence"
-            type="checkbox"
-            class="w-4 h-4 text-blue-500 border-gray-300 rounded focus:ring-blue-500"
-          />
-          <label for="perm-evidence" class="text-sm text-gray-700">증빙 접근 권한 부여</label>
-        </div>
+        <!-- v19.24 — 증빙 접근 권한 체크박스 제거. 담당자 폐기로 신규 계정은
+             업로드 권한을 갖지 않는다(permission_evidence=false 고정). 레거시
+             담당자 계정의 기존 권한은 수정 시 그대로 보존된다. -->
 
         <!-- 상태 (수정 모드만) -->
         <div v-if="isEdit">

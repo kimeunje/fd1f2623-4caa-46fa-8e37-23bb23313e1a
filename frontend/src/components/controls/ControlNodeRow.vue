@@ -22,6 +22,8 @@ import {
   type UnifiedNode,
 } from '@/composables/useControlTree'
 import type { ControlDetail, EvidenceTypeResponse } from '@/types/evidence'
+// v19.23 — 항목 설명 마크다운 렌더러 (읽기 패널 + dirty 판정용 isBlank)
+import { renderMarkdown, isBlankDescription } from '@/composables/useMarkdown'
 
 defineOptions({ name: 'ControlNodeRow' })
 
@@ -95,6 +97,10 @@ const emit = defineEmits<{
   ]
   'request-move': [node: UnifiedNode]
   'request-delete': [node: UnifiedNode]
+
+  // ─── v19.23 — 설명 편집/열람 모달 요청 (모달은 부모 뷰가 소유) ───
+  // view / dialog 양쪽에서 발생. RowNode union 으로 전달.
+  'request-description': [node: RowNode]
 }>()
 
 // dialog 모드에서만 tree 사용
@@ -109,6 +115,43 @@ const tree = inject<ControlTreeApi | null>(CONTROL_TREE_INJECTION_KEY, null)
  * 와 정합 (cat-1=14, cat-2=32, cat-3=50, cat-4=68, cat-5=86, cat-6=104).
  */
 const indentPx = computed<number>(() => 14 + 18 * (props.node.depth - 1))
+
+// ============================================================================
+// v19.23 — 항목 설명 (description)
+// ============================================================================
+/**
+ * TreeRootNode(view) / UnifiedNode(dialog) 모두 description?: string 을 갖는다.
+ * 서버 null 은 '' 로 정규화 (isBlank 판정 · dirty no-op 정합).
+ */
+const nodeDescription = computed<string>(
+  () => (props.node as { description?: string }).description ?? '',
+)
+const viewHasDescription = computed<boolean>(() => !isBlankDescription(nodeDescription.value))
+const viewDescriptionHtml = computed<string>(() => renderMarkdown(nodeDescription.value))
+
+// v19.26 — 인수인계 노트 작성자/수정일 (트리 노드에 실림)
+const viewAuditLine = computed<string>(() => {
+  const n = props.node as { descriptionUpdatedByName?: string; descriptionUpdatedAt?: string }
+  const name = n.descriptionUpdatedByName ?? ''
+  const iso = n.descriptionUpdatedAt ?? ''
+  let date = ''
+  if (iso) {
+    const d = new Date(iso)
+    date = isNaN(d.getTime()) ? iso.slice(0, 10) : d.toISOString().slice(0, 10)
+  }
+  if (name && date) return `${date} · ${name} 수정`
+  if (name) return `${name} 수정`
+  return date ? `${date} 수정` : ''
+})
+
+/** ✎ 클릭 — 부모 뷰(UnifiedControlsDialog / ControlsView)가 모달을 연다. */
+function handleRequestDescription(): void {
+  emit('request-description', props.node)
+}
+/** 재귀 자식의 request-description 을 그대로 위로 전달. */
+function forwardRequestDescription(n: RowNode): void {
+  emit('request-description', n)
+}
 
 /**
  * P5 (5-14i v2) — depth typography. weight + color 동시 변화로 트리 깊이 시각화.
@@ -563,6 +606,23 @@ function forwardRequestDelete(n: UnifiedNode): void {
         isLeafExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
     </div>
 
+    <!-- v19.23 — 항목 설명 (읽기). node.description 은 GET /tree 응답에 이미 실려
+         controlDetail(GET /controls/:id) 로딩과 무관하게 즉시 표시된다.
+         depth>2(leaf 계열)만 — depth<=2 카테고리 설명은 v19.25 심사원 뷰와 함께. -->
+    <div
+      v-if="viewHasDescription && node.depth > 2"
+      :class="['desc-panel', { collapsed: !isLeafExpanded }]">
+      <div class="desc-panel-inner">
+        <div class="desc-panel-content" :style="{ paddingLeft: `${indentPx + 32}px` }">
+          <div class="desc-head">
+            <span class="desc-label">인수인계 노트</span>
+            <span v-if="viewAuditLine" class="desc-audit">{{ viewAuditLine }}</span>
+          </div>
+          <div class="desc-body prose-node-desc" v-html="viewDescriptionHtml"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 증빙 패널 (레퍼런스 HTML 정합 — CSS Grid height 애니메이션) -->
     <div
       v-if="controlDetail"
@@ -661,6 +721,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @zip-download="forwardZip"
         @delete-evidence-type="forwardDeleteEt"
         @create-evidence-type="forwardCreateEt"
+        @request-description="forwardRequestDescription"
       />
       <!-- depth 1-2 empty CTA -->
       <div
@@ -732,6 +793,14 @@ function forwardRequestDelete(n: UnifiedNode): void {
         :title="dialogValidationErrorTitle"></span>
       <div class="row-actions">
         <button
+          type="button"
+          class="row-iconbtn"
+          :class="{ 'row-iconbtn-active': !isBlankDescription(dialogNode?.description) }"
+          title="인수인계 노트"
+          @click.stop="handleRequestDescription">
+          <i class="pi pi-pencil"></i>
+        </button>
+        <button
           v-if="dialogNode?._kind === 'existing'"
           type="button"
           class="row-iconbtn"
@@ -786,6 +855,14 @@ function forwardRequestDelete(n: UnifiedNode): void {
         :title="dialogValidationErrorTitle"></span>
       <div class="row-actions">
         <button
+          type="button"
+          class="row-iconbtn"
+          :class="{ 'row-iconbtn-active': !isBlankDescription(dialogNode?.description) }"
+          title="인수인계 노트"
+          @click.stop="handleRequestDescription">
+          <i class="pi pi-pencil"></i>
+        </button>
+        <button
           v-if="dialogNode?._kind === 'existing'"
           type="button"
           class="row-iconbtn"
@@ -814,6 +891,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @leaf-code-blur="forwardLeafCodeBlur"
         @request-move="forwardRequestMove"
         @request-delete="forwardRequestDelete"
+        @request-description="forwardRequestDescription"
       />
       <!-- v18: 항목 추가 (드롭다운 없이 바로 추가) -->
       <div
@@ -968,6 +1046,81 @@ function forwardRequestDelete(n: UnifiedNode): void {
 .evi-panel.collapsed .evi-panel-content {
   opacity: 0;
   border-bottom-color: transparent;
+}
+
+/* ── v19.23 — 항목 설명 읽기 패널 (evi-panel 애니메이션 패턴 정합) ── */
+.desc-panel {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.25s ease-out;
+}
+.desc-panel.collapsed {
+  grid-template-rows: 0fr;
+}
+@starting-style {
+  .desc-panel:not(.collapsed) {
+    grid-template-rows: 0fr;
+  }
+}
+.desc-panel-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.desc-panel-content {
+  padding: 10px 16px 4px;
+}
+.desc-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.desc-label {
+  font-size: 11px;
+  color: #9ca3af;
+}
+.desc-audit {
+  font-size: 11px;
+  color: #9ca3af;
+}
+.desc-body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #4b5563;
+  max-width: 72ch;
+}
+/* ✎ 버튼 — 설명이 있으면 강조 (빈 항목과 구분) */
+.row-iconbtn-active {
+  color: #2563eb;
+}
+
+/**
+ * v-html 대상 prose 규칙. DOMPurify 가 class/style 을 제거하므로 태그 셀렉터로만.
+ * NodeDescriptionDialog.vue 와 동일 — v19.25 심사원 뷰 추가 시 shared css 로 추출.
+ */
+.prose-node-desc :deep(p) { margin: 0 0 0.6em; }
+.prose-node-desc :deep(strong) { font-weight: 500; color: #111827; }
+.prose-node-desc :deep(em) { font-style: italic; }
+.prose-node-desc :deep(ul),
+.prose-node-desc :deep(ol) { margin: 0 0 0.6em; padding-left: 1.25em; list-style: disc; }
+.prose-node-desc :deep(ol) { list-style: decimal; }
+.prose-node-desc :deep(li) { margin: 0.2em 0; }
+.prose-node-desc :deep(li > ul) { list-style: circle; margin: 0.2em 0; }
+.prose-node-desc :deep(h1),
+.prose-node-desc :deep(h2),
+.prose-node-desc :deep(h3),
+.prose-node-desc :deep(h4) {
+  font-size: 0.9rem; font-weight: 500; color: #111827; margin: 0.9em 0 0.35em;
+}
+.prose-node-desc :deep(table) { width: 100%; border-collapse: collapse; margin: 0 0 0.6em; }
+.prose-node-desc :deep(th),
+.prose-node-desc :deep(td) { border: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; }
+.prose-node-desc :deep(code) {
+  font-family: ui-monospace, monospace; font-size: 0.85em;
+  background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 3px;
+}
+.prose-node-desc :deep(blockquote) {
+  border-left: 2px solid #e5e7eb; padding-left: 0.75em; color: #6b7280; margin: 0 0 0.6em;
 }
 .evi-panel-head {
   display: flex; justify-content: space-between; align-items: center;

@@ -10,6 +10,8 @@ import com.secuhub.domain.evidence.entity.Framework;
 import com.secuhub.domain.evidence.entity.NodeType;
 import com.secuhub.domain.evidence.repository.ControlNodeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
+import com.secuhub.domain.user.entity.User;
+import com.secuhub.domain.user.repository.UserRepository;
 import com.secuhub.domain.audit.AuditAction;
 import com.secuhub.domain.audit.AuditResult;
 import com.secuhub.domain.audit.AuditService;
@@ -52,12 +54,26 @@ public class TreeUpdateService {
     private final FrameworkRepository frameworkRepository;
     private final ControlNodeRepository controlNodeRepository;
     private final AuditService auditService;   // A-2: 트리 변경 감사
+    private final UserRepository userRepository; // v19.26: 인수인계 노트 작성자 이름 조회
 
     @PersistenceContext
     private EntityManager entityManager;
 
+    /**
+     * v19.26 — 하위호환 오버로드. editorUserId 없이 호출하면 인수인계 노트 작성자는
+     * 미기록(null). 기존 테스트/호출부 보존용. 실제 요청은 컨트롤러가 3-arg 로 호출한다.
+     */
     @Transactional
     public TreeUpdateDto.Response updateTree(Long frameworkId, TreeUpdateDto.Request req) {
+        return updateTree(frameworkId, req, null);
+    }
+
+    /**
+     * @param editorUserId v19.26 — 현재 로그인 사용자 id. description 이 실제로 바뀐
+     *                     노드가 있을 때만 이 id 로 이름을 조회해 작성자로 박제한다.
+     */
+    @Transactional
+    public TreeUpdateDto.Response updateTree(Long frameworkId, TreeUpdateDto.Request req, Long editorUserId) {
         Framework fw = null;
         try {
             // -----------------------------------------------------------
@@ -147,10 +163,13 @@ public class TreeUpdateService {
             // -----------------------------------------------------------
             // 7. UPDATE (updated) — PATCH 의미상 displayOrder/depth 는 null (위치는 moved 책임)
             // -----------------------------------------------------------
+            // v19.26 — 인수인계 노트 작성자 이름. description 을 담은 updated 가 하나라도
+            // 있을 때만 1회 조회 (없으면 null, 조회 스킵). 실제 값 변경 판정은 entity 가 함.
+            String editorName = resolveEditorName(editorUserId, updated);
             for (TreeUpdateDto.UpdatedNode u : updated) {
                 ControlNode node = existingNodes.get(u.getId());
                 // null safety: 검증 단계가 not-found 처리. 여기 도달 시 node != null
-                node.update(u.getCode(), u.getName(), u.getDescription(), null, null);
+                node.update(u.getCode(), u.getName(), u.getDescription(), null, null, editorName);
             }
 
             // -----------------------------------------------------------
@@ -215,6 +234,20 @@ public class TreeUpdateService {
                     ex.getClass().getSimpleName() + ": " + ex.getMessage());
             throw ex;
         }
+    }
+
+    /**
+     * v19.26 — 인수인계 노트 작성자 이름 해석.
+     *
+     * <p>editorUserId 가 null 이거나(하위호환 2-arg 경로) description 을 담은 updated 가
+     * 하나도 없으면 조회 없이 null 반환. 이름을 못 찾아도 null — 노트 텍스트는 저장되고
+     * 작성자만 미상으로 남는다(저장 자체를 막지 않음). 조회는 최대 1회.</p>
+     */
+    private String resolveEditorName(Long editorUserId, List<TreeUpdateDto.UpdatedNode> updated) {
+        if (editorUserId == null) return null;
+        boolean anyDescription = updated.stream().anyMatch(u -> u.getDescription() != null);
+        if (!anyDescription) return null;
+        return userRepository.findById(editorUserId).map(User::getName).orElse(null);
     }
 
     /** 감사 기록 — 실패가 업무 흐름을 막지 않도록 삼킴(REQUIRES_NEW 라 별도 tx). */
