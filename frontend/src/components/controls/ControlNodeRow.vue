@@ -597,6 +597,14 @@ function forwardRequestDelete(n: UnifiedNode): void {
           {{ viewHasPendingReview ? `검토 대기 ${node.pendingReviewCount ?? 0}` : viewLeafStatus() }}
         </span>
       </span>
+      <button
+        type="button"
+        class="leaf-note-btn"
+        :class="{ 'has-notes': hasNotes }"
+        title="인수인계 노트"
+        @click.stop="handleRequestNotes">
+        <i class="pi pi-pencil"></i>
+      </button>
       <i :class="['leaf-chev pi',
         isLeafExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
     </div>
@@ -707,6 +715,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
         :expanded-leaf-id="expandedLeafId"
         :control-detail="controlDetail"
         :detail-loading="detailLoading"
+        :notes="notes"
         :dimmed="dimmed"
         :highlight-fn="highlightFn"
         :match-count-by-category-id="matchCountByCategoryId"
@@ -922,7 +931,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
 /* leaf 행 (grid 6열) */
 .leaf-row {
   display: grid;
-  grid-template-columns: 100px 1fr 60px 90px 100px 24px;
+  grid-template-columns: 100px 1fr 60px 90px 100px 24px 24px;
   gap: 12px; align-items: center;
   padding: 8px 16px 8px 0; cursor: pointer;
   border-bottom: 1px solid #eef0f3;
@@ -989,6 +998,25 @@ function forwardRequestDelete(n: UnifiedNode): void {
 }
 .leaf-row:hover .leaf-chev { color: #9ca3af; }
 .leaf-row.expanded .leaf-chev { transform: rotate(90deg); color: #3b82f6; }
+
+/* v19.27 — 본문 leaf 행 인수인계 노트 진입점. 평소 흐리게, hover/노트 있으면 진하게. */
+.leaf-note-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: #cbd5e1;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.leaf-note-btn i { font-size: 13px; }
+.leaf-row:hover .leaf-note-btn { opacity: 1; }
+.leaf-note-btn:hover { background: #eef2ff; color: #4f46e5; }
+/* 노트가 있으면 hover 아니어도 은은하게 표시 (인계 맥락 존재 신호) */
+.leaf-note-btn.has-notes { opacity: 1; color: #6366f1; }
 
 /* hybrid 통합 칩 */
 .sub-chip {

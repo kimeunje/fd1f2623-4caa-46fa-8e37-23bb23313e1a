@@ -300,7 +300,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
               ref="newBodyRef"
               v-model="newBody"
               rows="4"
-              placeholder="다음 담당자를 위한 인수인계 메모&#10;예) 이 증빙은 인사팀 김대리에게 매분기 요청해서 받음. 2024년부터 양식이 바뀜."
+              placeholder="다음 담당자를 위한 인수인계 메모&#10;예) 이 증빙은 운영실 김프로에게 매분기 요청해서 받음. 2024년부터 양식이 바뀜."
               class="w-full resize-y rounded-md border border-gray-300 bg-gray-50 p-2.5 font-mono text-xs leading-relaxed focus:border-blue-400 focus:outline-none"
             ></textarea>
             <div class="flex justify-end">
