@@ -1,5 +1,5 @@
 import api from './api'
-import type { ApiResponse, PageResponse } from '@/types'
+import type { ApiResponse, PageResponse, ControlNodeNote, ControlNodeNotePayload } from '@/types'
 import type {
   Framework,
   FrameworkCreatePayload,
@@ -136,6 +136,26 @@ export const controlNodesApi = {
    */
   getImpactSummary(id: number) {
     return api.get<ApiResponse<ImpactSummary>>(`/control-nodes/${id}/impact-summary`)
+  },
+
+  // ────────────────────────────────────────────────────────────────────
+  // v19.27 — 관리 항목 인수인계 노트 (누적 로그). 관리자 전용.
+  //   경로는 getDetail 과 동일 계열(/control-nodes/{id}/...).
+  // ────────────────────────────────────────────────────────────────────
+  listNotes(nodeId: number) {
+    return api.get<ApiResponse<ControlNodeNote[]>>(`/control-nodes/${nodeId}/notes`)
+  },
+  createNote(nodeId: number, payload: ControlNodeNotePayload) {
+    return api.post<ApiResponse<ControlNodeNote>>(`/control-nodes/${nodeId}/notes`, payload)
+  },
+  updateNote(nodeId: number, noteId: number, payload: ControlNodeNotePayload) {
+    return api.patch<ApiResponse<ControlNodeNote>>(
+      `/control-nodes/${nodeId}/notes/${noteId}`,
+      payload,
+    )
+  },
+  deleteNote(nodeId: number, noteId: number) {
+    return api.delete(`/control-nodes/${nodeId}/notes/${noteId}`)
   },
 }
 

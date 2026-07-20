@@ -22,9 +22,9 @@ import {
   type UnifiedNode,
 } from '@/composables/useControlTree'
 import type { ControlDetail, EvidenceTypeResponse } from '@/types/evidence'
+import type { ControlNodeNote } from '@/types'
 // v19.23 — 항목 설명 마크다운 렌더러 (읽기 패널 + dirty 판정용 isBlank)
-import { renderMarkdown, isBlankDescription } from '@/composables/useMarkdown'
-
+import { renderMarkdown } from '@/composables/useMarkdown'
 defineOptions({ name: 'ControlNodeRow' })
 
 // ============================================================================
@@ -47,6 +47,8 @@ interface Props {
   expandedLeafId?: number | null
   controlDetail?: ControlDetail | null
   detailLoading?: boolean
+  /** v19.27 — 펼쳐진 leaf 의 인수인계 노트 (ControlsView 가 조회해 전달). */
+  notes?: ControlNodeNote[]
   dimmed?: boolean
   isRoot?: boolean
 
@@ -72,6 +74,7 @@ const props = withDefaults(defineProps<Props>(), {
   expandedLeafId: null,
   controlDetail: null,
   detailLoading: false,
+  notes: () => [],
   dimmed: false,
   isRoot: false,
   highlightFn: undefined,
@@ -98,9 +101,9 @@ const emit = defineEmits<{
   'request-move': [node: UnifiedNode]
   'request-delete': [node: UnifiedNode]
 
-  // ─── v19.23 — 설명 편집/열람 모달 요청 (모달은 부모 뷰가 소유) ───
+  // ─── v19.27 — 인수인계 노트 모달 요청 (모달은 부모 뷰가 소유) ───
   // view / dialog 양쪽에서 발생. RowNode union 으로 전달.
-  'request-description': [node: RowNode]
+  'request-notes': [node: RowNode]
 }>()
 
 // dialog 모드에서만 tree 사용
@@ -117,40 +120,32 @@ const tree = inject<ControlTreeApi | null>(CONTROL_TREE_INJECTION_KEY, null)
 const indentPx = computed<number>(() => 14 + 18 * (props.node.depth - 1))
 
 // ============================================================================
-// v19.23 — 항목 설명 (description)
+// v19.27 — 인수인계 노트 (누적). notes 는 ControlsView 가 펼친 leaf 에 대해
+// 조회해 prop 으로 내려준다(controlDetail 과 동일 패턴). ✎ 는 편집 모달을 연다.
 // ============================================================================
-/**
- * TreeRootNode(view) / UnifiedNode(dialog) 모두 description?: string 을 갖는다.
- * 서버 null 은 '' 로 정규화 (isBlank 판정 · dirty no-op 정합).
- */
-const nodeDescription = computed<string>(
-  () => (props.node as { description?: string }).description ?? '',
-)
-const viewHasDescription = computed<boolean>(() => !isBlankDescription(nodeDescription.value))
-const viewDescriptionHtml = computed<string>(() => renderMarkdown(nodeDescription.value))
+const hasNotes = computed<boolean>(() => (props.notes?.length ?? 0) > 0)
 
-// v19.26 — 인수인계 노트 작성자/수정일 (트리 노드에 실림)
-const viewAuditLine = computed<string>(() => {
-  const n = props.node as { descriptionUpdatedByName?: string; descriptionUpdatedAt?: string }
-  const name = n.descriptionUpdatedByName ?? ''
-  const iso = n.descriptionUpdatedAt ?? ''
-  let date = ''
-  if (iso) {
-    const d = new Date(iso)
-    date = isNaN(d.getTime()) ? iso.slice(0, 10) : d.toISOString().slice(0, 10)
-  }
-  if (name && date) return `${date} · ${name} 수정`
-  if (name) return `${name} 수정`
-  return date ? `${date} 수정` : ''
-})
-
-/** ✎ 클릭 — 부모 뷰(UnifiedControlsDialog / ControlsView)가 모달을 연다. */
-function handleRequestDescription(): void {
-  emit('request-description', props.node)
+function fmtNoteDate(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? iso.slice(0, 10) : d.toISOString().slice(0, 10)
 }
-/** 재귀 자식의 request-description 을 그대로 위로 전달. */
-function forwardRequestDescription(n: RowNode): void {
-  emit('request-description', n)
+function noteMeta(n: { authorName: string; createdAt: string; edited: boolean }): string {
+  const date = fmtNoteDate(n.createdAt)
+  const base = date && n.authorName ? `${date} · ${n.authorName}` : date || n.authorName
+  return n.edited ? `${base} · 수정됨` : base
+}
+function renderNoteBody(body: string): string {
+  return renderMarkdown(body)
+}
+
+/** ✎ 클릭 — 부모 뷰(UnifiedControlsDialog / ControlsView)가 노트 모달을 연다. */
+function handleRequestNotes(): void {
+  emit('request-notes', props.node)
+}
+/** 재귀 자식의 request-notes 를 그대로 위로 전달. */
+function forwardRequestNotes(n: RowNode): void {
+  emit('request-notes', n)
 }
 
 /**
@@ -606,19 +601,20 @@ function forwardRequestDelete(n: UnifiedNode): void {
         isLeafExpanded ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
     </div>
 
-    <!-- v19.23 — 항목 설명 (읽기). node.description 은 GET /tree 응답에 이미 실려
-         controlDetail(GET /controls/:id) 로딩과 무관하게 즉시 표시된다.
-         depth>2(leaf 계열)만 — depth<=2 카테고리 설명은 v19.25 심사원 뷰와 함께. -->
+    <!-- v19.27 — 인수인계 노트 (읽기). notes 는 ControlsView 가 펼친 leaf 에 대해
+         조회해 prop 으로 내려준다. 노트가 있을 때만 표시. depth>2(leaf 계열)만. -->
     <div
-      v-if="viewHasDescription && node.depth > 2"
+      v-if="hasNotes && node.depth > 2"
       :class="['desc-panel', { collapsed: !isLeafExpanded }]">
       <div class="desc-panel-inner">
         <div class="desc-panel-content" :style="{ paddingLeft: `${indentPx + 32}px` }">
-          <div class="desc-head">
-            <span class="desc-label">인수인계 노트</span>
-            <span v-if="viewAuditLine" class="desc-audit">{{ viewAuditLine }}</span>
-          </div>
-          <div class="desc-body prose-node-desc" v-html="viewDescriptionHtml"></div>
+          <div class="desc-label">인수인계 노트</div>
+          <ul class="note-list">
+            <li v-for="n in notes" :key="n.id" class="note-item">
+              <div class="note-meta">{{ noteMeta(n) }}</div>
+              <div class="note-body prose-node-desc" v-html="renderNoteBody(n.body)"></div>
+            </li>
+          </ul>
         </div>
       </div>
     </div>
@@ -721,7 +717,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @zip-download="forwardZip"
         @delete-evidence-type="forwardDeleteEt"
         @create-evidence-type="forwardCreateEt"
-        @request-description="forwardRequestDescription"
+        @request-notes="forwardRequestNotes"
       />
       <!-- depth 1-2 empty CTA -->
       <div
@@ -795,9 +791,9 @@ function forwardRequestDelete(n: UnifiedNode): void {
         <button
           type="button"
           class="row-iconbtn"
-          :class="{ 'row-iconbtn-active': !isBlankDescription(dialogNode?.description) }"
+          
           title="인수인계 노트"
-          @click.stop="handleRequestDescription">
+          @click.stop="handleRequestNotes">
           <i class="pi pi-pencil"></i>
         </button>
         <button
@@ -857,9 +853,9 @@ function forwardRequestDelete(n: UnifiedNode): void {
         <button
           type="button"
           class="row-iconbtn"
-          :class="{ 'row-iconbtn-active': !isBlankDescription(dialogNode?.description) }"
+          
           title="인수인계 노트"
-          @click.stop="handleRequestDescription">
+          @click.stop="handleRequestNotes">
           <i class="pi pi-pencil"></i>
         </button>
         <button
@@ -891,7 +887,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
         @leaf-code-blur="forwardLeafCodeBlur"
         @request-move="forwardRequestMove"
         @request-delete="forwardRequestDelete"
-        @request-description="forwardRequestDescription"
+        @request-notes="forwardRequestNotes"
       />
       <!-- v18: 항목 추가 (드롭다운 없이 바로 추가) -->
       <div
@@ -1078,10 +1074,35 @@ function forwardRequestDelete(n: UnifiedNode): void {
 .desc-label {
   font-size: 11px;
   color: #9ca3af;
+  margin-bottom: 8px;
 }
 .desc-audit {
   font-size: 11px;
   color: #9ca3af;
+}
+/* v19.27 — 노트 목록 */
+.note-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 72ch;
+}
+.note-item {
+  border-left: 2px solid #e5e7eb;
+  padding-left: 10px;
+}
+.note-meta {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+.note-body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #4b5563;
 }
 .desc-body {
   font-size: 13px;
@@ -1096,7 +1117,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
 
 /**
  * v-html 대상 prose 규칙. DOMPurify 가 class/style 을 제거하므로 태그 셀렉터로만.
- * NodeDescriptionDialog.vue 와 동일 — v19.25 심사원 뷰 추가 시 shared css 로 추출.
+ * NodeNotesDialog.vue 와 동일 — 추후 shared css 로 추출.
  */
 .prose-node-desc :deep(p) { margin: 0 0 0.6em; }
 .prose-node-desc :deep(strong) { font-weight: 500; color: #111827; }

@@ -32,7 +32,8 @@ import {
 } from '@/composables/useControlTree'
 import type { ImpactSummary, TreeValidationDetail } from '@/types/evidence'
 import ControlNodeRow from '@/components/controls/ControlNodeRow.vue'
-import NodeDescriptionDialog from '@/components/controls/NodeDescriptionDialog.vue'
+import NodeNotesDialog from '@/components/controls/NodeNotesDialog.vue'
+import { useAuthStore } from '@/stores/auth'
 import ControlCodeChangeWarningDialog from '@/components/controls/ControlCodeChangeWarningDialog.vue'
 import MoveNodeDialog from '@/components/controls/MoveNodeDialog.vue'
 import TreeConflictDialog from '@/components/controls/TreeConflictDialog.vue'
@@ -54,15 +55,25 @@ const emit = defineEmits<{
 provide(CONTROL_TREE_INJECTION_KEY, props.treeState)
 
 // ─── v19.23 — 항목 설명 편집 모달 (draft 모드) ───
-// [적용] 은 treeState.setDescription() 으로 dirty 에만 올린다. 실제 PATCH 는
-// 푸터 [변경 저장] — 낙관적 락 흐름을 하나로 유지.
-// emit 계약이 RowNode(view+dialog 공용)이므로 리스너도 RowNode 를 받는다.
-// dialog 컨텍스트에서는 항상 UnifiedNode 만 올라오므로 안전하게 좁힌다.
-const descTarget = ref<UnifiedNode | null>(null)
-const descOpen = ref(false)
-function handleRequestDescription(node: TreeRootNode | UnifiedNode): void {
-  descTarget.value = node as UnifiedNode
-  descOpen.value = true
+// ─── v19.27 — 인수인계 노트 모달 ───
+// 노트는 자체 API(notesApi)로 즉시 저장 — 트리 dirty/버전과 무관.
+// emit 계약이 RowNode 라 리스너도 RowNode 를 받는다. draft 항목(id 없음)은
+// 모달에서 "저장 후 추가 가능" 안내가 뜬다.
+// 작성자 칸 pre-fill 용 — 로그인 관리자 이름(편집 가능).
+const authStore = useAuthStore()
+const authorDefault = computed(() => authStore.user?.name ?? '')
+const noteTarget = ref<{ id: number | null; code: string; name: string }>({
+  id: null,
+  code: '',
+  name: '',
+})
+const noteOpen = ref(false)
+function handleRequestNotes(node: TreeRootNode | UnifiedNode): void {
+  // draft 항목은 아직 서버 id 가 없다 — nodeId=null 로 넘겨 모달이 안내 처리.
+  const n = node as { _kind?: string; id?: number }
+  const rawId = n._kind === 'draft' ? null : n.id ?? null
+  noteTarget.value = { id: rawId, code: node.code, name: node.name }
+  noteOpen.value = true
 }
 
 // ============================================================================
@@ -402,7 +413,7 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
               @leaf-code-blur="handleLeafCodeBlur"
               @request-move="handleRequestMove"
               @request-delete="handleRequestDelete"
-              @request-description="handleRequestDescription"
+              @request-notes="handleRequestNotes"
             />
             <div class="add-root-row" @click="handleAddRootCategory">
               <i class="pi pi-plus"></i>
@@ -455,12 +466,13 @@ const isEmpty = computed<boolean>(() => props.treeState.dialogRootNodes.value.le
       @dismiss="handleConflictDismiss"
     />
 
-    <!-- v19.23 — 항목 설명 편집 (draft: dirty 에만 반영, 저장은 푸터) -->
-    <NodeDescriptionDialog
-      v-model:open="descOpen"
-      :node="descTarget"
-      :tree-state="treeState"
-      mode="draft"
+    <!-- v19.27 — 인수인계 노트 (자체 API로 즉시 저장) -->
+    <NodeNotesDialog
+      v-model:open="noteOpen"
+      :node-id="noteTarget.id"
+      :node-code="noteTarget.code"
+      :node-name="noteTarget.name"
+      :default-author="authorDefault"
     />
   </Teleport>
 </template>

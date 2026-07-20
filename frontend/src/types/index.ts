@@ -137,3 +137,24 @@ export interface IpAccessRuleUpdatePayload {
   description?: string
   enabled?: boolean
 }
+
+// ========================================
+// v19.27 — 관리 항목 인수인계 노트 (누적 로그)
+// ========================================
+/**
+ * 관리 항목당 여러 개가 시간순으로 누적된다. authorName 은 로그인 계정과
+ * 무관하게 작성 시 직접 입력한 이름(공용 관리자 계정 대응).
+ */
+export interface ControlNodeNote {
+  id: number
+  authorName: string
+  body: string
+  createdAt: string   // ISO-8601
+  updatedAt: string   // ISO-8601
+  edited: boolean      // 작성 후 수정 여부 → "(수정됨)" 표시용
+}
+
+export interface ControlNodeNotePayload {
+  authorName: string
+  body: string
+}

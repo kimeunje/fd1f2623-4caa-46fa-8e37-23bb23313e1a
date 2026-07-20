@@ -48,9 +48,12 @@ import {
   evidenceFilesApi,
 } from '@/services/evidenceApi'
 import { useControlTree, type LeafStatus } from '@/composables/useControlTree'
+import { notesApi } from '@/services/api'
+import type { ControlNodeNote } from '@/types'
 import ControlNodeRow from '@/components/controls/ControlNodeRow.vue'
 import UnifiedControlsDialog from '@/components/controls/UnifiedControlsDialog.vue'
-import NodeDescriptionDialog from '@/components/controls/NodeDescriptionDialog.vue'
+import NodeNotesDialog from '@/components/controls/NodeNotesDialog.vue'
+import { useAuthStore } from '@/stores/auth'
 import type {
   Framework,
   ControlDetail,
@@ -99,16 +102,28 @@ const tree = useControlTree(selectedFrameworkId)
 // ========================================
 const expandedLeafId = ref<number | null>(null)
 const controlDetail = ref<ControlDetail | null>(null)
+// v19.27 — 펼쳐진 leaf 의 인수인계 노트. controlDetail 과 같은 수명(펼침 단위).
+const notes = ref<ControlNodeNote[]>([])
+async function loadNotesFor(nodeId: number) {
+  try {
+    const { data } = await notesApi.list(nodeId)
+    notes.value = data.success ? data.data : []
+  } catch {
+    notes.value = []
+  }
+}
 const detailLoading = ref(false)
 
 async function toggleLeaf(nodeId: number) {
   if (expandedLeafId.value === nodeId) {
     expandedLeafId.value = null
     controlDetail.value = null
+    notes.value = []
     return
   }
   expandedLeafId.value = nodeId
   detailLoading.value = true
+  void loadNotesFor(nodeId) // v19.27 — 노트는 controlDetail 과 병행 로드(대기 안 함)
   try {
     const { data } = await controlNodesApi.getDetail(nodeId)
     if (data.success) controlDetail.value = data.data
@@ -118,6 +133,7 @@ async function toggleLeaf(nodeId: number) {
     // 상태 롤백. v15.5.1 의 안내 메시지 ("v15.6 업데이트에서 정상화 예정") 회수.
     expandedLeafId.value = null
     controlDetail.value = null
+    notes.value = []
     showToast('증빙 유형을 불러오지 못했습니다.', 'error')
   } finally {
     detailLoading.value = false
@@ -299,30 +315,27 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
   }, 3000)
 }
 
-// ─── v19.23 — 항목 설명 (본문, immediate 모드) ───
-// 본문 트리는 편집 다이얼로그와 달리 dirty 누적/푸터가 없으므로 ✎ 저장은 즉시 PATCH.
-// 선행 조건 dirtyCount === 0 (다이얼로그에 미저장 변경이 있으면 서버 version 이
-// 올라가 다이얼로그의 다음 [변경 저장] 이 409). 여기서 진입 자체를 막는다.
-const descTarget = ref<UnifiedNode | null>(null)
-const descOpen = ref(false)
-function onRequestDescription(node: TreeRootNode | UnifiedNode) {
-  if (tree.dirtyCount.value > 0) {
-    showToast('편집 중인 변경이 있습니다. 관리 항목 편집에서 먼저 저장해주세요.', 'error')
-    return
+// ─── v19.27 — 인수인계 노트 (본문) ───
+// 노트는 자체 API(notesApi)로 즉시 저장 — 트리 dirty/version 과 무관하므로
+// v19.23 의 dirty 가드/충돌 처리가 필요 없다. 모달이 CRUD 를 직접 수행한다.
+const authStore = useAuthStore()
+const authorDefault = computed(() => authStore.user?.name ?? '')
+const noteTarget = ref<{ id: number | null; code: string; name: string }>({
+  id: null,
+  code: '',
+  name: '',
+})
+const noteOpen = ref(false)
+function onRequestNotes(node: TreeRootNode | UnifiedNode) {
+  // 본문 노드는 모두 서버 존재 노드 → id 보유. code/name 은 RowNode 공통.
+  noteTarget.value = { id: node.id ?? null, code: node.code, name: node.name }
+  noteOpen.value = true
+}
+function onNotesChanged() {
+  // 모달에서 추가/수정/삭제 시 본문 읽기 패널을 최신화.
+  if (noteTarget.value.id != null && expandedLeafId.value === noteTarget.value.id) {
+    void loadNotesFor(noteTarget.value.id)
   }
-  // 본문 노드는 모두 서버 존재 노드(_kind 없음) → setDescription 의 existing 분기가
-  // node.id 로 원본을 찾는다. 모달/저장이 읽는 필드(id/code/name/description)는
-  // TreeRootNode 에 모두 있으므로 UnifiedNode 로 취급해도 안전.
-  descTarget.value = node as UnifiedNode
-  descOpen.value = true
-}
-function onDescriptionSaved() {
-  showToast('설명을 저장했습니다.', 'success')
-}
-async function onDescriptionConflict() {
-  // 본문에는 전용 충돌 다이얼로그가 없다. 트리를 다시 불러와 최신 상태로 정렬.
-  await tree.reload()
-  showToast('다른 사용자가 트리를 변경해 최신 내용을 다시 불러왔습니다.', 'error')
 }
 
 // ========================================
@@ -364,6 +377,7 @@ function onTreeToggle(nodeId: number, nodeType: 'category' | 'control') {
     if (expandedLeafId.value === nodeId) {
       expandedLeafId.value = null
       controlDetail.value = null
+      notes.value = []
     }
     tree.toggleExpand(nodeId)
     saveSnapshot()   // v18.9.3-fix — 사용자 action 시점 즉시 저장
@@ -444,6 +458,7 @@ async function selectFramework(fwId: number) {
   selectedFrameworkId.value = fwId
   expandedLeafId.value = null
   controlDetail.value = null
+  notes.value = []
   await tree.load()
   // URL 동기화 (라우트 props 가 :frameworkId 를 받는 패턴 보존)
   router.push({
@@ -510,6 +525,7 @@ function setupSearchHook() {
     if (tree.searchText.value.trim()) {
       expandedLeafId.value = null
       controlDetail.value = null
+      notes.value = []
     }
     // P19: 첫 매치 항목 자동 포커스 (다음 tick 에 DOM 업데이트 후)
     if (tree.searchText.value.trim()) {
@@ -638,6 +654,7 @@ watch(
         selectedFrameworkId.value = match.id
         expandedLeafId.value = null
         controlDetail.value = null
+        notes.value = []
         await tree.load()
         // v18.9.3 — 새 framework 의 sessionStorage 복원 시도
         await restoreSnapshot(newId)
@@ -843,6 +860,7 @@ watch(
           :expanded-leaf-id="expandedLeafId"
           :control-detail="controlDetail"
           :detail-loading="detailLoading"
+          :notes="notes"
           :dimmed="tree.filterActive.value && !tree.isMatched(root.id)"
           :is-root="true"
           :highlight-fn="tree.highlightMatch"
@@ -854,7 +872,7 @@ watch(
           @zip-download="onZipDownload"
           @delete-evidence-type="onDeleteEvidenceType"
           @create-evidence-type="onCreateEvidenceType"
-          @request-description="onRequestDescription"
+          @request-notes="onRequestNotes"
         />
       </div>
     </div>
@@ -868,15 +886,14 @@ watch(
       @saved="onUnifiedSaved"
     />
 
-    <!-- v19.23 — 본문 항목 설명 (immediate: 즉시 PATCH) -->
-    <NodeDescriptionDialog
-      v-model:open="descOpen"
-      :node="descTarget"
-      :tree-state="tree"
-      mode="immediate"
-      @saved="onDescriptionSaved"
-      @conflict="onDescriptionConflict"
-      @error="(m: string) => showToast(m, 'error')"
+    <!-- v19.27 — 본문 인수인계 노트 (자체 API 즉시 저장) -->
+    <NodeNotesDialog
+      v-model:open="noteOpen"
+      :node-id="noteTarget.id"
+      :node-code="noteTarget.code"
+      :node-name="noteTarget.name"
+      :default-author="authorDefault"
+      @changed="onNotesChanged"
     />
 
   </div>

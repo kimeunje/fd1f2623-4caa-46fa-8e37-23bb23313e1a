@@ -966,83 +966,6 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     bumpDirty()
   }
 
-  /**
-   * v19.23 — 관리 항목 설명(description) 편집. setName 과 동일한 dirty 규약.
-   *
-   * <ul>
-   *   <li>원본과 같으면 updated 에서 description 제거 (3필드 모두 비면 엔트리 삭제)</li>
-   *   <li>다르면 등록 → buildPatchPayload 가 조건부로 전송</li>
-   *   <li>빈 문자열 '' 은 유효한 값(= 설명 삭제). BE 의 {@code if (description != null)}
-   *       가드를 통과한다. 서버 null 은 '' 로 정규화해 no-op 을 정확히 판정.</li>
-   * </ul>
-   *
-   * <p>undefined 를 넘기지 말 것 — buildPatchPayload 가 !== undefined 로 전송 여부를
-   * 가르므로 undefined 는 "미변경" 으로 해석되어 삭제가 되지 않는다.</p>
-   */
-  function setDescription(node: UnifiedNode, description: string): void {
-    if (node._kind === 'draft' && node.tempId) {
-      const d = dirtyChanges.created.get(node.tempId)
-      if (d) {
-        d.description = description
-        bumpDirty()
-      }
-      return
-    }
-    const original = flatNodes.value.find((n) => n.id === node.id)
-    if (!original) return
-    const originalDesc = original.description ?? ''
-    if (originalDesc === description) {
-      const u = dirtyChanges.updated.get(node.id)
-      if (u) {
-        delete u.description
-        if (u.code === undefined && u.name === undefined && u.description === undefined) {
-          dirtyChanges.updated.delete(node.id)
-        }
-      }
-    } else {
-      const u = dirtyChanges.updated.get(node.id) ?? { id: node.id }
-      u.description = description
-      dirtyChanges.updated.set(node.id, u)
-    }
-    bumpDirty()
-  }
-
-  /**
-   * v19.23 — ControlsView 본문(view 모드)의 ✎ 즉시 저장.
-   *
-   * <p><b>선행 조건: dirtyCount === 0.</b> 편집 다이얼로그에 미저장 변경이 남은 채
-   * 본문에서 저장하면 서버 version 이 올라가 다이얼로그의 다음 [변경 저장] 이 409 를
-   * 맞는다. 호출 측(ControlsView.onRequestDescription)이 진입을 막지만 경합 방지로
-   * 여기서도 가드한다.</p>
-   *
-   * <p>setDescription 으로 단건 dirty 를 올린 뒤 saveTree() 를 재사용한다 —
-   * payload 빌드 · 200/409/422 분기 · reload · framework.version 갱신이 모두
-   * 기존 경로를 탄다. 별도 PATCH 로직 없음.</p>
-   */
-  async function saveDescriptionImmediate(
-    node: UnifiedNode,
-    description: string,
-  ): Promise<SaveResult> {
-    if (dirtyCount.value > 0) {
-      return {
-        ok: false,
-        kind: 'error',
-        message: '저장하지 않은 트리 변경이 있습니다. 먼저 저장해주세요.',
-      }
-    }
-    setDescription(node, description)
-    if (dirtyCount.value === 0) {
-      // 원본과 동일 → 변경 없음.
-      return { ok: true, newVersion: framework.value?.version ?? 0, mappings: new Map() }
-    }
-    const result = await saveTree()
-    if (!result.ok) {
-      // 본문에는 [취소] 가 없어 dirty 가 남으면 사용자가 지울 방법이 없다 → 되돌린다.
-      dirtyChanges.updated.delete(node.id)
-      bumpDirty()
-    }
-    return result
-  }
 
   // ─────────────────────── 5-14h 액션 — 삭제 ───────────────────────
   function countDescendants(node: UnifiedNode): {
@@ -1357,8 +1280,6 @@ export function useControlTree(frameworkIdRef: Ref<number | null>) {
     createRootCategory,
     setCode,
     setName,
-    setDescription,
-    saveDescriptionImmediate,
     deleteNode,
     countDescendants,
     getMoveTargets,

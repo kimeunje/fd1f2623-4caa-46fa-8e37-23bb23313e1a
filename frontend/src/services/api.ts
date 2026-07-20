@@ -11,6 +11,8 @@ import type {
   IpAccessRule,
   IpAccessRuleCreatePayload,
   IpAccessRuleUpdatePayload,
+  ControlNodeNote,
+  ControlNodeNotePayload,
 } from '@/types'
 
 // ========================================
@@ -122,6 +124,32 @@ export const ipRulesApi = {
   },
   delete(userId: number, ruleId: number) {
     return api.delete(`/users/${userId}/ip-rules/${ruleId}`)
+  },
+}
+
+
+// ========================================
+// v19.27 — 관리 항목 인수인계 노트 API
+// ========================================
+export const notesApi = {
+  /** 특정 관리 항목의 노트 목록 (작성순) */
+  list(nodeId: number) {
+    return api.get<ApiResponse<ControlNodeNote[]>>(`/control-nodes/${nodeId}/notes`)
+  },
+  /** 노트 추가 */
+  create(nodeId: number, data: ControlNodeNotePayload) {
+    return api.post<ApiResponse<ControlNodeNote>>(`/control-nodes/${nodeId}/notes`, data)
+  },
+  /** 노트 수정 (작성자/내용) */
+  update(nodeId: number, noteId: number, data: ControlNodeNotePayload) {
+    return api.patch<ApiResponse<ControlNodeNote>>(
+      `/control-nodes/${nodeId}/notes/${noteId}`,
+      data,
+    )
+  },
+  /** 노트 삭제 */
+  delete(nodeId: number, noteId: number) {
+    return api.delete(`/control-nodes/${nodeId}/notes/${noteId}`)
   },
 }
 
