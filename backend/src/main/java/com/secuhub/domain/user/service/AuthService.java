@@ -177,13 +177,23 @@ public class AuthService {
     }
 
     /**
-     * v19.29 — 단말 자동 로그인 허용 역할. 관리자(admin) 제외: 관리자까지 IP 만으로 열면 단말 점유자가
-     * 전체 권한을 얻는다. 정책 변경 시 이 한 곳만 수정.
+     * v19.29 — 단말 자동 로그인 허용 역할.
+     *
+     * <p>v19.29 최초: 관리자(admin) 제외 — 관리자까지 IP 만으로 열면 단말 점유자가 전체 권한을
+     * 획득하는 위험이 있어 비밀번호를 유지했다.</p>
+     *
+     * <p>v19.29a: 운영 결정으로 <b>전 역할 허용</b>(관리자 포함). 폐쇄망 + NAC 으로 단말이 물리적으로
+     * 통제되고 단말–사람 1:1 이라는 전제하에 관리자도 자동 로그인. 단말 점유자 권한 상승 리스크는
+     * 물리 통제로 감수. 정책 재변경 시 이 한 곳만 수정.</p>
      */
     private boolean isAutoLoginAllowedRole(UserRole role) {
-        return role != UserRole.admin;
+        // v19.29 최초 정책 (관리자 제외) — 운영 결정으로 비활성, 이력 보존:
+        // return role != UserRole.admin;
+        return true;   // v19.29a — 전 역할 자동 로그인 허용 (관리자 포함)
     }
-    
+     *
+     * <p>Phase 3 cleanup (2026-05-04): permissionVuln 매핑 제거.</p>
+     */
     @Transactional(readOnly = true)
     public LoginResponse.UserInfo getMyInfo(Long userId) {
         User user = userRepository.findById(userId)
