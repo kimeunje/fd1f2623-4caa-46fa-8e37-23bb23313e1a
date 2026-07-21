@@ -191,7 +191,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
       role="dialog"
       aria-modal="true"
       aria-labelledby="node-notes-title"
-      @click.self="requestClose"
     >
       <div class="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-xl">
         <header class="flex items-center justify-between border-b border-gray-200 px-5 py-3">
