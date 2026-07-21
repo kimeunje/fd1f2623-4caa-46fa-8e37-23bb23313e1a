@@ -285,4 +285,42 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
         """)
     long countDistinctEvidenceTypesByPendingStatus(
             @Param("evidenceTypeIds") List<Long> evidenceTypeIds);
+
+    // ====================================================================
+    // v19.25 (심사원 뷰) — 항목별 "최신 승인 파일" 1건 벌크 조회
+    // ====================================================================
+
+    /**
+     * 한 Framework 안의 증빙 유형별 "최신 승인 파일" 1건을 Framework 단위 1회로 벌크 조회 (N+1 회피).
+     *
+     * <p>승인 절차 off 환경({@code app.approval.enabled=false}) 정합 — 최신 버전 = 최신 파일이지만,
+     * 레거시 pending/rejected 행 오염을 막기 위해 {@code review_status IN (approved, auto_approved)}
+     * 중 evidence_type 별 {@code MAX(version)} 만 선별. 상관 서브쿼리는 같은 승인 필터를 다시 적용.</p>
+     *
+     * <p>DTO 단계 제외 원칙 — 파일 이력/버전 목록·스크립트·작업·노트는 조회하지 않음. 심사원이 보는 것은
+     * evidence_type 별 최신 승인 파일 1건뿐. fully-qualified enum 리터럴은 dashboard 쿼리와 동일 패턴
+     * (Hibernate 6 SQM path 오인 회피).</p>
+     *
+     * <p>응답: {@code Object[]} 배열. 각 항목
+     * {@code [Long fileId, Long evidenceTypeId, String fileName, Long fileSize, Integer version, LocalDateTime collectedAt]}.
+     * 승인 파일이 하나도 없는 evidence_type 은 결과에 미포함(호출 측에서 latestFile=null 처리).</p>
+     */
+    @Query("""
+        SELECT ef.id, ef.evidenceType.id, ef.fileName, ef.fileSize, ef.version, ef.collectedAt
+          FROM EvidenceFile ef
+         WHERE ef.evidenceType.controlNode.framework.id = :frameworkId
+           AND ef.reviewStatus IN (
+                 com.secuhub.domain.evidence.entity.ReviewStatus.approved,
+                 com.secuhub.domain.evidence.entity.ReviewStatus.auto_approved
+               )
+           AND ef.version = (
+                 SELECT MAX(ef2.version) FROM EvidenceFile ef2
+                  WHERE ef2.evidenceType = ef.evidenceType
+                    AND ef2.reviewStatus IN (
+                          com.secuhub.domain.evidence.entity.ReviewStatus.approved,
+                          com.secuhub.domain.evidence.entity.ReviewStatus.auto_approved
+                        )
+               )
+        """)
+    List<Object[]> findLatestApprovedFileRowsByFramework(@Param("frameworkId") Long frameworkId);
 }

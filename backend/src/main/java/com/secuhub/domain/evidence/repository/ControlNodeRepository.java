@@ -151,4 +151,14 @@ public interface ControlNodeRepository extends JpaRepository<ControlNode, Long> 
         """)
     List<ControlNode> findByFrameworkIdInOrderByDepthAscDisplayOrderAsc(
             @Param("frameworkIds") List<Long> frameworkIds);
+
+
+    @Query("""
+    SELECT cn.id, p.id, cn.code, cn.name, cn.depth, cn.displayOrder
+      FROM ControlNode cn
+      LEFT JOIN cn.parent p
+     WHERE cn.framework.id = :frameworkId
+     ORDER BY cn.depth ASC, cn.displayOrder ASC
+    """)
+    List<Object[]> findReviewTreeRows(@Param("frameworkId") Long frameworkId);
 }

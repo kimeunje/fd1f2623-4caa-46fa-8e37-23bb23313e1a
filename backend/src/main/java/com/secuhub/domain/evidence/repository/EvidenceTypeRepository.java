@@ -143,4 +143,12 @@ public interface EvidenceTypeRepository extends JpaRepository<EvidenceType, Long
         WHERE et.controlNode.framework.id = :frameworkId
         """)
     List<Long> findIdsByFrameworkId(@Param("frameworkId") Long frameworkId);
+
+    @Query("""
+    SELECT et.id, et.name, cn.id
+      FROM EvidenceType et
+      JOIN et.controlNode cn
+     WHERE cn.framework.id = :frameworkId
+    """)
+    List<Object[]> findReviewEvidenceTypeRows(@Param("frameworkId") Long frameworkId);
 }

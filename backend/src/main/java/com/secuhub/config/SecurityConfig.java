@@ -100,6 +100,7 @@ public class SecurityConfig {
                     "/accounts", "/accounts/**",
                     "/settings", "/settings/**",
                     "/my-tasks", "/my-tasks/**",   // v11: 담당자 "내 할 일" 페이지 (Phase 5-5)
+                    "/review", "/review/**",       // v19.25: 심사원 뷰 (SPA 깊은 path 새로고침 401 방지 — L_SPA_HISTORY_MODE_GUARD)
                     "/dev/**"
                 ).permitAll()
 
@@ -125,6 +126,12 @@ public class SecurityConfig {
                 // AuthenticationCredentialsNotFoundException throw → GlobalExceptionHandler 가 500
                 // 매핑. v18.3 환경에서 발현된 회귀를 정공 fix.
                 .requestMatchers("/api/v1/dashboard/**").hasRole("ADMIN")
+
+                // === 심사원 뷰 (v19.25) — REVIEWER 역할 전용 영역 ===
+                // 관리자 트리/증빙 API(/frameworks, /evidence-files 등)는 위 규칙 + 컨트롤러
+                // 클래스 레벨 @PreAuthorize 로 심사원 차단. 심사원은 이 별도 prefix 로만 접근.
+                // 대문자 REVIEWER (JwtAuthenticationFilter 가 ROLE_ + role.toUpperCase() 변환 — L_AUTH_CONVENTION_GREP).
+                .requestMatchers("/api/v1/review/**").hasRole("REVIEWER")
 
                 // === 증빙 파일 (역할 혼재 영역) — Phase 5-2 변경 ===
                 // URL 레벨은 인증만 요구하고, 메서드별 @PreAuthorize 와
