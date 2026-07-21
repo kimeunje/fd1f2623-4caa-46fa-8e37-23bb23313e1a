@@ -7,6 +7,14 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
+// 좌상단 배너(로고) 클릭 → 역할별 홈. 라우터 landingPath 와 동일.
+function goHome() {
+  const role = authStore.user?.role
+  if (role === 'admin') router.push('/dashboard')
+  else if (role === 'reviewer') router.push('/review')
+  else router.push('/dev/dashboard')
+}
+
 const expandedMenus = ref<string[]>(['evidence'])
 
 function toggleMenu(menuId: string) {
@@ -72,7 +80,14 @@ const menuGroups = [
   <div class="w-60 bg-white border-r border-gray-200 h-screen flex flex-col fixed left-0 top-0 z-20">
     <!-- 로고 -->
     <div class="h-16 flex items-center px-5 border-b border-gray-200">
-      <div class="flex items-center gap-2">
+      <div
+        class="flex items-center gap-2 cursor-pointer select-none hover:opacity-80 transition-opacity"
+        role="button"
+        tabindex="0"
+        title="홈으로"
+        @click="goHome"
+        @keydown.enter="goHome"
+      >
         <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
           <i class="pi pi-shield text-white text-sm"></i>
         </div>
