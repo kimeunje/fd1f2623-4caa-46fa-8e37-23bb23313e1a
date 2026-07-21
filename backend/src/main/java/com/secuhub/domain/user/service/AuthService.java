@@ -191,9 +191,7 @@ public class AuthService {
         // return role != UserRole.admin;
         return true;   // v19.29a — 전 역할 자동 로그인 허용 (관리자 포함)
     }
-     *
-     * <p>Phase 3 cleanup (2026-05-04): permissionVuln 매핑 제거.</p>
-     */
+
     @Transactional(readOnly = true)
     public LoginResponse.UserInfo getMyInfo(Long userId) {
         User user = userRepository.findById(userId)
