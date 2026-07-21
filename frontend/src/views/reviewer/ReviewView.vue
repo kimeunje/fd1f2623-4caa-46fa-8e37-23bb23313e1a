@@ -118,44 +118,6 @@ function nameClass(depth: number): string {
   }
 }
 
-// ── 상태 배지 (증빙 수집률) ─────────────────────────────────────────────────
-function collectedCount(n: ReviewNode): number {
-  return n.evidenceTypes.filter((et) => et.latestFile != null).length
-}
-
-function statusLabel(n: ReviewNode): string {
-  const total = n.evidenceTypes.length
-  const done = collectedCount(n)
-  if (total === 0) return ''
-  if (done === total) return '완료'
-  if (done === 0) return '미수집'
-  return `진행 ${done}/${total}`
-}
-
-function statusClass(n: ReviewNode): string {
-  const total = n.evidenceTypes.length
-  const done = collectedCount(n)
-  if (done === total) return 'bg-green-100 text-green-700'
-  if (done === 0) return 'bg-gray-100 text-gray-500'
-  return 'bg-blue-100 text-blue-700'
-}
-
-// ── 포맷 ────────────────────────────────────────────────────────────────────
-function fmtSize(bytes?: number | null): string {
-  if (bytes == null) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function fmtDate(iso?: string | null): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const p = (x: number) => String(x).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-}
-
 // ── 데이터 로드 ─────────────────────────────────────────────────────────────
 async function loadFrameworks() {
   loadingFrameworks.value = true
@@ -230,7 +192,6 @@ onMounted(loadFrameworks)
         <div class="flex items-center gap-2">
           <i class="pi pi-verified text-blue-600"></i>
           <span class="text-[15px] font-bold text-gray-900">증빙 심사</span>
-          <span class="text-[11px] text-gray-400 border border-gray-200 rounded px-1.5 py-0.5">읽기 전용</span>
         </div>
 
         <div class="flex-1"></div>
@@ -299,9 +260,6 @@ onMounted(loadFrameworks)
               <span v-else class="w-[18px] shrink-0"></span>
               <span class="font-mono text-[11px] text-gray-400 tabular-nums mr-2 shrink-0">{{ node.code }}</span>
               <span :class="['flex-1 truncate', nameClass(node.depth)]">{{ node.name }}</span>
-              <span v-if="node.evidenceTypes.length > 0" class="text-[11px] text-gray-400 tabular-nums ml-2 shrink-0">
-                증빙 {{ node.evidenceTypes.length }}
-              </span>
             </div>
 
             <!-- ── leaf 행 (depth 3+) ── -->
@@ -312,12 +270,6 @@ onMounted(loadFrameworks)
               @click="toggle(node)">
               <span class="font-mono text-[11px] text-blue-600 tabular-nums shrink-0 w-16">{{ node.code }}</span>
               <span :class="['flex-1 truncate', nameClass(node.depth)]">{{ node.name }}</span>
-              <span class="text-[11px] text-gray-400 tabular-nums shrink-0">증빙 {{ node.evidenceTypes.length }}</span>
-              <span
-                v-if="statusLabel(node)"
-                :class="['text-[11px] font-medium rounded px-1.5 py-0.5 shrink-0', statusClass(node)]">
-                {{ statusLabel(node) }}
-              </span>
               <i
                 v-if="isExpandable(node)"
                 :class="[
@@ -338,28 +290,19 @@ onMounted(loadFrameworks)
                   :key="et.id"
                   class="flex items-center gap-3 bg-white border border-gray-200 rounded-lg px-3 py-2">
                   <i class="pi pi-file text-gray-400 text-[13px] shrink-0"></i>
-                  <span class="text-[12.5px] text-gray-800 font-medium truncate max-w-[220px]">{{ et.name }}</span>
-
-                  <template v-if="et.latestFile">
-                    <span class="text-[11px] text-gray-400 tabular-nums shrink-0">
-                      v{{ et.latestFile.version }} · {{ fmtSize(et.latestFile.fileSize) }} · {{ fmtDate(et.latestFile.collectedAt) }}
-                    </span>
-                    <div class="flex-1"></div>
-                    <button
-                      type="button"
-                      class="h-7 px-2.5 text-[11px] text-blue-700 border border-blue-200 rounded-md hover:bg-blue-50 shrink-0 disabled:opacity-50"
-                      :disabled="downloadingFileId === et.latestFile.id"
-                      @click.stop="download(et.latestFile.id, et.latestFile.fileName)">
-                      <i
-                        :class="downloadingFileId === et.latestFile.id ? 'pi pi-spin pi-spinner' : 'pi pi-download'"
-                        class="text-[11px] mr-1"></i>
-                      다운로드
-                    </button>
-                  </template>
-                  <template v-else>
-                    <div class="flex-1"></div>
-                    <span class="text-[11px] text-gray-400 bg-gray-100 rounded px-1.5 py-0.5 shrink-0">미수집</span>
-                  </template>
+                  <span class="text-[12.5px] text-gray-800 font-medium truncate">{{ et.name }}</span>
+                  <div class="flex-1"></div>
+                  <button
+                    v-if="et.latestFile"
+                    type="button"
+                    class="h-7 px-2.5 text-[11px] text-blue-700 border border-blue-200 rounded-md hover:bg-blue-50 shrink-0 disabled:opacity-50"
+                    :disabled="downloadingFileId === et.latestFile.id"
+                    @click.stop="download(et.latestFile.id, et.latestFile.fileName)">
+                    <i
+                      :class="downloadingFileId === et.latestFile.id ? 'pi pi-spin pi-spinner' : 'pi pi-download'"
+                      class="text-[11px] mr-1"></i>
+                    다운로드
+                  </button>
                 </div>
               </div>
             </div>
