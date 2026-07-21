@@ -306,7 +306,7 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
      * 승인 파일이 하나도 없는 evidence_type 은 결과에 미포함(호출 측에서 latestFile=null 처리).</p>
      */
     @Query("""
-        SELECT ef.id, ef.evidenceType.id, ef.fileName, ef.fileSize, ef.version, ef.collectedAt
+        SELECT ef.id, ef.evidenceType.id, ef.fileName
           FROM EvidenceFile ef
          WHERE ef.evidenceType.controlNode.framework.id = :frameworkId
            AND ef.reviewStatus IN (
@@ -323,4 +323,15 @@ public interface EvidenceFileRepository extends JpaRepository<EvidenceFile, Long
                )
         """)
     List<Object[]> findLatestApprovedFileRowsByFramework(@Param("frameworkId") Long frameworkId);
+
+    /**
+     * v19.25 — 파일이 속한 Framework id (심사원 다운로드 스코프 검증용).
+     * evidence_files → evidence_types → control_nodes → frameworks 경로.
+     */
+    @Query("""
+        SELECT ef.evidenceType.controlNode.framework.id
+          FROM EvidenceFile ef
+         WHERE ef.id = :fileId
+        """)
+    java.util.Optional<Long> findFrameworkIdByFileId(@Param("fileId") Long fileId);
 }

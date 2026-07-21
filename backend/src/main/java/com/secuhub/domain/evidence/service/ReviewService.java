@@ -7,6 +7,7 @@ import com.secuhub.domain.evidence.repository.ControlNodeRepository;
 import com.secuhub.domain.evidence.repository.EvidenceFileRepository;
 import com.secuhub.domain.evidence.repository.EvidenceTypeRepository;
 import com.secuhub.domain.evidence.repository.FrameworkRepository;
+import com.secuhub.domain.evidence.repository.ReviewerFrameworkRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -18,7 +19,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -43,13 +43,18 @@ public class ReviewService {
     private final ControlNodeRepository controlNodeRepository;
     private final EvidenceTypeRepository evidenceTypeRepository;
     private final EvidenceFileRepository evidenceFileRepository;
+    private final ReviewerFrameworkRepository reviewerFrameworkRepository;
 
     /**
-     * 심사원 랜딩용 active 프레임워크 목록.
+     * 심사원에게 배정된 active 프레임워크 목록. 배정이 없으면 빈 목록(fail-closed).
      */
     @Transactional(readOnly = true)
-    public List<ReviewDto.FrameworkSummary> listActiveFrameworks() {
-        List<Object[]> rows = frameworkRepository.findActiveIdNameForReview();
+    public List<ReviewDto.FrameworkSummary> listActiveFrameworks(Long reviewerUserId) {
+        List<Long> assignedIds = reviewerFrameworkRepository.findFrameworkIdsByUserId(reviewerUserId);
+        if (assignedIds.isEmpty()) {
+            return List.of();
+        }
+        List<Object[]> rows = frameworkRepository.findActiveIdNameByIdsForReview(assignedIds);
         List<ReviewDto.FrameworkSummary> out = new ArrayList<>(rows.size());
         for (Object[] r : rows) {
             out.add(ReviewDto.FrameworkSummary.builder()
@@ -63,27 +68,29 @@ public class ReviewService {
     /**
      * 프레임워크 트리(평탄화) + leaf 별 증빙 유형 + 각 유형 최신 승인 파일.
      *
-     * <p>벌크 3회: (1) 노드 행, (2) 증빙 유형 행, (3) 최신 승인 파일 행. 이후 메모리에서 조립.</p>
+     * <p>벌크 3회: (1) 노드 행, (2) 증빙 유형 행, (3) 최신 승인 파일 행. 이후 메모리에서 조립.
+     * 심사원에게 배정되지 않은 프레임워크는 404(존재 은닉).</p>
      */
     @Transactional(readOnly = true)
-    public ReviewDto.TreeResponse getTree(Long frameworkId) {
-        // 존재 검증 + 이름 (active/archived 무관하게 id 로 조회 — 심사원이 링크로 진입하는 경우 대비)
+    public ReviewDto.TreeResponse getTree(Long frameworkId, Long reviewerUserId) {
+        // 스코프 검증 — 배정 안 된 프레임워크는 존재를 숨기기 위해 404
+        if (!reviewerFrameworkRepository.existsByUserIdAndFrameworkId(reviewerUserId, frameworkId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "프레임워크를 찾을 수 없습니다.");
+        }
+        // 이름 조회(+ 잔존 검증)
         List<Object[]> fwRows = frameworkRepository.findIdNameByIdForReview(frameworkId);
         if (fwRows.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "프레임워크를 찾을 수 없습니다.");
         }
         Object[] fwRow = fwRows.get(0);
 
-        // (3) 최신 승인 파일: evidenceTypeId → FileView
+        // (3) 최신 승인 파일: evidenceTypeId → FileView (id/파일명만 — 이력·버전·크기·수집일 미노출)
         Map<Long, ReviewDto.FileView> latestByEt = new HashMap<>();
         for (Object[] r : evidenceFileRepository.findLatestApprovedFileRowsByFramework(frameworkId)) {
             Long etId = (Long) r[1];
             latestByEt.put(etId, ReviewDto.FileView.builder()
                     .id((Long) r[0])
                     .fileName((String) r[2])
-                    .fileSize((Long) r[3])
-                    .version((Integer) r[4])
-                    .collectedAt((LocalDateTime) r[5])
                     .build());
         }
 
@@ -126,16 +133,24 @@ public class ReviewService {
     }
 
     /**
-     * 다운로드 대상 승인 파일 로드. 승인(approved/auto_approved) 파일만 허용 — 그 외는 존재를 숨기기 위해 404.
+     * 다운로드 대상 승인 파일 로드. 승인(approved/auto_approved) 파일 + 심사원에게 배정된 프레임워크
+     * 소속 파일만 허용 — 그 외는 존재를 숨기기 위해 404.
      */
     @Transactional(readOnly = true)
-    public FileDownload loadApprovedFile(Long fileId) {
+    public FileDownload loadApprovedFile(Long fileId, Long reviewerUserId) {
         EvidenceFile ef = evidenceFileRepository.findById(fileId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "파일을 찾을 수 없습니다."));
 
         ReviewStatus status = ef.getReviewStatus();
         if (status != ReviewStatus.approved && status != ReviewStatus.auto_approved) {
             // 미승인(pending/rejected) 파일은 심사원에게 미노출 — 403 대신 404 로 존재 은닉
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "파일을 찾을 수 없습니다.");
+        }
+
+        // 스코프 검증 — 파일이 속한 프레임워크가 이 심사원에게 배정돼 있어야 함
+        Long frameworkId = evidenceFileRepository.findFrameworkIdByFileId(fileId).orElse(null);
+        if (frameworkId == null
+                || !reviewerFrameworkRepository.existsByUserIdAndFrameworkId(reviewerUserId, frameworkId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "파일을 찾을 수 없습니다.");
         }
 

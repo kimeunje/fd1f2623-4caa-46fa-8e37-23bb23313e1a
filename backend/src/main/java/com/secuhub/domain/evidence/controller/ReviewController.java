@@ -1,6 +1,7 @@
 package com.secuhub.domain.evidence.controller;
 
 import com.secuhub.common.dto.ApiResponse;
+import com.secuhub.config.jwt.UserPrincipal;
 import com.secuhub.domain.evidence.dto.ReviewDto;
 import com.secuhub.domain.evidence.service.ReviewService;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +11,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -44,26 +46,31 @@ public class ReviewController {
 
     private final ReviewService reviewService;
 
-    /** 심사원 랜딩 — 열람 가능한 프레임워크 목록. */
+    /** 심사원 랜딩 — 배정된 프레임워크 목록. */
     @GetMapping("/review/frameworks")
-    public ResponseEntity<ApiResponse<List<ReviewDto.FrameworkSummary>>> frameworks() {
-        return ResponseEntity.ok(ApiResponse.ok(reviewService.listActiveFrameworks()));
+    public ResponseEntity<ApiResponse<List<ReviewDto.FrameworkSummary>>> frameworks(
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.ok(reviewService.listActiveFrameworks(principal.getUserId())));
     }
 
-    /** 읽기 전용 트리 + leaf 별 최신 승인 파일. */
+    /** 읽기 전용 트리 + leaf 별 최신 승인 파일 (배정된 프레임워크만). */
     @GetMapping("/review/frameworks/{frameworkId}/tree")
-    public ResponseEntity<ApiResponse<ReviewDto.TreeResponse>> tree(@PathVariable Long frameworkId) {
-        return ResponseEntity.ok(ApiResponse.ok(reviewService.getTree(frameworkId)));
+    public ResponseEntity<ApiResponse<ReviewDto.TreeResponse>> tree(
+            @PathVariable Long frameworkId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.ok(reviewService.getTree(frameworkId, principal.getUserId())));
     }
 
     /**
      * 승인 파일 다운로드. 관리자 blob 엔드포인트({@code /api/v1/evidence-files/**} — EvidenceAuthService 가
-     * admin/소유자만 통과)를 재사용하면 심사원은 403 이므로, approved-only 가드를 건 전용 경로로 격리.
+     * admin/소유자만 통과)를 재사용하면 심사원은 403 이므로, approved-only + 배정 스코프 가드를 건 전용 경로로 격리.
      * 한글 파일명은 v18.9.14 패턴대로 {@code ContentDisposition ... filename(name, UTF_8)} 빌더 사용.
      */
     @GetMapping("/review/files/{fileId}/download")
-    public ResponseEntity<Resource> download(@PathVariable Long fileId) {
-        ReviewService.FileDownload dl = reviewService.loadApprovedFile(fileId);
+    public ResponseEntity<Resource> download(
+            @PathVariable Long fileId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        ReviewService.FileDownload dl = reviewService.loadApprovedFile(fileId, principal.getUserId());
         ContentDisposition disposition = ContentDisposition.attachment()
                 .filename(dl.fileName(), StandardCharsets.UTF_8)
                 .build();

@@ -27,4 +27,12 @@ public interface FrameworkRepository extends JpaRepository<Framework, Long> {
 
     @Query("SELECT f.id, f.name FROM Framework f WHERE f.id = :id")
     List<Object[]> findIdNameByIdForReview(@Param("id") Long id);
+
+    @Query("""
+    SELECT f.id, f.name FROM Framework f
+     WHERE f.id IN :ids
+       AND f.status = com.secuhub.domain.evidence.entity.FrameworkStatus.active
+     ORDER BY f.name ASC
+    """)
+    List<Object[]> findActiveIdNameByIdsForReview(@Param("ids") List<Long> ids);
 }

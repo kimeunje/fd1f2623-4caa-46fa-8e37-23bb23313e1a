@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { usersApi } from '@/services/api'
+import { frameworksApi, reviewerAccessApi } from '@/services/evidenceApi'
 import type { User, UserRole, UserStatus, UserCreatePayload, UserUpdatePayload } from '@/types'
 
 /**
@@ -55,10 +56,40 @@ const status = ref<UserStatus>('active')
 const saving = ref(false)
 const errorMsg = ref('')
 
+// ── v19.25 심사원 프레임워크 배정 ──
+const isReviewer = computed(() => role.value === 'reviewer')
+const allFrameworks = ref<{ id: number; name: string }[]>([])
+const selectedFrameworkIds = ref<number[]>([])
+const loadingFrameworks = ref(false)
+
+async function loadFrameworkOptions() {
+  if (allFrameworks.value.length > 0) return // 한 번만 로드
+  loadingFrameworks.value = true
+  try {
+    const { data } = await frameworksApi.list()
+    if (data.success) {
+      allFrameworks.value = data.data.map((f) => ({ id: f.id, name: f.name }))
+    }
+  } catch {
+    // 목록 실패는 치명적이지 않음 — 배정 UI 만 비게 됨
+  } finally {
+    loadingFrameworks.value = false
+  }
+}
+
+async function loadAssignedFrameworks(userId: number) {
+  try {
+    const { data } = await reviewerAccessApi.getFrameworks(userId)
+    if (data.success) selectedFrameworkIds.value = data.data
+  } catch {
+    selectedFrameworkIds.value = []
+  }
+}
+
 // 다이얼로그가 열릴 때마다 폼을 모드에 맞게 초기화
 watch(
   () => props.modelValue,
-  (open) => {
+  async (open) => {
     if (!open) return
     errorMsg.value = ''
     saving.value = false
@@ -78,6 +109,12 @@ watch(
       role.value = 'reviewer'      // v19.24 — 신규 기본값: 심사원
       permissionEvidence.value = false
       status.value = 'active'
+    }
+    // v19.25 — 심사원 프레임워크 배정: 옵션 목록 로드 + (수정·심사원일 때) 기존 배정 로드
+    selectedFrameworkIds.value = []
+    await loadFrameworkOptions()
+    if (props.user && props.user.role === 'reviewer') {
+      await loadAssignedFrameworks(props.user.id)
     }
   }
 )
@@ -107,6 +144,7 @@ async function save() {
   saving.value = true
   errorMsg.value = ''
   try {
+    let userId: number
     if (isEdit.value && props.user) {
       const payload: UserUpdatePayload = {
         name: name.value.trim(),
@@ -116,6 +154,7 @@ async function save() {
         status: status.value,
       }
       await usersApi.update(props.user.id, payload)
+      userId = props.user.id
     } else {
       const payload: UserCreatePayload = {
         email: email.value.trim(),
@@ -125,7 +164,12 @@ async function save() {
         role: role.value,
         permissionEvidence: permissionEvidence.value,
       }
-      await usersApi.create(payload)
+      const { data } = await usersApi.create(payload)
+      userId = data.data.id
+    }
+    // v19.25 — 심사원이면 프레임워크 배정 저장(계정 저장 성공 후, replace-set)
+    if (role.value === 'reviewer') {
+      await reviewerAccessApi.setFrameworks(userId, selectedFrameworkIds.value)
     }
     emit('saved')
     emit('update:modelValue', false)
@@ -215,6 +259,36 @@ async function save() {
           </select>
           <p class="mt-1 text-xs text-gray-400">
             심사원은 관리 항목과 최신 증빙을 열람·다운로드만 할 수 있습니다.
+          </p>
+        </div>
+
+        <!-- v19.25 — 심사원 열람 프레임워크 배정 (역할=심사원일 때만) -->
+        <div v-if="isReviewer">
+          <label class="block text-sm font-medium text-gray-700 mb-1">열람 프레임워크</label>
+          <div v-if="loadingFrameworks" class="text-xs text-gray-400 py-2">불러오는 중...</div>
+          <div v-else-if="allFrameworks.length === 0" class="text-xs text-gray-400 py-2">
+            등록된 프레임워크가 없습니다.
+          </div>
+          <div
+            v-else
+            class="max-h-40 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100"
+          >
+            <label
+              v-for="fw in allFrameworks"
+              :key="fw.id"
+              class="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                :value="fw.id"
+                v-model="selectedFrameworkIds"
+                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span class="truncate">{{ fw.name }}</span>
+            </label>
+          </div>
+          <p class="mt-1 text-xs text-gray-400">
+            선택한 프레임워크만 이 심사원에게 열립니다. 미선택 시 아무 것도 열람할 수 없습니다.
           </p>
         </div>
 

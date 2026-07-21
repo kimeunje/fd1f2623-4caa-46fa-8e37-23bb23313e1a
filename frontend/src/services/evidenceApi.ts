@@ -581,9 +581,6 @@ export interface ReviewFrameworkSummary {
 export interface ReviewFileView {
   id: number
   fileName: string
-  fileSize: number
-  version: number
-  collectedAt: string // ISO-8601
 }
 
 export interface ReviewEvidenceTypeView {
@@ -650,5 +647,24 @@ export const reviewApi = {
     link.click()
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
+  },
+}
+
+// ========================================
+// v19.25 — 심사원 프레임워크 배정 API (admin 전용)
+//
+// 계정 설정(UserFormDialog)에서 심사원에게 열어줄 프레임워크를 지정. 계정 CRUD(usersApi)와
+// 분리된 엔드포인트(/api/v1/admin/reviewers/{userId}/frameworks). /admin/** 는 이미 ADMIN.
+// 배정 대상 프레임워크 목록은 기존 frameworksApi.list() 재사용.
+// ========================================
+export const reviewerAccessApi = {
+  /** 이 심사원에게 배정된 framework id 목록. */
+  getFrameworks(userId: number) {
+    return api.get<ApiResponse<number[]>>(`/admin/reviewers/${userId}/frameworks`)
+  },
+
+  /** 배정 교체(replace-set). 저장 후 반영된 id 목록 반환. */
+  setFrameworks(userId: number, frameworkIds: number[]) {
+    return api.put<ApiResponse<number[]>>(`/admin/reviewers/${userId}/frameworks`, { frameworkIds })
   },
 }

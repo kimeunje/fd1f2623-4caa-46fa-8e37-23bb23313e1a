@@ -66,7 +66,7 @@ public class UserService {
                 .hashedPassword(passwordEncoder.encode(request.getPassword()))
                 .team(request.getTeam())
                 .role(request.getRole())
-                .permissionEvidence(Boolean.TRUE.equals(request.getPermissionEvidence()))
+                .permissionEvidence(effectivePermissionEvidence(request.getRole(), request.getPermissionEvidence()))
                 .status(UserStatus.active)
                 .build();
         User saved = userRepository.save(user);
@@ -90,6 +90,11 @@ public class UserService {
         }
         if (request.getStatus() != null) {
             user.updateStatus(request.getStatus());
+        }
+        // v19.25 방어선 — 역할이 심사원이면 증빙 권한을 강제로 끈다(FE 체크박스 제거만으론
+        // 조작된 payload 를 막지 못하므로 BE 에서 최종 강제). 역할 변경/권한 변경 반영 뒤 적용.
+        if (user.getRole() == UserRole.reviewer && Boolean.TRUE.equals(user.getPermissionEvidence())) {
+            user.updatePermissions(false);
         }
         return UserDto.DetailResponse.of(user);
     }
@@ -145,6 +150,15 @@ public class UserService {
     private User findOrThrow(Long id) {
         return userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("사용자를 찾을 수 없습니다. id=" + id));
+    }
+
+    /**
+     * v19.25 — 심사원(reviewer)은 항상 읽기 전용이므로 증빙 권한을 강제로 false.
+     * 그 외 역할은 요청 값(null 이면 false)을 따른다.
+     */
+    private boolean effectivePermissionEvidence(UserRole role, Boolean requested) {
+        if (role == UserRole.reviewer) return false;
+        return Boolean.TRUE.equals(requested);
     }
 
     private String normalize(String search) {

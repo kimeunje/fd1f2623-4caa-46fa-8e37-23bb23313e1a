@@ -4,7 +4,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -65,19 +64,16 @@ public class ReviewDto {
     public static class EvidenceTypeView {
         private Long id;
         private String name;
-        /** 최신 승인 파일(approved/auto_approved 중 MAX version). 없으면 null → FE "미수집". */
+        /** 최신 승인 파일(approved/auto_approved 중 MAX version). 없으면 null → FE 다운로드 버튼 미표시. */
         private FileView latestFile;
     }
 
-    /** 다운로드 대상 파일의 최소 메타. 버전 목록/이력은 심사원에게 미노출. */
+    /** 다운로드 대상 파일의 최소 식별자. 버전·크기·수집일 등 이력은 심사원에게 미노출. */
     @Getter
     @Builder
     @AllArgsConstructor
     public static class FileView {
         private Long id;
         private String fileName;
-        private Long fileSize;
-        private Integer version;
-        private LocalDateTime collectedAt;
     }
 }
