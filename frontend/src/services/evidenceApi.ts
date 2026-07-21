@@ -565,3 +565,90 @@ export const myTasksApi = {
     return api.get<ApiResponse<MyTaskDetail>>(`/my-tasks/${evidenceTypeId}`)
   },
 }
+// ========================================
+// v19.25 — 심사원(reviewer) 읽기 전용 API
+//
+// 관리자 트리 API(treeApi.getTree /frameworks/{id}/tree)는 BE 클래스 레벨 ADMIN +
+// SecurityConfig /api/v1/frameworks/** ADMIN 으로 심사원 차단 → 별도 /review/** 사용.
+// 응답은 스크립트·작업·이력·버전·노트를 제외한 평탄화 트리 + 항목별 최신 승인 파일뿐.
+// ========================================
+
+export interface ReviewFrameworkSummary {
+  id: number
+  name: string
+}
+
+export interface ReviewFileView {
+  id: number
+  fileName: string
+  fileSize: number
+  version: number
+  collectedAt: string // ISO-8601
+}
+
+export interface ReviewEvidenceTypeView {
+  id: number
+  name: string
+  latestFile: ReviewFileView | null // 승인 파일 없으면 null → "미수집"
+}
+
+export interface ReviewNode {
+  id: number
+  parentId: number | null // 루트는 null
+  code: string
+  name: string
+  depth: number
+  evidenceTypes: ReviewEvidenceTypeView[]
+}
+
+export interface ReviewTreeResponse {
+  framework: ReviewFrameworkSummary
+  nodes: ReviewNode[] // depth ASC, displayOrder ASC 평탄화
+}
+
+export const reviewApi = {
+  /** 심사원 랜딩 — 열람 가능한 active 프레임워크 목록. */
+  listFrameworks() {
+    return api.get<ApiResponse<ReviewFrameworkSummary[]>>('/review/frameworks')
+  },
+
+  /** 읽기 전용 트리 + leaf 별 최신 승인 파일. */
+  getTree(frameworkId: number) {
+    return api.get<ApiResponse<ReviewTreeResponse>>(`/review/frameworks/${frameworkId}/tree`)
+  },
+
+  /**
+   * 승인 파일 다운로드. evidenceFilesApi.download 와 동일한 Blob 패턴
+   * (responseType: 'blob' + Content-Disposition filename*=UTF-8'' 디코딩).
+   * BE 가 approved/auto_approved 아닌 파일은 404 로 응답(존재 은닉).
+   */
+  async download(fileId: number, fileName?: string) {
+    const response = await api.get(`/review/files/${fileId}/download`, {
+      responseType: 'blob',
+    })
+
+    let downloadName = fileName || 'download'
+    const disposition = response.headers['content-disposition']
+    if (disposition) {
+      const utf8Match = disposition.match(/filename\*=UTF-8''(.+?)(?:;|$)/)
+      if (utf8Match) {
+        downloadName = decodeURIComponent(utf8Match[1])
+      } else {
+        const basicMatch = disposition.match(/filename="?(.+?)"?(?:;|$)/)
+        if (basicMatch) {
+          downloadName = basicMatch[1]
+        }
+      }
+    }
+
+    const blob = new Blob([response.data])
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = downloadName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  },
+}

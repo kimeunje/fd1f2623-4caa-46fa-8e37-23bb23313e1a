@@ -105,19 +105,19 @@ const routes: RouteRecordRaw[] = [
   },
 
   // ========================================
-  // v19.24 — 심사원(reviewer) 읽기 전용 뷰
+  // v19.24 — 심사원(reviewer) 읽기 전용 뷰 / v19.25 — 본체 구현
   //
-  //   /review → 심사원 랜딩. 관리 항목 + 항목 설명 + 항목별 최신 승인 파일(다운로드).
-  //   이력·스크립트·승인 UI 없음. 본체 구현은 v19.25.
+  //   /review → 심사원 랜딩. 관리 항목 + 항목별 최신 승인 파일(다운로드)만.
+  //   이력·스크립트·승인·인수인계 노트 UI 없음.
   //
-  // 현재는 PlaceholderView 로 라우팅만 성립시킨다 (v19.25 에서 ReviewView 로 교체).
-  // layout 은 v19.25 에서 reviewer 전용 레이아웃 확정 시 조정.
+  // v19.25: PlaceholderView → ReviewView 교체. reviewer 전용 레이아웃을 별도로 두지 않고
+  // layout:'blank' 유지 — ReviewView 가 자체 헤더(프레임워크 선택 + 로그아웃)를 갖는 자립형.
   // ========================================
   {
     path: '/review',
     name: 'review-home',
-    component: () => import('@/views/admin/PlaceholderView.vue'),
-    meta: { requiresAuth: true, roles: ['reviewer'], layout: 'blank', title: '심사' },
+    component: () => import('@/views/reviewer/ReviewView.vue'),
+    meta: { requiresAuth: true, roles: ['reviewer'], layout: 'blank', title: '증빙 심사' },
   },
 
   // ========================================
