@@ -22,11 +22,7 @@ async function handleLogin() {
 
   try {
     const user = await authStore.login({ email: email.value, password: password.value })
-    if (user.role === 'admin') {
-      router.push('/dashboard')
-    } else {
-      router.push('/dev/dashboard')
-    }
+    routeAfterLogin(user.role)
   } catch (err: any) {
     // 백엔드 ApiResponse 에러: { success: false, message: "..." }
     errorMsg.value =
@@ -36,6 +32,32 @@ async function handleLogin() {
   } finally {
     loading.value = false
   }
+}
+
+/**
+ * v19.29 — 단말 IP 자동 로그인. 등록된 단말이면 계정 입력 없이 로그인.
+ * 실패(매핑 없음/모호/미허용 역할)면 안내만 표시하고 계정 폼은 그대로 남겨 폴백.
+ */
+async function handleLoginByIp() {
+  loading.value = true
+  errorMsg.value = ''
+  try {
+    const user = await authStore.loginByIp()
+    routeAfterLogin(user.role)
+  } catch (err: any) {
+    errorMsg.value =
+      err.response?.data?.message ||
+      err.message ||
+      '이 단말로 자동 로그인할 수 없습니다. 계정으로 로그인하세요.'
+  } finally {
+    loading.value = false
+  }
+}
+
+function routeAfterLogin(role: string) {
+  if (role === 'admin') router.push('/dashboard')
+  else if (role === 'reviewer') router.push('/review')
+  else router.push('/dev/dashboard')
 }
 </script>
 
@@ -85,6 +107,23 @@ async function handleLogin() {
           {{ loading ? '로그인 중...' : '로그인' }}
         </button>
       </form>
+
+      <!-- v19.29 — 단말 IP 자동 로그인 -->
+      <div class="relative my-5">
+        <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-200"></div></div>
+        <div class="relative flex justify-center"><span class="bg-white px-2 text-xs text-gray-400">또는</span></div>
+      </div>
+
+      <button
+        type="button"
+        :disabled="loading"
+        @click="handleLoginByIp"
+        class="w-full py-3 border border-blue-500 text-blue-600 rounded-xl font-medium hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+      >
+        <i class="pi pi-desktop"></i>
+        이 단말로 로그인
+      </button>
+      <p class="mt-2 text-center text-xs text-gray-400">등록된 단말이면 계정 입력 없이 로그인됩니다.</p>
     </div>
   </div>
 </template>

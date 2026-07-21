@@ -3,6 +3,7 @@ package com.secuhub.domain.user.service;
 import com.secuhub.common.exception.BusinessException;
 import com.secuhub.common.exception.ResourceNotFoundException;
 import com.secuhub.config.jwt.JwtTokenProvider;
+import com.secuhub.config.security.IpAccessProperties;
 import com.secuhub.domain.access.service.IpAccessService;
 import com.secuhub.domain.audit.AuditAction;
 import com.secuhub.domain.audit.AuditResult;
@@ -10,6 +11,7 @@ import com.secuhub.domain.audit.AuditService;
 import com.secuhub.domain.user.dto.LoginRequest;
 import com.secuhub.domain.user.dto.LoginResponse;
 import com.secuhub.domain.user.entity.User;
+import com.secuhub.domain.user.entity.UserRole;
 import com.secuhub.domain.user.entity.UserStatus;
 import com.secuhub.domain.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +30,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final IpAccessService ipAccessService;
+    private final IpAccessProperties ipAccessProperties; // v19.29 — XFF 신뢰 모드 판정
     private final AuditService auditService; // AUDIT-1
 
     /**
@@ -94,10 +97,93 @@ public class AuthService {
     }
 
     /**
-     * 현재 로그인된 사용자 정보 조회.
+     * v19.29 — 단말 IP 자동 로그인 (비밀번호 없이).
      *
-     * <p>Phase 3 cleanup (2026-05-04): permissionVuln 매핑 제거.</p>
+     * <p>폐쇄망 + NAC 으로 단말–IP 가 물리적으로 1:1 고정된 환경 전용. 요청 IP 에 정확히 매핑된
+     * 계정을 찾아 비밀번호 검증을 건너뛰고 세션을 발급한다. <b>JWT·권한·감사 본체는 기존 로그인과 동일</b>
+     * — 비밀번호 단계만 IP 신원으로 대체.</p>
+     *
+     * <p>안전조건(모두 fail-closed):</p>
+     * <ol>
+     *   <li>{@code trust-forwarded-header=true} 면 거부 — XFF 헤더 위조로 다른 단말 IP 위장이 가능해
+     *       IP 를 신원으로 쓸 수 없다. 폐쇄망 직결(기본 false)에서만 허용.</li>
+     *   <li>요청 IP 에 <b>정확히 1개</b> 계정이 매핑돼야 함(단일 IP 규칙만, 대역 제외). 0개·2개↑면 거부.</li>
+     *   <li>계정 active + 자동 로그인 허용 역할(관리자 제외)이어야 함.</li>
+     * </ol>
+     *
+     * @param clientIp 호출부(AuthController)가 {@code ClientIpResolver} 로 해석한 IP
      */
+    @Transactional
+    public LoginResponse loginByIp(String clientIp) {
+        // 1. XFF 신뢰 모드면 IP 신원을 믿을 수 없음 — 자동 로그인 비활성
+        if (ipAccessProperties.isTrustForwardedHeader()) {
+            log.warn("IP 자동 로그인 거부: trust-forwarded-header=true (XFF 위조 위험) ip={}", clientIp);
+            safeAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE,
+                    null, null, clientIp, "IP 자동 로그인 비활성(trust-forwarded-header)");
+            throw new BusinessException(
+                    "이 환경에서는 단말 자동 로그인을 사용할 수 없습니다. 계정으로 로그인하세요.",
+                    HttpStatus.FORBIDDEN);
+        }
+
+        // 2. IP → 정확히 1개 계정 매핑 (단일 IP 규칙만, fail-closed)
+        Long userId = ipAccessService.resolveExactMappedUserId(clientIp).orElse(null);
+        if (userId == null) {
+            log.warn("IP 자동 로그인 실패: 단일 매핑 계정 없음 ip={}", clientIp);
+            safeAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE,
+                    null, null, clientIp, "IP 자동 로그인: 단일 매핑 계정 없음");
+            throw new BusinessException(
+                    "이 단말로 자동 로그인할 수 없습니다. 계정으로 로그인하세요.",
+                    HttpStatus.UNAUTHORIZED);
+        }
+
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) {
+            safeAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE,
+                    null, null, clientIp, "IP 자동 로그인: 계정 조회 실패 userId=" + userId);
+            throw new BusinessException(
+                    "이 단말로 자동 로그인할 수 없습니다. 계정으로 로그인하세요.",
+                    HttpStatus.UNAUTHORIZED);
+        }
+
+        // 3. 계정 상태
+        if (user.getStatus() != UserStatus.active) {
+            safeAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE,
+                    user.getId(), user.getEmail(), clientIp, "IP 자동 로그인: 비활성 계정");
+            throw new BusinessException(
+                    "비활성화된 계정입니다. 관리자에게 문의하세요.", HttpStatus.FORBIDDEN);
+        }
+
+        // 4. 역할 — 관리자는 IP 만으로 열지 않음(단말 점유자가 전체 권한 획득 방지)
+        if (!isAutoLoginAllowedRole(user.getRole())) {
+            log.warn("IP 자동 로그인 거부: 미허용 역할 {} ip={}", user.getRole(), clientIp);
+            safeAudit(AuditAction.LOGIN_FAILURE, AuditResult.FAILURE,
+                    user.getId(), user.getEmail(), clientIp,
+                    "IP 자동 로그인 미허용 역할: " + user.getRole());
+            throw new BusinessException(
+                    "이 계정은 단말 자동 로그인을 사용할 수 없습니다. 계정으로 로그인하세요.",
+                    HttpStatus.FORBIDDEN);
+        }
+
+        // 5. 로그인 확정 — 기존과 동일한 토큰/세션
+        user.updateLastLogin();
+        String token = jwtTokenProvider.createToken(
+                user.getId(), user.getEmail(), user.getRole().name());
+
+        log.info("IP 자동 로그인 성공: {} ({}) ip={}", user.getEmail(), user.getRole(), clientIp);
+        safeAudit(AuditAction.LOGIN_BY_IP, AuditResult.SUCCESS,
+                user.getId(), user.getEmail(), clientIp, null);
+
+        return LoginResponse.of(token, user);
+    }
+
+    /**
+     * v19.29 — 단말 자동 로그인 허용 역할. 관리자(admin) 제외: 관리자까지 IP 만으로 열면 단말 점유자가
+     * 전체 권한을 얻는다. 정책 변경 시 이 한 곳만 수정.
+     */
+    private boolean isAutoLoginAllowedRole(UserRole role) {
+        return role != UserRole.admin;
+    }
+    
     @Transactional(readOnly = true)
     public LoginResponse.UserInfo getMyInfo(Long userId) {
         User user = userRepository.findById(userId)

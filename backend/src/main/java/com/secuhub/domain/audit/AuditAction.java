@@ -10,6 +10,7 @@ public enum AuditAction {
 
     // --- 인증 / 보안 필터 이벤트 (명시 호출) ---
     LOGIN_SUCCESS,
+    LOGIN_BY_IP,          // v19.29 — 단말 IP 자동 로그인(비밀번호 없이). LOGIN_SUCCESS 와 구분해 행위가 단말 기반이었음을 남김.
     LOGIN_FAILURE,
     ACL_BLOCKED,
     RATE_LIMIT_BLOCKED,

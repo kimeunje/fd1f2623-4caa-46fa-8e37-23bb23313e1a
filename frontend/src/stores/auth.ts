@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User, LoginPayload } from '@/types'
-import { authApi } from '@/services/api'
+import api, { authApi } from '@/services/api'
 import { configApi } from '@/services/configApi'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -94,6 +94,49 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * v19.29 — 단말 IP 자동 로그인 (비밀번호 없이).
+   *
+   * 폐쇄망 단말에서 요청 IP 에 정확히 매핑된 계정으로 로그인(본문 없음). 성공 시 기존 login 과
+   * 동일하게 토큰/사용자 저장. 실패(매핑 없음/모호/미허용 역할/비활성)면 throw → 호출부(LoginView)가
+   * 계정 로그인 폼으로 폴백.
+   *
+   * (전용 서비스 파일이 없어 공유 axios 인스턴스로 직접 호출. authApi 에 두고 싶으면
+   *  services/api.ts 에 loginByIp: () => api.post('/auth/login-by-ip') 추가 후 아래 한 줄 교체.)
+   */
+  async function loginByIp() {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await api.post('/auth/login-by-ip')
+      const apiResponse = response.data
+
+      if (!apiResponse.success) {
+        throw new Error(apiResponse.message || '자동 로그인에 실패했습니다.')
+      }
+
+      const { token: jwtToken, user: userData } = apiResponse.data
+
+      token.value = jwtToken
+      user.value = userData
+
+      localStorage.setItem('access_token', jwtToken)
+      localStorage.setItem('user', JSON.stringify(userData))
+
+      await fetchFeatures()
+      return userData
+    } catch (err: any) {
+      const message =
+        err.response?.data?.message ||
+        err.message ||
+        '이 단말로 자동 로그인할 수 없습니다.'
+      error.value = message
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
    * 현재 로그인된 사용자 정보 갱신
    * 토큰은 유지하되 사용자 정보만 서버에서 다시 가져옴
    *
@@ -161,6 +204,7 @@ export const useAuthStore = defineStore('auth', () => {
     // Actions
     initialize,
     login,
+    loginByIp,
     fetchMe,
     fetchFeatures,
     logout,

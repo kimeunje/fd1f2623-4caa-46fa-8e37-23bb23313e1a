@@ -105,7 +105,7 @@ public class SecurityConfig {
                 ).permitAll()
 
                 // === 인증 API ===
-                .requestMatchers("/api/v1/auth/login").permitAll()
+                .requestMatchers("/api/v1/auth/login", "/api/v1/auth/login-by-ip").permitAll()
 
                 // === 개발 도구 ===
                 .requestMatchers("/h2-console/**").permitAll()

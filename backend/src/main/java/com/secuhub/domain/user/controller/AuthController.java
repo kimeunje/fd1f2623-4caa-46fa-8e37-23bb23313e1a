@@ -37,6 +37,20 @@ public class AuthController {
     }
 
     /**
+     * 단말 IP 자동 로그인 (v19.29)
+     * POST /api/v1/auth/login-by-ip
+     *
+     * <p>폐쇄망 + NAC 단말–IP 1:1 환경 전용. 본문 없음 — 요청 IP 에 정확히 매핑된 계정으로
+     * 비밀번호 없이 로그인. 매핑 없음/모호/미허용 역할이면 4xx 로 실패하고 FE 는 계정 로그인 폼으로 폴백.</p>
+     */
+    @PostMapping("/login-by-ip")
+    public ResponseEntity<ApiResponse<LoginResponse>> loginByIp(HttpServletRequest httpRequest) {
+        String clientIp = clientIpResolver.resolve(httpRequest);
+        LoginResponse response = authService.loginByIp(clientIp);
+        return ResponseEntity.ok(ApiResponse.ok("로그인 성공", response));
+    }
+
+    /**
      * 내 정보 조회 (인증 필요)
      * GET /api/v1/auth/me
      */
