@@ -36,6 +36,44 @@ function openEdit(user: User) {
   showFormDialog.value = true
 }
 
+// v19.30 — 계정 영구 삭제(hard delete). 비활성 계정에만 노출되는 2단계 제스처.
+// 비활성화 자체는 기존대로 수정 다이얼로그의 상태 토글로 처리(여기선 영구 삭제만 추가).
+const deleteTarget = ref<User | null>(null)
+const deleteError = ref('')
+const deleting = ref(false)
+
+function canHardDelete(user: User): boolean {
+  return user.status !== 'active' && user.id !== auth.user?.id
+}
+
+function askHardDelete(user: User) {
+  deleteTarget.value = user
+  deleteError.value = ''
+}
+
+function closeDelete() {
+  if (deleting.value) return
+  deleteTarget.value = null
+  deleteError.value = ''
+}
+
+async function confirmHardDelete() {
+  if (!deleteTarget.value) return
+  deleting.value = true
+  deleteError.value = ''
+  try {
+    await usersApi.hardDelete(deleteTarget.value.id)
+    deleteTarget.value = null
+    await loadUsers()
+  } catch (err: any) {
+    // 409 (본인/활성/담당중) → 서버 메시지를 그대로 노출
+    deleteError.value =
+      err?.response?.data?.message ?? '삭제할 수 없습니다. 잠시 후 다시 시도해주세요.'
+  } finally {
+    deleting.value = false
+  }
+}
+
 const roleLabels: Record<string, { label: string; bg: string; text: string }> = {
   admin: { label: '관리자', bg: 'bg-blue-100', text: 'text-blue-700' },
   approver: { label: '결재자', bg: 'bg-amber-100', text: 'text-amber-700' },
@@ -161,6 +199,15 @@ onMounted(loadUsers)
                 >
                   <i class="pi pi-pencil text-sm"></i>
                 </button>
+                <!-- v19.30 — 영구 삭제. 비활성 계정 + 본인 아님일 때만 노출(2단계). -->
+                <button
+                  v-if="canHardDelete(user)"
+                  class="p-1.5 text-gray-400 hover:text-red-500"
+                  title="영구 삭제"
+                  @click="askHardDelete(user)"
+                >
+                  <i class="pi pi-trash text-sm"></i>
+                </button>
               </div>
             </td>
           </tr>
@@ -193,5 +240,50 @@ onMounted(loadUsers)
       :user="editingUser"
       @saved="loadUsers"
     />
+
+    <!-- v19.30 — 영구 삭제 확인 모달 (버튼 전용, 바깥클릭 닫힘 없음: L_DIALOG_BACKDROP_CLOSE) -->
+    <div
+      v-if="deleteTarget"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+    >
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+            <i class="pi pi-exclamation-triangle text-red-500"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-semibold text-gray-900">계정 영구 삭제</h3>
+            <p class="mt-1 text-sm text-gray-600">
+              <span class="font-medium text-gray-900">{{ deleteTarget.name }}</span>
+              ({{ deleteTarget.email }}) 계정을 영구 삭제합니다.
+              되돌릴 수 없습니다. 담당 중인 증빙 유형이 있으면 거부됩니다.
+              업로드·승인한 파일은 보존되며 작성자 표시만 사라집니다.
+            </p>
+          </div>
+        </div>
+
+        <p v-if="deleteError" class="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+          {{ deleteError }}
+        </p>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button
+            class="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
+            :disabled="deleting"
+            @click="closeDelete"
+          >
+            취소
+          </button>
+          <button
+            class="px-4 py-2 rounded-lg text-sm font-medium bg-red-500 text-white hover:bg-red-600 disabled:opacity-60"
+            :disabled="deleting"
+            @click="confirmHardDelete"
+          >
+            <i v-if="deleting" class="pi pi-spin pi-spinner text-sm mr-1"></i>
+            영구 삭제
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

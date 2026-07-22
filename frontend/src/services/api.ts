@@ -95,6 +95,10 @@ export const usersApi = {
   delete(id: number) {
     return api.delete(`/users/${id}`)
   },
+  // v19.30 — 영구 삭제(hard delete). soft delete 와 경로가 다름(/permanent).
+  hardDelete(id: number) {
+    return api.delete(`/users/${id}/permanent`)
+  },
   getApprovers() {
     return api.get<ApiResponse<UserBrief[]>>('/users/approvers')
   },

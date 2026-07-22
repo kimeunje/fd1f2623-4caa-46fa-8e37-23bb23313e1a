@@ -11,6 +11,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
@@ -32,6 +33,7 @@ import java.util.List;
  *   <li>{@code GET /api/v1/users/{id}} — 단건 조회</li>
  *   <li>{@code PATCH /api/v1/users/{id}} — 부분 수정</li>
  *   <li>{@code DELETE /api/v1/users/{id}} — soft delete (status=inactive)</li>
+ *   <li>{@code DELETE /api/v1/users/{id}/permanent} — hard delete (영구 삭제, v19.30)</li>
  *   <li>{@code GET /api/v1/users/approvers} — 승인자 목록 (UserBrief[])</li>
  *   <li>{@code GET /api/v1/users/developers?team=X} — 개발자 목록 (UserBrief[])</li>
  *   <li>{@code PATCH /api/v1/users/me/password} — 본인 비밀번호 변경 (admin 권한 무관)</li>
@@ -39,7 +41,7 @@ import java.util.List;
  *
  * <h3>권한 모델 (Q1=A 결정)</h3>
  * <ul>
- *   <li>위 7 endpoint = {@code @PreAuthorize("hasRole('ADMIN')")} (클래스 레벨) — admin 전용</li>
+ *   <li>위 endpoint = {@code @PreAuthorize("hasRole('ADMIN')")} (클래스 레벨) — admin 전용</li>
  *   <li>{@code /me/password} = 인증된 사용자 누구나. 메서드 단위
  *       {@code @PreAuthorize("isAuthenticated()")} 로 클래스 레벨 admin 제약 override</li>
  * </ul>
@@ -52,7 +54,7 @@ import java.util.List;
  *   <li>Q5=A — UserDto 신설 (도메인 자체 정합)</li>
  * </ul>
  *
- * <p>spec §5 (API 전체) 정합. v15.9 신규.</p>
+ * <p>spec §5 (API 전체) 정합. v15.9 신규. v19.30 영구 삭제 endpoint 추가.</p>
  */
 @RestController
 @RequestMapping("/api/v1/users")
@@ -111,6 +113,22 @@ public class UserController {
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
         userService.delete(id);
+        return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
+    /**
+     * 계정 영구 삭제(hard delete) — v19.30. soft delete({@code DELETE /{id}})와 별개의
+     * 비가역 액션. 가드는 service 측: 본인 불가 / 비활성 상태만 / 증빙 담당자면 거부(모두 409).
+     * 요청자 email({@code principal.getUsername()})을 넘겨 본인 삭제를 방지한다.
+     */
+    @DeleteMapping("/{id}/permanent")
+    public ResponseEntity<ApiResponse<Void>> hardDelete(
+            @PathVariable Long id,
+            Authentication authentication) {
+        // 이 프로젝트 JWT 필터는 principal 을 UserDetails 로 세팅하지 않으므로
+        // @AuthenticationPrincipal UserDetails 는 null 이 된다. Authentication.getName()
+        // 은 principal 타입과 무관하게 subject(email) 를 돌려주므로 그것을 요청자 신원으로 사용.
+        userService.hardDelete(id, authentication.getName());
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 

@@ -50,6 +50,10 @@ public interface EvidenceTypeRepository extends JpaRepository<EvidenceType, Long
     // v11: 담당자 본인의 증빙 유형 조회 — "내 할 일" 페이지 기반 (Phase 5-5)
     List<EvidenceType> findByOwnerUserId(Long ownerUserId);
 
+    // v19.30: 계정 영구 삭제(hard delete) 가드 — 이 계정이 담당자로 지정된 증빙 유형 존재 여부.
+    // (ownerUser 는 @ManyToOne User → 기존 findByOwnerUserId 와 동일하게 ownerUser.id 로 해석)
+    boolean existsByOwnerUserId(Long ownerUserId);
+
     // ====================================================================
     // v14 Phase 5-14f — leaf 카운트 본격 집계 (TreeService.getTree 의 NodeSummary
     //                   빌드 시 leaf 의 evidenceTypeCount 채움용)

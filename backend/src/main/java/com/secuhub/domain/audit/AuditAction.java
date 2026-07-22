@@ -29,6 +29,7 @@ public enum AuditAction {
     USER_CREATE,
     USER_UPDATE,
     USER_DELETE,
+    USER_HARD_DELETE,
 
     // --- 프레임워크 / 통제 트리 변경 ---
     FRAMEWORK_CHANGE,
