@@ -186,7 +186,6 @@ async function save() {
   <div
     v-if="modelValue"
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-    @keydown.esc="close"
   >
     <div class="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
       <!-- 헤더 -->
