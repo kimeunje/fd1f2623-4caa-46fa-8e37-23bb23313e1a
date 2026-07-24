@@ -616,7 +616,7 @@ function forwardRequestDelete(n: UnifiedNode): void {
       :class="['desc-panel', { collapsed: !isLeafExpanded }]">
       <div class="desc-panel-inner">
         <div class="desc-panel-content" :style="{ paddingLeft: `${indentPx + 32}px` }">
-          <div class="desc-label">인수인계 노트</div>
+          <div class="desc-label">주요내용</div>
           <ul class="note-list">
             <li v-for="n in notes" :key="n.id" class="note-item">
               <div class="note-meta">{{ noteMeta(n) }}</div>
